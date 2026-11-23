@@ -11,6 +11,8 @@ applies_to: A new capability in a product that already exists and already has us
 - Each requirement has an acceptance check, and the checks for the core logic are strong (property, differential or fuzz checks where the input space is broad).
 - Empty, large, invalid and repeated use of the new capability behave sensibly, and existing data, settings and workflows still work with it.
 - The capability is discoverable and usable in the product's own terms (labels, help, errors), with loading, empty and error states where it has a surface.
+- The first usable increment is named, the work is ordered to reach it early, and every status update gives its estimated time, labelled as an estimate.
+- Where the design depends on a heuristic, classifier or matcher being right most of the time, a throwaway version was first scored on labels a different worker wrote, and the measured ceiling and what stands behind the heuristic are in the design.
 
 ## Checks
 - Requirements: `requirement-to-check-map` (completeness), `acceptance-examples` (intent), rung 3; every requirement maps to a check or a recorded deferral.
@@ -18,6 +20,7 @@ applies_to: A new capability in a product that already exists and already has us
 - Nothing else broke: `baseline-before-change`, `characterization-tests` (regression), rung 3; invariants from before the first edit.
 - Real surface: `e2e-playwright` (real-world) for a web capability, `cli-transcript-tests` for a command, rung 3.
 - Hostile and odd input: `hostile-input-from-schema` (many-inputs), rung 2, for any new parser, import or boundary.
+- Tests are stable: `repeat-under-parallel-load` (test-quality), rung 3, for each new test module.
 - Finished cleanly: `no-stubs-scan`, `single-gate-command` (completeness), rung 3.
 
 ## Common false finishes
