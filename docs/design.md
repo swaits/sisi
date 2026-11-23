@@ -100,6 +100,16 @@ request and the project. It holds:
 - **assumptions**: what the agent decided to fill gaps
 - **open questions**: only those where the answer cannot be worked out and a wrong guess is expensive, each with
   a default
+- **design** (sizeable work): how the approach was chosen — what the goal and the owner's standing
+  principles imply that the request did not spell out; what the environment, host tool or existing
+  system already provides that should be used instead of built, with evidence it exists; at least two
+  other approaches with cost and risk; the chosen one and why it is what the owner would pick; for
+  each standing principle, the objection the owner would raise and how the design answers it (or why
+  it does not apply); and an independent challenge by a different model or a subagent playing the
+  owner, with what changed in response. Validation is structural and aimed at filler (named existing
+  things are checked where checkable, a command on PATH or a file in the repository). That the
+  challenge predates the first edit is honestly not checkable: edit attribution records paths, not a
+  first-edit time, so a parseable recording time is all that is required
 
 The ladder, highest first:
 
@@ -116,7 +126,12 @@ runs alone. Results are reported in contract order either way.
 
 **Enforcement.** The tool's end-of-turn hook calls `sisi verify`. If a contract exists and a check fails or was
 not run, the agent is sent back with the failures and cannot report the work as done. If no contract exists and
-the change is larger than a small threshold, the agent is sent back to write one. Small edits pass untouched.
+the change is larger than a small threshold, the agent is sent back to write one; a change that size
+with a contract whose design section is missing or fails validation is sent back to fill it. Small
+edits and subagents pass untouched, and the same send-back budget bounds every send-back, so no
+session is trapped. Request-time delivery hands the standing principles and the design instruction
+over when a request reads as design or build work, and `sisi design` prints them before a contract
+exists.
 Claude Code supports a blocking stop hook. The equivalent in OpenCode, Codex and Muse is not verified; where it
 does not exist, verification is meant to run at the next session start and failures to be reported then (that
 fallback is a design intention, not built).
@@ -268,8 +283,15 @@ Any agent in any tool reads through the files or the CLI and writes through the 
 
 - `sisi note`: record a failure now (older; `sisi retro` is preferred).
 - `sisi propose`: suggest a rule change (older; `sisi retro` is preferred).
-- `sisi learn`: record something the human said. The entry is held in quarantine until the harvest finds those
-  words in a message the human typed in that session's transcript. An agent cannot invent a preference.
+- `sisi learn`: record something the human said, in their words. It takes effect at once: user-tier
+  statements are the owner's standing principles (`sisi oracle`), core statements are queued for the
+  product, project statements are handed over to their project. Tiers follow the owner's two questions:
+  does it apply to all projects where sisi may be used, and would it help every user who installs
+  sisi? Both yes is a product change (`core`, in force at once through the overlay, written into the
+  source tree by `sisi promote` on a developer install once folded, the personal copy dropped when
+  the product contains it; on an ordinary install `sisi promote --export` writes a contribution file
+  and nothing is ever sent automatically). The tool's own name never makes an item project-bound: how
+  sisi itself should behave is core, wherever it was recorded.
 
 Models used by the loop run with no tools and return text. sisi's own code checks and writes that text, and
 writes only inside the personal data folder (as overlay changes; see `docs/personal-data.md`), never into the
@@ -292,8 +314,16 @@ Built and covered by tests:
   blocking hook; wiring (`sisi install`, `uninstall`, `doctor`) also points Codex and OpenCode at the rulebook,
   where nothing blocks.
 - The rulebook (`canon/core.md`), the minimum-rung floors, the verifier library and the recipes.
-- Retrospectives and lessons (`sisi retro`, `sisi lessons`), `sisi learn` with quarantine, time to delivery
+- Retrospectives and lessons (`sisi retro`, `sisi lessons`), `sisi learn` live at once, time to delivery
   (`sisi time`), `sisi audit`.
+- Choosing the approach as a checked step: the contract design section, `sisi design`, the gate's
+  design send-back on large changes, and request-time delivery of the standing principles for design
+  or build requests. The rulebook's first rule states it and `sisi rule` reports its enforcement.
+- Patterns: each retro names the general failure of thinking behind the incident; patterns are
+  first-class, merged in rounds, and promoted into the rulebook as strategic behaviours past a
+  threshold; the digest and `sisi improve` show them first. Three tiers (`core`, `user`, `project`)
+  replace the two-way scope, with older universal items tiered by the next round, and `sisi promote`
+  listing, writing (developer installs) or exporting core items.
 - The lesson loop: immediate effects in the overlay (field notes, draft recipes, learned notes, `sisi backlog`),
   moment-of-use delivery with recorded showings, per-lesson measurement, the strength ladder with enforced
   checks, `sisi cycle` (due counter, brief, validated apply under lock and base version, exact revert, status

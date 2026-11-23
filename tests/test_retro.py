@@ -10,7 +10,7 @@ GOOD = dict(aim="verified",
             change_kind="recipe",
             change="Add the fuzz verifier to the Checks of the parser-or-codec recipe so parser work picks it by default",
             when="parser, fuzzing, codec, hostile input, generated input, parsing",
-            scope="everywhere", target="parser-or-codec")
+            scope="everywhere", target="parser-or-codec", pattern="Reach for the familiar tool instead of the check that fits the claim")
 
 
 def argv(f):
@@ -266,6 +266,7 @@ class SimilarityAndSameAsTests(RetroCase):
     def test_dissimilar_lesson_accepted_directly(self):
         self.retro()
         other = dict(aim="speed", change_kind="tool", target="", scope="everywhere",
+                     pattern="Reach for the familiar tool instead of the check that fits the claim",
                      moment="the screenshot comparison in `web-ui` waited 90 seconds on a dev server that never started",
                      cause="no readiness probe before the browser step",
                      when="browser, screenshot, dev server, port waiting, ui checks, startup",
@@ -539,7 +540,7 @@ class GateRetroTests(RetroCase):
         self.work()
         a, msg = self.gate()
         self.assertEqual(a, "block")
-        self.assertIn("sisi retro --aim", msg)
+        self.assertIn("sisi retro --scope", msg)
         self.assertIn("--change-kind", msg)
         self.assertIn("how, not whether", msg)
         self.do_retro()

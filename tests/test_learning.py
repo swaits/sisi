@@ -61,7 +61,7 @@ class LearningCase(LibCase):
             con = retro.connect()
             try:
                 rows = [dict(r) for r in con.execute(
-                    "SELECT id, short, topic FROM lessons WHERE status IN ('open','applied')")]
+                    "SELECT id, short, topic, pattern_id, scope FROM lessons WHERE status IN ('open','applied')")]
             finally:
                 con.close()
             notes = list(doc.get("notes") or [])
@@ -70,9 +70,12 @@ class LearningCase(LibCase):
             exempt = {e.get("lesson") for e in notes if isinstance(e, dict)
                       and e.get("action") in ("retire", "withdraw", "merge")}
             extra = []
+            patterned = {e.get("lesson") for e in notes if isinstance(e, dict) and e.get("action") == "set-pattern"}
             for r in rows:
                 if r["id"] not in scoped and r["id"] not in exempt:
-                    extra.append({"lesson": r["id"], "action": "set-scope", "scope": "everywhere"})
+                    extra.append({"lesson": r["id"], "action": "set-scope", "scope": "core"})
+                if not r.get("pattern_id") and r["id"] not in patterned and r["id"] not in exempt and r.get("scope") != "project":
+                    extra.append({"lesson": r["id"], "action": "set-pattern", "pattern": "Reach for the familiar tool instead of the check that fits the claim"})
                 if r["id"] in covered or r["id"] in exempt:
                     continue
                 if (r.get("short") or "").strip() and (r.get("topic") or "").strip():
@@ -493,9 +496,10 @@ class CycleApplyTests(LearningCase):
         b = self.mk(change="Session two lesson about widget caching", moment="s2 wait at step 2")
         base = cycle.base_version()  # both sessions read the same brief
         _ss = lambda lid: {"lesson": lid, "action": "set-short", "short": "Use a readiness probe, not a sleep.", "topic": "testing"}
-        _sc = lambda lid: {"lesson": lid, "action": "set-scope", "scope": "everywhere"}
-        doc1 = {"version": 1, "base": base, "summary": "one", "notes": [{"lesson": a, "action": "keep"}, _ss(a), _ss(b), _sc(a), _sc(b)]}
-        doc2 = {"version": 1, "base": base, "summary": "two", "notes": [{"lesson": b, "action": "keep"}, _ss(a), _ss(b), _sc(a), _sc(b)]}
+        _sc = lambda lid: {"lesson": lid, "action": "set-scope", "scope": "core"}
+        _sp = lambda lid: {"lesson": lid, "action": "set-pattern", "pattern": "Reach for the familiar tool instead of the check that fits the claim"}
+        doc1 = {"version": 1, "base": base, "summary": "one", "notes": [{"lesson": a, "action": "keep"}, _ss(a), _ss(b), _sc(a), _sc(b), _sp(a), _sp(b)]}
+        doc2 = {"version": 1, "base": base, "summary": "two", "notes": [{"lesson": b, "action": "keep"}, _ss(a), _ss(b), _sc(a), _sc(b), _sp(a), _sp(b)]}
         paths_ = []
         for i, d in enumerate((doc1, doc2)):
             p = os.path.join(self.tmp, "two-%d.json" % i)
@@ -780,7 +784,7 @@ class MatchingCorpusTests(LearningCase):
         r = self.sisi("retro", "--new", "--scope", "everywhere", "--aim", "verified",
                       "--moment", "The CSV importer test passed but 'python3 import.py big.csv' crashed on a quoted comma in row 4011",
                       "--cause", "the importer was only tested with three hand-written rows",
-                      "--change-kind", "rule", "--when", CSV_WHEN,
+                      "--change-kind", "rule", "--when", CSV_WHEN, "--pattern", "Reach for the familiar tool instead of the check that fits the claim", 
                       "--change", "For any CSV importer, run a property test that round-trips generated rows containing quotes, commas and newlines before saying it works")
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertIn("lesson #", r.stdout)
@@ -849,13 +853,13 @@ class MatchingCorpusTests(LearningCase):
         first = self.sisi("retro", "--new", "--scope", "everywhere", "--aim", "verified",
                           "--moment", "the parser server waited 90 seconds in step 4 of the nightly job",
                           "--cause", "no readiness probe existed before the browser step",
-                          "--change-kind", "rule", "--when", PARSER_WHEN, "--change", PARSER_CHANGE)
+                          "--change-kind", "rule", "--when", PARSER_WHEN, "--pattern", "Reach for the familiar tool instead of the check that fits the claim", "--change", PARSER_CHANGE)
         self.assertEqual(first.returncode, 0, first.stdout)
         lid = int(first.stdout.split("lesson #")[1].split(",")[0])
         dup = self.sisi("retro", "--scope", "everywhere", "--aim", "verified",
                         "--moment", "again the parser server waited 90 seconds in step 9 of the nightly job",
                         "--cause", "still no readiness probe before the browser step at all",
-                        "--change-kind", "rule", "--when", PARSER_WHEN,
+                        "--change-kind", "rule", "--when", PARSER_WHEN, "--pattern", "Reach for the familiar tool instead of the check that fits the claim", 
                         "--change", "Prefer a readiness probe over a fixed sleep when waiting for parser servers")
         self.assertEqual(dup.returncode, 4, dup.stdout)
         self.assertIn("sighting was kept", dup.stdout)
@@ -866,7 +870,7 @@ class MatchingCorpusTests(LearningCase):
         as_new = self.sisi("retro", "--new", "--scope", "everywhere", "--aim", "verified",
                            "--moment", "again the parser server waited 90 seconds in step 9 of the nightly job",
                            "--cause", "still no readiness probe before the browser step at all",
-                           "--change-kind", "rule", "--when", PARSER_WHEN,
+                           "--change-kind", "rule", "--when", PARSER_WHEN, "--pattern", "Reach for the familiar tool instead of the check that fits the claim", 
                            "--change", "Prefer a readiness probe over a fixed sleep when waiting for parser servers")
         self.assertEqual(as_new.returncode, 0, as_new.stdout)  # kept apart, but the sighting is not lost
         con = retro.connect()
@@ -990,7 +994,7 @@ class ImproveFromUseTests(LearningCase):
         a = self.sisi("retro", "--new", "--scope", "everywhere", "--aim", "verified",
                       "--moment", "The CSV importer test passed but 'python3 import.py big.csv' crashed on a quoted comma in row 4011",
                       "--cause", "the importer was only tested with three hand-written rows",
-                      "--change-kind", "rule", "--when", CSV_WHEN,
+                      "--change-kind", "rule", "--when", CSV_WHEN, "--pattern", "Reach for the familiar tool instead of the check that fits the claim", 
                       "--change", "For any CSV importer, run a property test that round-trips generated rows containing quotes, commas and newlines before saying it works",
                       env={"SISI_SESSION_ID": "session-A"})
         self.assertEqual(a.returncode, 0, a.stdout)
@@ -1070,7 +1074,8 @@ class CycleGapTests(LearningCase):
         doc = self.cycle_doc(notes=[{"lesson": lid, "action": "keep"}])
         # cycle_doc recomputes base; rebuild with the original base
         d = {"version": 1, "base": base, "summary": "x", "notes": [{"lesson": lid, "action": "keep"},
-             {"lesson": lid, "action": "set-scope", "scope": "everywhere"},
+             {"lesson": lid, "action": "set-scope", "scope": "core"},
+             {"lesson": lid, "action": "set-pattern", "pattern": "Reach for the familiar tool instead of the check that fits the claim"},
              {"lesson": lid, "action": "set-short", "short": "Use a readiness probe, not a sleep.", "topic": "testing"}]}
         p = os.path.join(self.tmp, "g2.json")
         with open(p, "w") as f:
@@ -1096,7 +1101,8 @@ class CycleGapTests(LearningCase):
         base = cycle.base_version()
         self.mk(change="Brand new parser lesson arriving mid cycle", moment="new wait at step 5")
         d = {"version": 1, "base": base, "summary": "x", "notes": [{"lesson": lid, "action": "keep"},
-             {"lesson": lid, "action": "set-scope", "scope": "everywhere"},
+             {"lesson": lid, "action": "set-scope", "scope": "core"},
+             {"lesson": lid, "action": "set-pattern", "pattern": "Reach for the familiar tool instead of the check that fits the claim"},
              {"lesson": lid, "action": "set-short", "short": "Use a readiness probe, not a sleep.", "topic": "testing"}]}
         p = os.path.join(self.tmp, "g3.json")
         with open(p, "w") as f:
@@ -1230,7 +1236,8 @@ class CycleGapTests(LearningCase):
 
     def test_gap16_rule_numbers_map_to_ids(self):
         out = cycle.brief_text()
-        self.assertIn("1. know-done", out)
+        self.assertIn("1. choose-the-approach", out)
+        self.assertIn("2. know-done", out)
         self.assertIn("rule 5", out)
 
     def test_gap17_enforced_help_fields_and_examples(self):

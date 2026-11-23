@@ -56,8 +56,23 @@ class ShortCase(LibCase):
             have = {e.get("lesson") for e in notes if isinstance(e, dict) and e.get("action") == "set-scope"}
             for e in list(notes):
                 if isinstance(e, dict) and isinstance(e.get("lesson"), int) and e["lesson"] not in have:
-                    notes.append({"lesson": e["lesson"], "action": "set-scope", "scope": "everywhere"})
+                    notes.append({"lesson": e["lesson"], "action": "set-scope", "scope": "core"})
                     have.add(e["lesson"])
+            # every active lesson lacking a pattern needs a set-pattern too
+            try:
+                _con = retro.connect()
+                try:
+                    _prows = [dict(r) for r in _con.execute(
+                        "SELECT id, pattern_id, scope FROM lessons WHERE status IN ('open','applied')")]
+                finally:
+                    _con.close()
+                _have_p = {e.get("lesson") for e in notes if isinstance(e, dict) and e.get("action") == "set-pattern"}
+                _exempt = {e.get("lesson") for e in notes if isinstance(e, dict) and e.get("action") in ("retire", "withdraw", "merge")}
+                for r in _prows:
+                    if not r.get("pattern_id") and r["id"] not in _have_p and r["id"] not in _exempt and r.get("scope") != "project":
+                        notes.append({"lesson": r["id"], "action": "set-pattern", "pattern": "Reach for the familiar tool instead of the check that fits the claim"})
+            except Exception:
+                pass
             doc["notes"] = notes
         doc.update(parts)
         # A cycle file must also answer for every document the brief lists for whole-document

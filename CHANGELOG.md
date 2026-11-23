@@ -18,14 +18,37 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
-- Lessons and `sisi learn` statements now carry a scope (`--scope everywhere|project`, required).
-  Universal lessons are refused when their delivered text names the current project; their history
-  may name it freely. Project-scoped items leave the shared store for a per-project handover pile
-  (`sisi handover`) and are filed into that project's own documentation or work list.
+- Lessons and `sisi learn` statements now carry a tier (`--scope core|user|project`, required),
+  decided by two questions: does it apply to all projects where sisi may be used, and would it be
+  useful to every user who installs sisi? Both yes is `core` (a change to sisi itself, live at once
+  through the overlay and queued for the product, `sisi promote`); the first only is `user` (how
+  this owner wants work done); neither is `project`. Items recorded with the earlier two-way
+  `everywhere` scope are not yet tiered and keep being delivered until a learning round tiers them.
+  Core and user lessons are refused when their delivered text names the current project (the name
+  sisi itself is always exempt); their history may name it freely. Project-scoped items leave the
+  shared store for a per-project handover pile (`sisi handover`) and are filed into that project's
+  own documentation or work list.
 - A learning round now ends with a whole-document edit: each rulebook, recipe and technique
   document with unintegrated notes is rewritten as a proper document or marked reviewed with a
   reason; every folded lesson must be traced to the text that carries it, so nothing can be lost.
   `sisi done ID --trace` and `sisi lessons show ID` print where each lesson lives.
+- Choosing the approach is now a checked step: contracts for sizeable work carry a `design`
+  section (what the goal and the owner's principles imply, what already exists to use,
+  alternatives with cost and risk, the choice, each principle's objection, an independent
+  challenge), checked structurally against filler and enforced by the end-of-turn gate with the
+  usual send-back limits. `sisi design` prints the principles and the questions; `sisi contract
+  init` prints the principles and writes the skeleton; request-time delivery hands them over for
+  design or build requests. The rulebook gains a first rule on choosing the approach.
+- `sisi learn` statements take effect at once (no quarantine holding file; the old file is
+  migrated losslessly). `sisi oracle` prints the standing principles as a document owned by the
+  learning round's whole-document edit, with every statement traced into it.
+- Lessons generalise upward: `sisi retro` requires `--pattern`, the general failure of thinking
+  behind the incident, and `sisi retro patterns` lists the patterns to reuse. Learning rounds
+  assign, merge and promote patterns into the rulebook as strategic behaviours; the digest and
+  `sisi improve` show patterns first.
+- `sisi promote` with no argument lists core-tier items not yet in the product, and
+  `sisi promote --export` writes a contribution file from their universal text only. Promoting an
+  overlay item now drops the personal copy once the product is checked to contain the text.
 - Rule 7 of the rulebook is rewritten as short grouped instructions.
 
 - Dynamic workers (`sisi workers`, `sisi route`, `sisi delegate`): the agent tools and models on

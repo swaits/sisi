@@ -22,7 +22,13 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
   sisi release [--deep]              run the source's checks, then make the stable copy the tools run (see docs/developing.md)
   sisi rollback                      switch the stable copy back to the previous release
   sisi dev on [PATH] | off | status  developer mode: where the source folder is
-  sisi promote ID [--apply]          scrub a personal overlay item and write it into the source folder (dry run unless --apply)
+  sisi promote [ID|lesson:N] [--apply] | --export [PATH]
+                                     no ID: list core-tier items not yet in the product; an ID
+                                     scrubs a personal overlay item into the source folder and
+                                     drops the personal copy once the product contains it (dry
+                                     run unless --apply); lesson:N promotes a core lesson on a
+                                     developer install; --export writes a contribution file
+                                     (universal text only; nothing is sent anywhere)
   sisi migrate                       move an older installation's personal data into the personal folder (safe to repeat)
   sisi update                        fast-forward the product clone, then back up, migrate and rebuild personal data
   sisi export [PATH] | import PATH   one tar.gz of personal data, results and session records; restore it
@@ -31,10 +37,12 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
   sisi overlay list|diff|add-rule|replace-rule|disable-rule|enable-rule|add-verifier|...|revert COMMIT
                                      learned changes to rules, verifiers and recipes; each one a commit in your personal repo
   sisi audit                         inventory of standing instructions per tool
-  sisi retro --scope everywhere|project --aim A --moment M --cause C --change-kind K --change X --when "csv, tsv, spreadsheet, tabular data, import, parse, delimited file" [--target ID] [--same-as ID | --new] [--short "one plain sentence"] [--topic "1-3 lower-case words"]
+  sisi retro --scope core|user|project --aim A --moment M --cause C --change-kind K --change X --when "csv, tsv, spreadsheet, tabular data, import, parse, delimited file" --pattern "the general failure of thinking, one line" [--pattern-id N] [--target ID] [--same-as ID | --new] [--short "one plain sentence"] [--topic "1-3 lower-case words"]
              (or --json - with the same keys on stdin)
                                      end of every piece of work: HOW it could have gone better; --when (at least
                                      5 terms, synonyms included) is how a later agent with different words finds it;
+                                     --pattern is required (one line that would apply to unrelated
+                                     work; `sisi retro patterns` lists existing ones to reuse);
                                      --short (at most 140 characters) and --topic (at most 30) are optional: when
                                      omitted, the next learning round writes them
              aims: level (the human could have worked at a higher level), verified (a stronger check was
@@ -53,15 +61,22 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
   sisi improve                       is it getting better? lessons, recurrence, send-backs, time, rulebook size
   sisi note TEXT                     (older; prefer retro) record something that went wrong
   sisi propose TEXT                  (older; prefer retro) suggest a rule change
-  sisi learn --scope everywhere|project TEXT
-                                     record a human-stated preference (quarantined until verified);
-                                     --scope is required: everywhere for how all work should be done,
-                                     project for a fact about this project (handed over to it)
+  sisi learn --scope core|user|project TEXT
+                                     record a human-stated preference; it takes effect at once.
+                                     --scope is required, by two questions: (a) does it apply to
+                                     all projects where sisi may be used? (b) would it be useful
+                                     to every user who installs sisi? Both yes: core (in force
+                                     for you, queued for the product). (a) only: user (your
+                                     standing principles). Neither: project (handed over to it)
+  sisi design                        the owner's standing principles and the design questions to
+                                     answer in a contract's design section before sizeable work
+                                     (implies, provided, alternatives, chosen, objections, challenge)
   sisi handover [--all] | done ID --where PATH [--quote FRAGMENT]
                                      project items waiting to be filed in this project's own docs or
                                      work list; done confirms one is filed (the named file must contain
                                      its key text) and removes it from the pile
-  sisi oracle                        print what the human wants (oracle.md in the personal folder)
+  sisi oracle                        print what the human wants: the standing principles from
+                                     `sisi learn`, live at once (oracle.md in the personal folder)
   sisi status                        verification statistics from the store
   sisi time [--json]                 time from request to verified result: 7 days against the 7 before, slowest checks
   sisi verifiers [WORDS] [--lang L] [--kind K] [--rung N] [--section S] [--installed] [--json]
@@ -118,6 +133,19 @@ def cmd_contract(args):
               "(rung 1-4) and add every check that shows the work is done. Until then `sisi verify` fails and "
               "the end-of-turn gate ignores it." % p)
         try:
+            from . import principles
+            lines = principles.short_lines()
+            if lines:
+                print("\nThe owner's standing principles (the design section must answer each one's objection):")
+                for ln in lines:
+                    print(ln)
+            print("\nFor sizeable work, fill the contract's design section first (the skeleton is in "
+                  "the file; `sisi design` prints the questions): what the goal and these principles "
+                  "imply, what already exists to use, alternatives, the choice, each principle's "
+                  "objection, and an independent challenge. The gate sends a large change back without it.")
+        except Exception:
+            pass
+        try:
             from . import retro
             block = retro.delivery_block(goal or "", "contract-init", extra="contract checks verified")
             if block:
@@ -136,6 +164,9 @@ def cmd_contract(args):
             print("sisi: cannot read %s: %s" % (p, e))
             return 1
         errs = C.validate(c)
+        if isinstance(c, dict) and "design" in c and not C.is_unedited_skeleton(c):
+            from . import design as _D
+            errs = errs + _D.validate_design(c, cwd=C.project_dir(p))
         for e in errs:
             print("  - " + e)
         if not errs:
@@ -185,28 +216,17 @@ def cmd_store(kind, args):
     from . import store
     text = " ".join(args).strip()
     if not text:
-        print("usage: sisi %s TEXT" % {"notes": "note", "proposals": "propose", "quarantine": "learn"}[kind])
+        print("usage: sisi %s TEXT" % {"notes": "note", "proposals": "propose"}[kind])
         return 1
     store.append(kind, store.stamp({"text": text}))
-    _commit_personal(store.file_path(kind), "%s: %s" % ({"notes": "note", "proposals": "proposal", "quarantine": "learn"}[kind], " ".join(text.split())[:60]))
-    print("recorded" + (" (quarantined until verified)" if kind == "quarantine" else ""))
+    _commit_personal(store.file_path(kind), "%s: %s" % ({"notes": "note", "proposals": "proposal"}[kind], " ".join(text.split())[:60]))
+    print("recorded")
     return 0
 
 
-ORACLE_EMPTY = """# sisi oracle
-
-What the human wants, so a thing is asked once ever. Empty so far: it is filled from preferences
-the human stated (`sisi learn`) once they are verified.
-"""
-
-
 def cmd_oracle():
-    from . import paths
-    try:
-        with open(paths.data_file("oracle.md"), encoding="utf-8") as f:
-            sys.stdout.write(f.read())
-    except OSError:
-        sys.stdout.write(ORACLE_EMPTY)
+    from . import principles
+    sys.stdout.write(principles.oracle_text())
     return 0
 
 
@@ -465,6 +485,9 @@ def main(argv):
         return cycle.cmd_improve(args)
     if cmd == "oracle":
         return cmd_oracle()
+    if cmd == "design":
+        from . import design
+        return design.main(args)
     if cmd == "status":
         return cmd_status()
     if cmd == "time":

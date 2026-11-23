@@ -38,6 +38,7 @@ def is_unedited_skeleton(c):
 
 def skeleton(goal=None, cwd=None):
     name = re.sub(r"[^a-z0-9]+", "-", os.path.basename(os.path.abspath(cwd or os.getcwd())).lower()).strip("-")
+    from . import design as _design
     return {
         "id": name or "work",
         "goal": goal or "TODO: one sentence describing the outcome",
@@ -62,6 +63,7 @@ def skeleton(goal=None, cwd=None):
         "invariants": [],
         "assumptions": [],
         "questions": [],
+        "design": _design.skeleton(),
     }
 
 

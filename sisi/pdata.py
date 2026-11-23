@@ -5,7 +5,7 @@ Layout (see docs/personal-data.md):
   oracle.md          what the person wants
   overlay/           learned changes to the base rulebook, verifiers and recipes
   notes/             field notes per verifier or recipe id
-  config.json, trusted.json, lessons.jsonl, retest.jsonl, *.jsonl (notes, proposals, quarantine)
+  config.json, trusted.json, lessons.jsonl, retest.jsonl, *.jsonl (notes, proposals, learn statements)
   retro.db           the lessons database (sqlite; kept out of git, lessons.jsonl is its committed dump)
   generated/         the effective rulebook (rebuildable; kept out of git)
   install/           manifest and backups of the files `sisi install` edited (machine specific; out of git)

@@ -9,7 +9,7 @@ A cycle file (what the agent writes, what `sisi cycle apply` checks) is one JSON
   {"version": 1, "base": "<base version printed by the brief>", "summary": "one line",
    "rules": [{"id": "rule-id", "title": "Title", "body": "text with a Why: line", "action": "add|replace"}],
    "disable_rules": ["rule-id"],
-   "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-short",
+   "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-short|set-pattern",
               "into": "rule or entry id", "merged_into": 4, "short": "one plain sentence, at most 140 characters",
               "topic": "1 to 3 lower-case words, at most 30 characters",
               "when": "csv, tsv, spreadsheet, tabular data, import, parse (optional; sets the lesson's when-terms)"}],
@@ -32,7 +32,7 @@ class CycleError(Exception):
 
 
 ACTIONS = ("merge", "fold-into-rule", "fold-into-entry", "retire", "withdraw", "keep",
-           "set-when", "create-entry", "keep-as-draft", "set-short", "set-scope")
+           "set-when", "create-entry", "keep-as-draft", "set-short", "set-scope", "set-pattern")
 # Total characters of lesson text (change+moment+cause) the brief prints in full. Over this,
 # lessons are truncated and the brief says to run `sisi lessons show ID` for the full text.
 BRIEF_TEXT_BUDGET = 6000
@@ -201,7 +201,7 @@ def _announce_save(data):
 # lesson arriving must never stale a brief (gaps 2 and 3).
 _RELEVANT = ("aim", "change_kind", "target", "moment", "cause", "change", "status", "strength",
              "folded_into", "effect", "when_terms", "check_json", "needs_cycle", "short", "topic",
-             "scope", "project")
+             "scope", "project", "pattern_id")
 
 
 def _snapshot(con):
@@ -227,8 +227,8 @@ def _snapshot(con):
         cyc = []
     learn_unscoped = []
     try:
-        for rec in store.read("quarantine"):
-            if rec.get("scope") not in ("everywhere", "project") and (rec.get("text") or "").strip():
+        for rec in store.read("learn"):
+            if rec.get("scope") not in ("core", "user", "project") and (rec.get("text") or "").strip():
                 learn_unscoped.append({"text": rec.get("text"), "cwd": rec.get("cwd")})
     except Exception:
         pass
@@ -236,9 +236,14 @@ def _snapshot(con):
         docs_required = documents.required_documents(con)
     except Exception:
         docs_required = []
+    try:
+        snap_patterns = [{"id": p["id"], "statement": p["statement"], "folded_into": p.get("folded_into")}
+                         for p in retro.patterns(con)]
+    except Exception:
+        snap_patterns = []
     return {"lessons": lessons, "files": files, "rules": rules, "enforced": enf,
             "last_cycle_ts": retro.get_meta(con, "last_cycle_ts") or "", "cycles": cyc,
-            "learn_unscoped": learn_unscoped, "documents": docs_required}
+            "learn_unscoped": learn_unscoped, "documents": docs_required, "patterns": snap_patterns}
 
 
 def _save_snapshot(base, snap):
@@ -310,6 +315,15 @@ def _check_base(doc_base, con):
     if old.get("enforced") != cur.get("enforced"):
         errs.append("the enforced checks changed since the brief")
         new_only = False
+    cur_patterns = {p.get("id"): p for p in cur.get("patterns") or []}
+    for p in old.get("patterns") or []:
+        cp = cur_patterns.get(p.get("id"))
+        if cp is None:
+            errs.append("pattern %s was removed since the brief" % p.get("id"))
+            new_only = False
+        elif cp.get("statement") != p.get("statement") or cp.get("folded_into") != p.get("folded_into"):
+            errs.append("pattern %s changed since the brief" % p.get("id"))
+            new_only = False
     # Note/overlay files are not listed separately: a cycle that changed one also changed the
     # lesson or rule above, and a new lesson's own field note must not stale the brief.
     if new_only:
@@ -342,7 +356,7 @@ def cycle_records():
 def _scan_files():
     """{data-relative path: bytes} for overlay/ and notes/ (everything a cycle may touch)."""
     out = {}
-    for rel in ("handover.json", "learn-quarantine.jsonl"):
+    for rel in ("handover.json", "learn-quarantine.jsonl", "learn.jsonl", "oracle.md"):
         p = paths.data_file(rel)
         if os.path.exists(p):
             with open(p, "rb") as f:
@@ -447,16 +461,18 @@ Shape (all but version/base optional; full detail: `sisi cycle help`):
    "rules": [{"id": "rule-id", "title": "Title", "body": "text ending with Why: ...", "action": "add|replace",
               "shortens": "rule-id: what text is removed/shortened (required when the rulebook would grow in characters)"}],
    "disable_rules": ["rule-id"],
-   "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-when|create-entry|keep-as-draft|set-short|set-scope",
+   "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-when|create-entry|keep-as-draft|set-short|set-scope|set-pattern",
               "into": "id or [ids] (folds; entry folds append a field note)", "merged_into": 4,
               "note": "text to append instead of the lesson change (for splitting one lesson)",
               "when": "at least 5 terms (sets when-terms; alone with action set-when)",
               "short": "one plain sentence, at most 140 characters (set-short)", "topic": "1 to 3 lower-case words, at most 30 characters (set-short)",
               "entry_kind": "recipe|verifier", "entry_text": "full file text (create-entry)",
-              "scope": "everywhere|project (set-scope)", "project": "project id (set-scope to project)",
+              "scope": "core|user|project (set-scope)", "project": "project id (set-scope to project)",
               "reason": "why it stays a draft (keep-as-draft)"}],
-   "learn": [{"text": "<the exact learn statement>", "action": "set-scope", "scope": "everywhere|project",
+   "learn": [{"text": "<the exact learn statement>", "action": "set-scope", "scope": "core|user|project",
               "project": "project id (when project)"}],
+   "patterns": [{"pattern": 1, "action": "merge|set-statement|fold-into-rule|keep", "into": 2,
+                 "statement": "sharpened one line (set-statement)"}],
    "enforced": [{"lesson": 3, "type": "command", "cmd": "...", "expect": {"exit": 0}, "timeout_s": 30},
                 {"lesson": 4, "type": "contract-requirement", "when": "parser", "require_kind": "parsing", "max_rung": 2}],
    "documents": [{"doc": "recipe:<id>|verifier:<id>|rulebook", "action": "rewrite", "text": "<full new text>",
@@ -542,16 +558,26 @@ Notes - one object per decision; the same lesson may appear several times (split
                   be combined with other actions on the same lesson. When the lesson is already
                   folded into an entry, its default field-note bullet is rewritten to the short
                   form; a bullet that came from an explicit `note` is left alone.
-  set-scope       {"lesson": A, "action": "set-scope", "scope": "everywhere|project",
-                  "project": "<project id, required when project>"} - decides where a lesson
-                  belongs. everywhere requires its delivered text (change, short, when) to be
-                  universal: naming the project it came from is refused, though its moment and
-                  cause (its history) may name it freely. project moves the lesson out of the
-                  global store into that project's handover pile (`sisi handover` there); it is
-                  never folded into the rulebook or the general recipe/technique notes. Every
-                  unscoped lesson in the brief needs one; lessons this file retires, withdraws or
-                  merges away are exempt. Project-scoped lessons cannot be folded into a rule or
-                  an entry, created into an entry, or enforced in a cycle.
+  set-scope       {"lesson": A, "action": "set-scope", "scope": "core|user|project",
+                  "project": "<project id, required when project>"} - decides the tier. Two
+                  questions: (a) does it apply to all projects where sisi may be used?
+                  (b) would it be useful to every user who installs sisi? Both yes: core -
+                  examples: "write delimited files with a quoting writer"; "use what the host
+                  tool already provides instead of building a replacement". (a) yes, (b) no:
+                  user - examples: "always ask this owner questions as options with a
+                  recommendation"; "prefer this owner's flat-rate plans over per-use ones".
+                  (a) no: project - examples: "this product's settings page keeps advanced
+                  options behind one toggle"; "this app uses the left control key for search".
+                  Core and user require the delivered text (change, short, when) to be
+                  universal: naming the project it came from is refused (the name sisi itself
+                  is always exempt), though moment and cause may name it freely. project moves
+                  the lesson into that project's handover pile; it is never folded into the
+                  rulebook or general notes. Every not-yet-tiered lesson in the brief needs one;
+                  retire/withdraw/merge exemptions as elsewhere. A core item takes effect at
+                  once through the overlay and is queued for the product (`sisi promote`); on
+                  a developer install, promote writes it into the product source tree as an
+                  ordinary uncommitted edit and drops the personal copy once the product
+                  contains it.
   keep            {"lesson": A, "action": "keep"} - leave it; clears its waiting flag.
   retire          leave the active notes. Only when fully folded and quiet: folded into a rule,
                   entry or enforced check, listed/read at least 20 times, and 0 recurrences after
@@ -562,14 +588,35 @@ Notes - one object per decision; the same lesson may appear several times (split
                   re-learned. Tool lessons: cannot be done in a cycle (they are changes to sisi
                   itself) - leave them in `sisi backlog` untouched, except merging a duplicate.
 
+Patterns - lessons generalise upward. A pattern is the general failure of thinking behind
+  several incidents, stated in one line that would apply to unrelated work. Patterns must
+  stay few: reuse, merge, and promote to the rulebook as strategic behaviours.
+  set-pattern     {"lesson": A, "action": "set-pattern", "pattern_id": N} reuses pattern N;
+                  {"lesson": A, "action": "set-pattern", "pattern": "<one line>"} names a new
+                  one (same refusals as `sisi retro --pattern`: it names no project and does
+                  not restate the incident). Every active lesson the brief lists as lacking a
+                  pattern needs one; lessons this file retires, withdraws or merges away are
+                  exempt. Exact duplicate statements reuse the existing pattern.
+  "patterns" (top level):
+                  {"pattern": A, "action": "merge", "into": B} - near-duplicate A folds into
+                  B; A's lessons move to B and A is deleted.
+                  {"pattern": A, "action": "set-statement", "statement": "..."} - sharpen it.
+                  {"pattern": A, "action": "fold-into-rule", "into": "rule-id"} - the pattern
+                  becomes a strategic behaviour in the rulebook; that rule must be written or
+                  replaced in this file (or the rulebook rewritten), traced like any folded
+                  lesson. Required in this round for a pattern explaining at least 3 lessons
+                  and 6 incidents (the brief marks it READY).
+
 Learn statements - the equivalent for `sisi learn` statements ("learn" at the top level):
-  {"text": "<the exact statement>", "action": "set-scope", "scope": "everywhere|project",
+  {"text": "<the exact statement>", "action": "set-scope", "scope": "core|user|project",
    "project": "<project id, when project>"} - every unscoped statement in the brief needs one.
-  project moves it to that project's handover pile, out of the global store. Decide by what the
-  statement is about: how the owner wants all work done is universal (for example "always ask
-  questions as options with a recommendation" or "never set up scheduled jobs or timers"), while
-  a fact about one product's design is project (for example "this product's settings page keeps
-  advanced options behind one toggle" or "this app uses the left control key for search").
+  project moves it to that project's handover pile, out of the global store. Tier by the two
+  questions at set-scope above: a statement about how sisi itself should behave for everyone
+  is core ("sisi should anticipate what is needed from what was already said"; "checks, not
+  advice"); how this owner wants work done is user ("always ask questions as options with a
+  recommendation"; "never set up scheduled jobs or timers"); a fact about one product is
+  project ("this product's settings page keeps advanced options behind one toggle"; "this app
+  uses the left control key for search").
 
 Enforced checks - write none for lessons below strength 3. One per strength-3 NEEDS A CHECK:
   command: {"lesson": 3, "type": "command", "cmd": "program + args that exist here",
@@ -658,7 +705,7 @@ def brief_text():
                          and (not str(r.get("short") or "").strip() or not str(r.get("topic") or "").strip())]
         topics_in_use = _topics_in_use(con)
         unscoped = [r for r in rows if r["status"] in retro.ACTIVE
-                    and retro._get(r, "scope") in (None, "", "unscoped")]
+                    and retro._get(r, "scope") in (None, "", "unscoped", "unscoped-tier", "everywhere")]
         unscoped_repos = {}
         for r in unscoped:
             o = con.execute("SELECT repo, cwd FROM occurrences WHERE lesson_id=? ORDER BY id LIMIT 1", (r["id"],)).fetchone()
@@ -669,9 +716,15 @@ def brief_text():
                            for d in docs_required}
         except Exception:
             docs_required, docs_folded = [], {}
+        try:
+            all_patterns = retro.patterns(con)
+            pattern_trends = {p["id"]: retro.pattern_recurrence_trend(con, p) for p in all_patterns}
+        except Exception:
+            all_patterns, pattern_trends = [], {}
+        missing_pattern = [r for r in rows if r["status"] in retro.ACTIVE and not r.get("pattern_id")]
         from . import scope as _scope_mod
         learn_unscoped = []
-        for _lrec in store.read("quarantine"):
+        for _lrec in store.read("learn"):
             if _lrec.get("scope") not in _scope_mod.SCOPES and (_lrec.get("text") or "").strip():
                 learn_unscoped.append(_lrec)
     finally:
@@ -746,6 +799,8 @@ def brief_text():
         elif not r["when_terms"]:
             out.append("       when: MISSING - add at least 5 terms with set-when or any note's when")
         out.append("       target: %s  folded_into: %s" % (r["target"] or "-", r["folded_into"] or "-"))
+        if r["status"] in retro.ACTIVE and not r.get("pattern_id"):
+            out.append("       pattern: MISSING - add a set-pattern for this lesson (reuse a pattern below with pattern_id, or name a new one)")
         if r["status"] in retro.ACTIVE and (not str(r.get("short") or "").strip() or not str(r.get("topic") or "").strip()):
             out.append("       short: MISSING - add a set-short for this lesson (short at most %d characters, topic at most %d)" % (retro.SHORT_MAX, retro.TOPIC_MAX))
         elif r.get("short"):
@@ -773,18 +828,21 @@ def brief_text():
             "Lessons lacking a short line or topic: " +
             (", ".join("#%d" % r["id"] for r in missing_short) if missing_short else "(none)"), ""]
     if unscoped or learn_unscoped:
-        out += ["", "Scope cleanup (backfill): every item below was recorded before scopes existed. "
-                "Give each a set-scope (lessons: {\"lesson\": A, \"action\": \"set-scope\", \"scope\": "
-                "\"everywhere|project\", \"project\": \"<id, when project>\"}; learn statements: a "
-                "\"learn\" entry, see `sisi cycle help`). Scoping to a project moves the item out of "
-                "the global store into that project's handover pile. A lesson whose instruction is "
-                "universal stays global even when its history (moment, cause) names a project. A file "
-                "containing only the required set-short/set-scope entries is acceptable when nothing "
-                "else is ready to fold (a cleanup-only round; `sisi cycle --now` starts one now).",
-                "For learn statements: how the owner wants all work done is universal (\"always ask "
-                "questions as options with a recommendation\"; \"never set up scheduled jobs\"); a fact "
-                "about one product's design is project (\"this product's settings page keeps advanced "
-                "options behind one toggle\"; \"this app uses the left control key for search\")."]
+        out += ["", "Scope cleanup (tier backfill): every item below has no tier yet (recorded before "
+                "tiers, or with the old everywhere scope). Give each a set-scope (lessons: "
+                "{\"lesson\": A, \"action\": \"set-scope\", \"scope\": \"core|user|project\", "
+                "\"project\": \"<id, when project>\"}; learn statements: a \"learn\" entry, see "
+                "`sisi cycle help`). Two questions: (a) does it apply to all projects where sisi may "
+                "be used? (b) would it be useful to every user who installs sisi? Both yes: core "
+                "(\"write delimited files with a quoting writer\"; \"use what the host tool already "
+                "provides\"). (a) yes, (b) no: user (\"always ask questions as options with a "
+                "recommendation\"; \"never set up scheduled jobs\"). (a) no: project (\"this "
+                "product's settings page keeps advanced options behind one toggle\"; \"this app uses "
+                "the left control key for search\"), which moves the item to that project's handover "
+                "pile. A lesson whose instruction is universal stays global even when its history "
+                "names a project, and an item is never project merely for being recorded in the sisi "
+                "repository - how sisi itself should behave is core. A cleanup-only round is a good "
+                "round (`sisi cycle --now`)."]
         for r in unscoped:
             out.append("  lesson #%d recorded in %s: %s" % (r["id"], unscoped_repos.get(r["id"]) or "(unknown repository)",
                                                             " ".join(str(r.get("change") or "").split())[:120]))
@@ -797,6 +855,54 @@ def brief_text():
                 pass
             out.append("  learn statement recorded in %s%s: %r" % (rec.get("cwd") or "(unknown repository)", pid,
                                                                    " ".join(str(rec["text"]).split())[:120]))
+        out.append("")
+    out += ["", "Patterns (lessons generalise upward: a handful of general failures of thinking, "
+            "not one rule per incident). Every active lesson lacking a pattern needs a set-pattern "
+            "{\"lesson\": A, \"action\": \"set-pattern\", \"pattern_id\": N} reusing one below, or "
+            "{\"lesson\": A, \"action\": \"set-pattern\", \"pattern\": \"<one line>\"} naming a new "
+            "one - patterns must stay few, so reuse before inventing. Merge near-duplicates with a "
+            "top-level \"patterns\" entry {\"pattern\": A, \"action\": \"merge\", \"into\": B}. A "
+            "pattern explaining at least %d lessons and %d incidents (marked READY) must be written "
+            "into the rulebook as a strategic behaviour in this round: {\"pattern\": N, \"action\": "
+            "\"fold-into-rule\", \"into\": \"<rule-id>\"} in \"patterns\", with that rule written or "
+            "replaced in this file, its lessons traced like any folded lesson. Set or sharpen a "
+            "statement with {\"pattern\": N, \"action\": \"set-statement\", \"statement\": \"...\"}."
+            % (retro.PATTERN_RULE_MIN_LESSONS, retro.PATTERN_RULE_MIN_OCCURRENCES),
+            "Patterns so far:"]
+    if not all_patterns:
+        out.append("  (none yet)")
+    for _p in all_patterns:
+        _flag = " READY FOR THE RULEBOOK" if retro.pattern_ready_for_rule(_p) else ""
+        out.append("  pattern %d: %s%s" % (_p["id"], _p["statement"], _flag))
+        out.append("    %d lesson(s), %d incident(s); recurrence %s; folded into: %s; lessons: %s"
+                   % (_p["n_lessons"], _p["incidents"], pattern_trends.get(_p["id"], "?"),
+                      _p.get("folded_into") or "-", ", ".join("#%d" % i for i in _p["lessons"]) or "-"))
+    out.append("Lessons lacking a pattern: " +
+               (", ".join("#%d" % r["id"] for r in missing_pattern) if missing_pattern else "(none)"))
+    try:
+        from . import release as _rel
+        _core_lessons, _core_stmts = _rel.core_items()
+        _dev_src = _rel.dev_source()
+    except Exception:
+        _core_lessons, _core_stmts, _dev_src = [], [], None
+    if _core_lessons or _core_stmts:
+        out += ["", "Core items waiting for the product (`sisi promote` lists them): in force for "
+                "this user through the overlay, not yet in sisi itself."]
+        for _r in _core_lessons:
+            out.append("  lesson #%d [%s] %s" % (_r["id"], _r.get("change_kind") or "",
+                                                 " ".join(str(_r.get("change") or "").split())[:110]))
+        for _t in _core_stmts:
+            out.append("  statement: %r" % _t[:110])
+        if _dev_src:
+            out.append("This is a developer install (source %s): after folding a core item into a "
+                       "rule, recipe or technique, run `sisi promote lesson:N --apply` (or "
+                       "`sisi promote <id> --apply`) to write it into the product source tree as "
+                       "an ordinary uncommitted edit; the personal copy is dropped only once the "
+                       "product contains the text." % _dev_src)
+        else:
+            out.append("Not a developer install: `sisi promote --export` writes a contribution "
+                       "file (universal text only) the user may send upstream. Nothing is sent "
+                       "anywhere automatically.")
         out.append("")
     out += ["", "Documents for whole-document review (every round ends with a whole-document edit):",
             "Editorial standard - "
@@ -818,6 +924,10 @@ def brief_text():
     for _d in docs_required:
         out.append("")
         out.append("Document %s - %s" % (_d["doc"], "; ".join(_d["reasons"])))
+        for _st in _d.get("statements") or []:
+            out.append("  statement to trace (the owner's words): %r - in the rewrite, carry it in "
+                       "one plain line followed by this quote, and trace {\"statement\": ..., "
+                       "\"fragment\": \"<that line>\"}" % _st)
         for _lid in docs_folded.get(_d["doc"], []):
             _r = _rows_by_id.get(_lid)
             if _r:
@@ -847,6 +957,10 @@ def brief_text():
             "5. For each NEEDS A CHECK lesson write one enforced check (help has fields and examples); none below strength 3.",
             "6. For every lesson listed above as lacking a short line or topic, add a set-short (it may sit "
             "beside its fold, keep or set-when entry). Reuse a topic already in use when it fits.",
+            "6b. Patterns: give every lesson lacking one a set-pattern (reuse a listed pattern first), merge "
+            "near-duplicate patterns, and write each READY pattern into the rulebook as one strategic "
+            "behaviour (fold-into-rule in \"patterns\", with the rule in this file). The rulebook grows "
+            "by strategic behaviours, not by incident fixes.",
             "7. Retire only what is fully folded and quiet (folded, at least 20 listed/read, 0 recurrences "
             "after first listed) - folding now does not make it quiet, so fold and keep, retire next cycle. "
             "Withdraw what made things worse. set-when only sets when-terms. Keep the rest.",
@@ -989,11 +1103,11 @@ def static_validate(doc, con):
             errs.append("lesson %s: project-scoped items can never be folded into the rulebook or the "
                         "general recipe/technique notes in a cycle" % lid)
         if act == "set-scope":
-            if e.get("scope") not in _scmod.SCOPES:
-                errs.append("lesson %s: set-scope needs scope everywhere|project" % lid)
+            if e.get("scope") not in _scmod.SCOPES and e.get("scope") != "everywhere":
+                errs.append("lesson %s: set-scope needs scope core|user|project" % lid)
             elif e["scope"] == "project" and not (e.get("project") or "").strip():
                 errs.append("lesson %s: set-scope to project needs \"project\" naming the project id" % lid)
-            elif e["scope"] == "everywhere" and isinstance(lid, int) and lid in kinds:
+            elif e["scope"] in ("core", "user", "everywhere") and isinstance(lid, int) and lid in kinds:
                 try:
                     row = con.execute("SELECT * FROM lessons WHERE id=?", (lid,)).fetchone()
                     occ = con.execute("SELECT repo FROM occurrences WHERE lesson_id=? ORDER BY id LIMIT 1", (lid,)).fetchone()
@@ -1002,8 +1116,8 @@ def static_validate(doc, con):
                         [e.get("short") or (row["change"] if row else ""), row["change"] if row else "",
                          e.get("when") or (row["when_terms"] if row else "")], origin, kind=kinds.get(lid))
                     if reason:
-                        errs.append("lesson %s: cannot set-scope everywhere: %s; rewrite it in general "
-                                    "terms or scope it to its project" % (lid, reason))
+                        errs.append("lesson %s: cannot set-scope %s: %s; rewrite it in general "
+                                    "terms or scope it to its project" % (lid, e["scope"], reason))
                 except Exception:
                     pass
     for e in doc.get("enforced") or []:
@@ -1012,7 +1126,7 @@ def static_validate(doc, con):
                         "general recipe/technique notes in a cycle" % e.get("lesson"))
     learn_recs = []
     try:
-        learn_recs = store.read("quarantine")
+        learn_recs = store.read("learn")
     except Exception:
         pass
     unscoped_learn = [r for r in learn_recs if r.get("scope") not in _scmod.SCOPES and (r.get("text") or "").strip()]
@@ -1022,33 +1136,56 @@ def static_validate(doc, con):
             errs.append("each learn entry needs action set-scope: %r" % (e,))
             continue
         covered_learn.add(e.get("text"))
-        if e.get("scope") not in _scmod.SCOPES:
-            errs.append("learn %r: set-scope needs scope everywhere|project" % (e.get("text"),))
+        if e.get("scope") not in _scmod.SCOPES and e.get("scope") != "everywhere":
+            errs.append("learn %r: set-scope needs scope core|user|project" % (e.get("text"),))
         elif e["scope"] == "project" and not (e.get("project") or "").strip():
             errs.append("learn %r: set-scope to project needs \"project\" naming the project id" % (e.get("text"),))
         elif not any(r.get("text") == e.get("text") for r in unscoped_learn):
             errs.append("learn %r: no unscoped learn statement with that exact text" % (e.get("text"),))
-        elif e["scope"] == "everywhere":
+        elif e["scope"] in ("core", "user", "everywhere"):
             origin = next((r.get("cwd") for r in unscoped_learn if r.get("text") == e.get("text")), None)
             if origin and os.path.isdir(origin):
                 reason = _scmod.universal_refusal([e.get("text")], origin)
                 if reason:
-                    errs.append("learn %r: cannot set-scope everywhere: %s" % (e.get("text"), reason))
+                    errs.append("learn %r: cannot set-scope core/user: %s" % (e.get("text"), reason))
     if isinstance(doc, dict) and doc.get("base"):
         old = _load_snapshot(doc["base"])
         if old and isinstance(old.get("learn_unscoped"), list):
             for rec in old["learn_unscoped"]:
                 if rec.get("text") and rec["text"] not in covered_learn:
                     errs.append("learn statement %r: missing set-scope - add {\"text\": ..., \"action\": "
-                                "\"set-scope\", \"scope\": \"everywhere|project\"}" % (rec["text"],))
+                                "\"set-scope\", \"scope\": \"core|user|project\"}" % (rec["text"],))
     for e in doc.get("notes") or []:
         if not isinstance(e, dict) or e.get("action") not in ACTIONS:
             errs.append("each note needs an action in %s: %r" % (", ".join(ACTIONS), e))
             continue
         lid = e.get("lesson")
-        if kinds.get(lid) == "tool" and e["action"] not in ("merge", "keep", "keep-as-draft", "set-when", "set-short", "set-scope"):
+        if kinds.get(lid) == "tool" and e["action"] not in ("merge", "keep", "keep-as-draft", "set-when", "set-short", "set-scope", "set-pattern"):
             errs.append("lesson %s: tool lessons cannot be done in a cycle (they change sisi itself); "
                         "leave them in `sisi backlog` untouched, except merging a duplicate" % lid)
+        if e["action"] == "set-pattern":
+            _have_pats = {}
+            try:
+                _have_pats = {p["id"]: p for p in retro.patterns(con)}
+            except Exception:
+                pass
+            if e.get("pattern_id") is not None:
+                if e["pattern_id"] not in _have_pats:
+                    errs.append("lesson %s: set-pattern names pattern %r, which does not exist "
+                                "(see the patterns listed in the brief)" % (lid, e.get("pattern_id")))
+            elif (e.get("pattern") or "").strip():
+                try:
+                    row = con.execute("SELECT * FROM lessons WHERE id=?", (lid,)).fetchone()
+                    occ = con.execute("SELECT repo FROM occurrences WHERE lesson_id=? ORDER BY id LIMIT 1", (lid,)).fetchone()
+                    origin = occ[0] if occ and occ[0] and os.path.isdir(occ[0]) else os.getcwd()
+                    reason = retro.pattern_refusal(e["pattern"], row["change"] if row else "", origin,
+                                                   row["moment"] if row else None)
+                    if reason:
+                        errs.append("lesson %s: %s" % (lid, reason))
+                except Exception:
+                    pass
+            else:
+                errs.append("lesson %s: set-pattern needs pattern (a new one-line statement) or pattern_id (an existing one)" % lid)
         if e["action"] == "set-short":
             if e.get("short") is None and e.get("topic") is None:
                 errs.append("lesson %s: set-short needs a short line and/or a topic" % lid)
@@ -1150,7 +1287,7 @@ def static_validate(doc, con):
             for lid_s, v in old["lessons"].items():
                 if not isinstance(v, dict) or v.get("status") not in retro.ACTIVE:
                     continue
-                if v.get("scope") not in (None, "", "unscoped"):
+                if v.get("scope") not in (None, "", "unscoped", "unscoped-tier", "everywhere"):
                     continue
                 try:
                     lid = int(lid_s)
@@ -1159,8 +1296,81 @@ def static_validate(doc, con):
                 if lid in exempt or lid in scoped_ids:
                     continue
                 errs.append("lesson %d: missing set-scope - the brief listed this lesson as unscoped; add "
-                            "{\"lesson\": %d, \"action\": \"set-scope\", \"scope\": \"everywhere|project\"}"
+                            "{\"lesson\": %d, \"action\": \"set-scope\", \"scope\": \"core|user|project\"}"
                             % (lid, lid))
+    # Patterns: top-level merges / statements / rule folds, every lesson lacking a pattern at
+    # the brief needs one, and a pattern past the threshold must reach the rulebook this round.
+    try:
+        _pats_now = {p["id"]: p for p in retro.patterns(con)}
+    except Exception:
+        _pats_now = {}
+    _pat_folded = set()
+    for e in doc.get("patterns") or []:
+        if not isinstance(e, dict) or not isinstance(e.get("pattern"), int):
+            errs.append("each patterns entry needs a pattern id: %r" % (e,))
+            continue
+        pid, act = e["pattern"], e.get("action")
+        if pid not in _pats_now:
+            errs.append("pattern %s: no such pattern" % pid)
+            continue
+        if act == "merge":
+            if not isinstance(e.get("into"), int) or e["into"] == pid or e["into"] not in _pats_now:
+                errs.append("pattern %s: merge needs into naming a different existing pattern" % pid)
+        elif act == "set-statement":
+            if not (e.get("statement") or "").strip():
+                errs.append("pattern %s: set-statement needs a statement" % pid)
+            else:
+                _r = retro.pattern_refusal(e["statement"], "__different__", os.getcwd())
+                if _r:
+                    errs.append("pattern %s: %s" % (pid, _r))
+        elif act == "fold-into-rule":
+            _pat_folded.add(pid)
+            valid = base_rule_ids | over_ids
+            for into in _into_list(e):
+                if into not in valid:
+                    errs.append("pattern %s: no rule with id %r to fold into.%s" % (pid, into, _suggest(into, valid)))
+            _rule_ids_in_file = {r.get("id") for r in doc.get("rules") or [] if isinstance(r, dict)}
+            _rb_rewrite = any(isinstance(x, dict) and x.get("doc") == "rulebook" and x.get("action") == "rewrite"
+                              for x in doc.get("documents") or [])
+            if not (_rule_ids_in_file & set(_into_list(e))) and not _rb_rewrite:
+                errs.append("pattern %s: folding it into a rule needs that rule written or replaced in "
+                            "this file (or a rulebook rewrite), so the statement actually lands" % pid)
+        elif act == "keep":
+            pass
+        else:
+            errs.append("pattern %s: action must be merge, set-statement, fold-into-rule or keep" % pid)
+    if isinstance(doc, dict) and doc.get("base"):
+        old = _load_snapshot(doc["base"])
+        if old and isinstance(old.get("lessons"), dict):
+            notes_list = [e for e in doc.get("notes") or [] if isinstance(e, dict)]
+            patterned = {e.get("lesson") for e in notes_list if e.get("action") == "set-pattern"}
+            exempt = {e.get("lesson") for e in notes_list if e.get("action") in ("retire", "withdraw", "merge")}
+            exempt |= {e.get("lesson") for e in notes_list
+                       if e.get("action") == "set-scope" and e.get("scope") == "project"}
+            for lid_s, v in old["lessons"].items():
+                if not isinstance(v, dict) or v.get("status") not in retro.ACTIVE:
+                    continue
+                if v.get("pattern_id"):
+                    continue
+                if v.get("scope") == "project":
+                    continue
+                try:
+                    lid = int(lid_s)
+                except ValueError:
+                    continue
+                if lid in exempt or lid in patterned:
+                    continue
+                errs.append("lesson %d: missing set-pattern - the brief listed this lesson as lacking "
+                            "a pattern; add {\"lesson\": %d, \"action\": \"set-pattern\", \"pattern_id\": N} "
+                            "(reuse a listed pattern) or \"pattern\": \"<one line>\"" % (lid, lid))
+        for p in _pats_now.values():
+            if retro.pattern_ready_for_rule(p) and p["id"] not in _pat_folded:
+                errs.append("pattern %d (%r) explains %d lessons and %d incidents, past the rulebook "
+                            "threshold (%d lessons, %d incidents): write or update its statement in "
+                            "the rulebook as a strategic behaviour in this round (a patterns "
+                            "fold-into-rule entry, with the rule in this file)"
+                            % (p["id"], p["statement"][:60], p["n_lessons"], p["incidents"],
+                               retro.PATTERN_RULE_MIN_LESSONS, retro.PATTERN_RULE_MIN_OCCURRENCES))
     # Whole-document entries: every document the brief listed needs a rewrite or a reviewed
     # entry, and a rewrite must trace every lesson folded into it (see sisi.documents).
     required_docs = None
@@ -1245,9 +1455,13 @@ def _apply_writes(doc, con):
             if sets:
                 con.execute("UPDATE lessons SET %s WHERE id=?" % ", ".join(sets), vals + [lid])
             retro.rewrite_notes_for_lesson(con, lid)
+        elif act == "set-pattern":
+            retro.assign_pattern(con, lid, pattern=e.get("pattern"), pattern_id=e.get("pattern_id"))
         elif act == "set-scope":
+            from . import scope as _sc2
             con.execute("UPDATE lessons SET scope=?, project=? WHERE id=?",
-                        (e.get("scope"), (e.get("project") or None) if e.get("scope") == "project" else None, lid))
+                        (_sc2.normalize_scope(e.get("scope")),
+                         (e.get("project") or None) if e.get("scope") == "project" else None, lid))
         elif act == "keep-as-draft":
             con.execute("UPDATE lessons SET needs_cycle=0 WHERE id=?", (lid,))
         elif act == "set-when":
@@ -1258,6 +1472,23 @@ def _apply_writes(doc, con):
             con.execute("UPDATE lessons SET status='withdrawn', needs_cycle=0 WHERE id=?", (lid,))
         else:  # keep
             con.execute("UPDATE lessons SET needs_cycle=0 WHERE id=?", (lid,))
+    for e in doc.get("patterns") or []:
+        if not isinstance(e, dict) or not isinstance(e.get("pattern"), int):
+            continue
+        pid, act = e["pattern"], e.get("action")
+        if act == "merge":
+            con.execute("UPDATE lessons SET pattern_id=? WHERE pattern_id=?", (e["into"], pid))
+            for (lid2,) in con.execute("SELECT id FROM lessons WHERE pattern_id=?", (e["into"],)):
+                touched.add(lid2)
+            con.execute("DELETE FROM patterns WHERE id=?", (pid,))
+        elif act == "set-statement":
+            con.execute("UPDATE patterns SET statement=? WHERE id=?",
+                        (" ".join(str(e["statement"]).split()), pid))
+        elif act == "fold-into-rule":
+            con.execute("UPDATE patterns SET folded_into=? WHERE id=?",
+                        (",".join("rule:" + x for x in _into_list(e)), pid))
+            for (lid2,) in con.execute("SELECT id FROM lessons WHERE pattern_id=?", (pid,)):
+                touched.add(lid2)
     # project-scoped lessons leave the global store for their project's handover pile
     from . import handover as _ho
     for e in doc.get("notes") or []:
@@ -1269,26 +1500,26 @@ def _apply_writes(doc, con):
 
 
 def _apply_learn(doc):
-    """Apply the learn set-scope entries: everywhere stamps the statement; project moves it
+    """Apply the learn set-scope entries: core/user stamp the statement's tier; project moves it
     out of the global store into that project's handover pile."""
     entries = [e for e in doc.get("learn") or [] if isinstance(e, dict)]
     if not entries:
         return
-    from . import handover as _ho
-    recs = store.read("quarantine")
+    from . import handover as _ho, scope as _sc
+    recs = store.read("learn")
     by_text = {e.get("text"): e for e in entries}
     kept = []
     for rec in recs:
         e = by_text.get(rec.get("text"))
-        if e is None or rec.get("scope") in ("everywhere", "project"):
+        if e is None or rec.get("scope") in ("core", "user", "project"):
             kept.append(rec)
         elif e.get("scope") == "project":
             _ho.move_learn(rec, e.get("project"))
         else:
-            rec = dict(rec, scope="everywhere")
+            rec = dict(rec, scope=_sc.normalize_scope(e.get("scope")))
             rec.pop("project", None)
             kept.append(rec)
-    p = store.file_path("quarantine")
+    p = store.file_path("learn")
     os.makedirs(os.path.dirname(p), exist_ok=True)
     tmp = p + ".tmp%d" % os.getpid()
     with open(tmp, "w", encoding="utf-8") as f:
@@ -1314,6 +1545,10 @@ def apply_file(path):
                 raise CycleError("refused, nothing was applied:\n" + "\n".join("  - " + e for e in errs))
             before_files = _scan_files()
             before_rows = {r["id"]: dict(r) for r in con.execute("SELECT * FROM lessons")}
+            try:
+                before_patterns = [dict(r) for r in con.execute("SELECT * FROM patterns ORDER BY id")]
+            except Exception:
+                before_patterns = []
             before_m = measures(con)
             before_lines = before_m["rulebook_lines"]
             before_chars = before_m.get("rulebook_chars")
@@ -1364,6 +1599,7 @@ def apply_file(path):
                        "document_lessons": docs_changed,
                        "before": before_m, "after": measures(con),
                        "lessons_before": [before_rows[i] for i in touched if i in before_rows],
+                       "patterns_before": before_patterns,
                        "changed_files": changed, "prev_last_cycle_ts": prev_last, "reverted": None}
                 os.makedirs(cycles_dir(), exist_ok=True)
                 pdata.write_text(os.path.join("cycles", cid + ".json"), json.dumps(rec, indent=1, sort_keys=True) + "\n")
@@ -1374,7 +1610,7 @@ def apply_file(path):
                 except OSError:
                     pass  # the round is closed now; its snapshot no longer defers retirement
                 retro.export_jsonl()
-                specs = ["overlay", "lessons.jsonl", "cycles", "handover.json", "learn-quarantine.jsonl"]
+                specs = ["overlay", "lessons.jsonl", "cycles", "handover.json", "learn.jsonl", "learn-quarantine.jsonl", "oracle.md"]
                 if paths.notes_dir().startswith(paths.data() + os.sep):
                     specs.append(os.path.relpath(paths.notes_dir(), paths.data()))
                 if pdata._commit("cycle %s: %s" % (cid, rec["summary"] or "consolidation"), specs) is None \
@@ -1387,6 +1623,7 @@ def apply_file(path):
                                    {rel: base64.b64encode(b).decode() for rel, b in before_files.items()})
                 for row in before_rows.values():
                     _restore_lesson_row(con, row)
+                _restore_patterns(con, before_patterns)
                 if prev_last is None:
                     con.execute("DELETE FROM meta WHERE key='last_cycle_ts'")
                 else:
@@ -1400,6 +1637,17 @@ def apply_file(path):
                 raise
     finally:
         con.close()
+
+
+def _restore_patterns(con, rows):
+    """Put the patterns table back exactly (a cycle may create, merge or fold patterns)."""
+    try:
+        con.execute("DELETE FROM patterns")
+        for r in rows or []:
+            con.execute("INSERT INTO patterns(id, statement, created, folded_into) VALUES(?,?,?,?)",
+                        (r.get("id"), r.get("statement"), r.get("created"), r.get("folded_into")))
+    except Exception:
+        pass
 
 
 def _restore_lesson_row(con, row):
@@ -1433,6 +1681,8 @@ def revert_cycle(cid=None):
             _restore_changed(rec.get("changed_files") or {})
             for row in rec.get("lessons_before") or []:
                 _restore_lesson_row(con, row)
+            if "patterns_before" in rec:
+                _restore_patterns(con, rec.get("patterns_before"))
             prev = rec.get("prev_last_cycle_ts")
             if prev is None:
                 con.execute("DELETE FROM meta WHERE key='last_cycle_ts'")
@@ -1444,7 +1694,7 @@ def revert_cycle(cid=None):
             rec = dict(rec, reverted=store.now())
             pdata.write_text(os.path.join("cycles", rec["id"] + ".json"),
                              json.dumps(rec, indent=1, sort_keys=True) + "\n")
-            specs = ["overlay", "lessons.jsonl", "cycles", "handover.json", "learn-quarantine.jsonl"]
+            specs = ["overlay", "lessons.jsonl", "cycles", "handover.json", "learn.jsonl", "learn-quarantine.jsonl", "oracle.md"]
             if paths.notes_dir().startswith(paths.data() + os.sep):
                 specs.append(os.path.relpath(paths.notes_dir(), paths.data()))
             pdata._commit("cycle revert %s" % rec["id"], specs)
@@ -1554,9 +1804,25 @@ def improve_text():
         return round(sum(r.get("send_backs", 0) for r in rows) / len(rows), 2) if rows else None
     rows_now = time.time()
     cur_rows, prev_rows = delivery.windows(store.read("deliveries"), rows_now)
-    lines = ["Is it getting better?", "",
-             "lessons: %d recorded, %d taking effect now, %d strengthened (rule or enforced), "
-             "%d retired, %d withdrawn" % (total, active, strong, by.get("retired", 0), by.get("withdrawn", 0)),
+    try:
+        _pcon = retro.connect()
+        try:
+            _pats = retro.patterns(_pcon)
+            _ptrends = {p["id"]: retro.pattern_recurrence_trend(_pcon, p) for p in _pats}
+        finally:
+            _pcon.close()
+    except Exception:
+        _pats, _ptrends = [], {}
+    lines = ["Is it getting better?", ""]
+    if _pats:
+        lines.append("patterns (the general failures of thinking behind the incidents):")
+        for p in sorted(_pats, key=lambda x: (-(x.get("incidents") or 0), x.get("id") or 0)):
+            lines.append("  - %s (pattern %d; %d incident(s), %d lesson(s); recurrence %s; %s)"
+                         % (p["statement"], p["id"], p.get("incidents") or 0, p.get("n_lessons") or 0,
+                            _ptrends.get(p["id"], "too little data"),
+                            "in the rulebook" if p.get("folded_into") else "not in the rulebook yet"))
+    lines += ["lessons: %d recorded, %d taking effect now, %d strengthened (rule or enforced), "
+              "%d retired, %d withdrawn" % (total, active, strong, by.get("retired", 0), by.get("withdrawn", 0)),
              "of those taking effect: %d folded into a recipe, entry or rule, %d still loose notes "
              "(found only by matching words and when-terms, or by an agent reading the headings)"
              % (folded, active - folded),
@@ -1639,7 +1905,15 @@ def check_file(path):
                 extra += " topic=%r" % e["topic"][:60]
             if e.get("scope"):
                 extra += " scope=%s%s" % (e["scope"], (" project=%s" % e["project"]) if e.get("project") else "")
+            if e.get("pattern"):
+                extra += " pattern=%r" % str(e["pattern"])[:60]
+            if e.get("pattern_id") is not None:
+                extra += " pattern_id=%s" % e["pattern_id"]
             out.append("  lesson %s: %s%s" % (e.get("lesson"), e.get("action"), extra))
+        for e in doc.get("patterns") or []:
+            out.append("  pattern %s: %s%s" % (e.get("pattern"), e.get("action"),
+                        (" into %s" % e.get("into")) if e.get("into") else
+                        (" statement=%r" % str(e.get("statement"))[:60]) if e.get("statement") else ""))
         for e in doc.get("learn") or []:
             out.append("  learn %r: set-scope %s%s" % (str(e.get("text"))[:60], e.get("scope"),
                                                         (" project=%s" % e["project"]) if e.get("project") else ""))

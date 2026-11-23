@@ -53,7 +53,7 @@ class DocCase(LibCase):
         f = dict(aim="verified", change_kind="recipe", target="parser-or-codec",
                  moment="the parser accepted a truncated file in the nightly job",
                  cause="no truncated-input case existed", change=change, when=WHEN,
-                 scope="everywhere", short="Seed the corpus from golden files.", topic="parsing")
+                 scope="core", short="Seed the corpus from golden files.", topic="parsing", pattern="Reach for the familiar tool instead of the check that fits the claim")
         f.update(kw)
         con = retro.connect()
         try:

@@ -4,8 +4,63 @@ import json, os, re, time
 from . import paths
 
 FILES = {"results": "results.jsonl", "notes": "notes.jsonl", "proposals": "proposals.jsonl",
-         "quarantine": "learn-quarantine.jsonl", "waivers": "waivers.jsonl",
+         "learn": "learn.jsonl", "quarantine": "learn.jsonl", "waivers": "waivers.jsonl",
          "deliveries": "deliveries.jsonl"}
+
+
+def _migrate_learn():
+    """Lossless one-time move of the old quarantine file into the live learn store.
+
+    Statements used to be parked in learn-quarantine.jsonl, which no agent read. They now take
+    effect at once from learn.jsonl. Every old line (quoted words, date, scope, context) is
+    copied across unchanged, then the old file is removed so nothing is read twice."""
+    try:
+        new = paths.data_file("learn.jsonl")
+        olds = [paths.data_file("learn-quarantine.jsonl"), paths.state_file("learn-quarantine.jsonl")]
+        lines = []
+        for old in olds:
+            if os.path.realpath(old) == os.path.realpath(new) or not os.path.exists(old):
+                continue
+            with open(old, encoding="utf-8") as f:
+                lines += [l.rstrip("\n") for l in f if l.strip()]
+        if not lines and not any(os.path.exists(o) and os.path.realpath(o) != os.path.realpath(new) for o in olds):
+            return
+        have = set()
+        if os.path.exists(new):
+            with open(new, encoding="utf-8") as f:
+                have = {l.rstrip("\n") for l in f if l.strip()}
+        add = [l for l in lines if l not in have]
+        if add:
+            os.makedirs(os.path.dirname(new), exist_ok=True)
+            with open(new, "a", encoding="utf-8") as f:
+                for l in add:
+                    f.write(l + "\n")
+        for old in olds:
+            if os.path.realpath(old) != os.path.realpath(new) and os.path.exists(old):
+                os.unlink(old)
+        # the old two-way scope is now three tiers: an everywhere statement is not yet tiered
+        if os.path.exists(new):
+            with open(new, encoding="utf-8") as f:
+                raw = f.read()
+            if '"everywhere"' in raw:
+                out = []
+                for line in raw.splitlines():
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        out.append(line)
+                        continue
+                    if isinstance(rec, dict) and rec.get("scope") == "everywhere":
+                        rec["scope"] = "unscoped-tier"
+                        out.append(json.dumps(rec, ensure_ascii=False, separators=(",", ":")))
+                    else:
+                        out.append(line)
+                tmp = new + ".tmp%d" % os.getpid()
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.write("".join(l + "\n" for l in out))
+                os.replace(tmp, new)
+    except OSError:
+        pass
 
 
 def now():
@@ -27,7 +82,7 @@ def session_id():
     return os.environ.get("SISI_SESSION_ID") or None
 
 
-PERSONAL = ("notes", "proposals", "quarantine")  # what the person told or taught sisi: personal data, the rest is scratch
+PERSONAL = ("notes", "proposals", "learn", "quarantine")  # what the person told or taught sisi: personal data, the rest is scratch
 
 
 def file_path(name):
@@ -64,6 +119,8 @@ def read_stdin(wait=None):
 
 
 def append(name, rec):
+    if name in ("learn", "quarantine"):
+        _migrate_learn()
     path = file_path(name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     line = json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n"
@@ -75,6 +132,8 @@ def append(name, rec):
 
 
 def read(name):
+    if name in ("learn", "quarantine"):
+        _migrate_learn()
     path = file_path(name)
     out = []
     try:

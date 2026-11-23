@@ -436,7 +436,26 @@ class GateGrowthTests(GateBase):
     def test_contract_ends_it(self):
         self.grow("a.txt", 100)
         self.assertEqual(self.call()[0], "block")
-        self.write_contract(contract([check("c", "true")]))
+        c = contract([check("c", "true")])
+        c["design"] = {
+            "implies": ["A change this size needs its approach recorded so the next agent can "
+                        "see why it went this way and what was ruled out."],
+            "provided": [{"what": "git already measures the change in this repository",
+                          "evidence": "command:git"}],
+            "alternatives": [
+                {"name": "keep blocking on growth alone", "cost": "no new code to write at all",
+                 "risk": "a contract can be gamed with checks that prove nothing real"},
+                {"name": "ask the human to approve large changes", "cost": "one prompt per change",
+                 "risk": "the human becomes the bottleneck for routine sizeable work"}],
+            "chosen": {"name": "contract with a checked design section",
+                       "why": "It is the option the owner would pick: the approach is recorded "
+                              "and checked mechanically instead of depending on goodwill."},
+            "objections": [],
+            "challenge": {"by": "a subagent on a different model",
+                          "recorded_at": "2026-01-01T00:00:00Z",
+                          "objections": ["The design section could become ceremony filled with filler text."],
+                          "changes": ["Required evidence that named existing things actually exist."]}}
+        self.write_contract(c)
         self.assertEqual(self.call()[0], "allow")
 
     def test_waiver_covers_tree_at_that_moment_only(self):

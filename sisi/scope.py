@@ -1,4 +1,16 @@
-"""Lesson scope: everywhere or one project.
+"""Lesson and statement tiers: core, user, or one project.
+
+The owner's test, two questions: (a) does it apply to all projects where sisi may be used?
+(b) would it be useful to every user who installs sisi? Both yes is `core`: a change to the
+product itself (a rule, a recipe or technique, a mechanism, a design principle), in force for
+this user at once through the personal overlay and queued for the product (`sisi promote`).
+(a) yes, (b) no is `user`: how this owner wants work done, kept in the personal store and
+delivered in all of this user's projects. (a) no is `project`: a fact about one project,
+handed over to that project's own documentation or work list. Items recorded with the old
+two-way scope `everywhere` are `unscoped-tier`: still delivered, tiered by the next learning
+round. sisi is normally the shell around other projects; working in the sisi repository
+itself is the exception, and an item is never project merely because it was recorded there -
+a statement about how sisi itself should behave is core.
 
 A project is identified by its git remote URL when there is one (normalised, so an
 ssh and an https remote for the same repository, a trailing `.git`, credentials and a
@@ -9,21 +21,46 @@ the personal data store, keyed by that id; nothing is written into the repositor
 
 The universality check is structural only, no model call: it looks at the parts that
 are delivered to agents (change, short, when-terms; a learn statement) and refuses
-when they name the current project. History (moment, cause, occurrences) may name
-the project freely and is never checked.
+when a core or user item names the current project. The tool's own name, sisi, is always
+exempt. History (moment, cause, occurrences) may name the project freely and is never checked.
 """
 import os, re, subprocess
 
 from . import gitutil
 
-SCOPES = ("everywhere", "project")
+SCOPES = ("core", "user", "project")
+UNTIERED = (None, "", "unscoped", "unscoped-tier", "everywhere")
+TIER_QUESTIONS = (
+    "Ask two questions: (a) does it apply to all projects where sisi may be used? "
+    "(b) would it be useful to every user who installs sisi? Both yes: --scope core (a change "
+    "to sisi itself - a rule, a recipe or technique, a mechanism, a design principle; it takes "
+    "effect for you at once and is queued for the product, `sisi promote`). (a) yes but (b) no, "
+    "because it is how this owner wants things: --scope user (kept in your personal store, "
+    "delivered in all your projects). (a) no: --scope project (a fact about this project, "
+    "handed over to its own documentation or work list).")
 MISSING_SCOPE = (
-    "sisi: --scope is required: use --scope everywhere for a lesson that holds in any project, stated in "
-    "general terms so a different project can use it, or --scope project for a fact about this project only, "
-    "which is kept with this project and shown only here. To make a project fact universal, restate it in "
-    "general terms: name the kind of work and the rule that follows, not this project's name, files or "
-    "address (for example, not 'the exporter here joins rows by hand' but 'write delimited files with a "
-    "quoting writer'). The moment and cause may name this project either way: they stay as its history.")
+    "sisi: --scope is required (core, user or project). " + TIER_QUESTIONS + " "
+    "Core and user items are stated in general terms so any project can use them: name the kind "
+    "of work and the rule that follows, not this project's name, files or address (for example, "
+    "not 'the exporter here joins rows by hand' but 'write delimited files with a quoting "
+    "writer'). A statement about how sisi itself should behave is core, even recorded inside "
+    "the sisi repository. The moment and cause may name this project either way: they stay as "
+    "its history.")
+
+
+def tier_of(value):
+    """The tier a stored scope value means today: legacy `everywhere` is not yet tiered."""
+    if value in SCOPES:
+        return value
+    return "unscoped-tier"
+
+
+def normalize_scope(value):
+    """A scope given on a command line, canonicalised: legacy `everywhere` is accepted and
+    stored as unscoped-tier (still delivered; the next learning round tiers it)."""
+    if value == "everywhere":
+        return "unscoped-tier"
+    return value
 
 # File and directory names so common that merely mentioning them names no project.
 COMMON_NAMES = {
@@ -87,12 +124,8 @@ def project_label(pid):
 
 
 def visible(scope_value, project_value, cwd=None):
-    """Legacy (unscoped) and everywhere items show everywhere; project items only at home."""
-    if scope_value in (None, "", "unscoped"):
-        return True
-    if scope_value == "everywhere":
-        return True
-    if scope_value == "project":
+    """Core, user and not-yet-tiered items show in every project; project items only at home."""
+    if tier_of(scope_value) == "project":
         return (project_value or "") == project_id(cwd or os.getcwd())
     return True
 
@@ -110,7 +143,7 @@ def row_scope(row):
         v = row.get("scope") if isinstance(row, dict) else (row["scope"] if "scope" in row.keys() else None)
     except Exception:
         v = None
-    return v or "unscoped"
+    return tier_of(v)
 
 
 def _existing(cwd):
@@ -138,8 +171,8 @@ def universal_refusal(texts, cwd, kind=None):
     """Reason string when a delivered text names the current project, else None.
 
     Checks the repository name, its remote URL (and the repository name inside it),
-    any path or file name that exists in it, and the root path itself. A tool lesson
-    (a change to sisi itself) may say 'sisi': that word alone is exempt there.
+    any path or file name that exists in it, and the root path itself. The tool's own
+    name, 'sisi', is always exempt: how sisi itself should behave is core, not project.
     """
     texts = [t for t in (texts or []) if t and str(t).strip()]
     if not texts:
@@ -164,7 +197,7 @@ def universal_refusal(texts, cwd, kind=None):
         # the repository's own name, as a whole token or inside a path/URL token
         for name in {repo_name, remote_name} - {""}:
             if tl == name or tl.endswith("/" + name) or ("/" in tl and tl.rsplit("/", 1)[-1] == name):
-                if kind == "tool" and name == "sisi":
+                if name == "sisi":
                     continue
                 return "it names this project (%s)" % name
         if "/" in tl:
@@ -183,13 +216,13 @@ def universal_refusal(texts, cwd, kind=None):
 
 
 def refusal_text(reason):
-    return ("sisi: refused: a lesson scoped everywhere must be universal, and %s. Rewrite it in general "
+    return ("sisi: refused: a core or user item must be universal, and %s. Rewrite it in general "
             "terms (the kind of work and the rule that follows, not this project's name, files or address), "
-            "or record it with --scope project so it stays with this project." % reason)
+            "or record it with --scope project so it stays with this project. " + TIER_QUESTIONS) % reason
 
 
 def cmd_learn(argv):
-    """`sisi learn [--scope everywhere|project] TEXT` (also `--scope=X`)."""
+    """`sisi learn [--scope core|user|project] TEXT` (also `--scope=X`)."""
     from . import store
     scope_value, text_parts, i = None, [], 0
     argv = list(argv)
@@ -203,14 +236,15 @@ def cmd_learn(argv):
             text_parts.append(a); i += 1
     text = " ".join(text_parts).strip()
     if not text:
-        print("usage: sisi learn --scope everywhere|project TEXT")
+        print("usage: sisi learn --scope core|user|project TEXT")
         return 1
-    if scope_value not in SCOPES:
+    if scope_value not in SCOPES and scope_value != "everywhere":
         print(MISSING_SCOPE)
         return 2
+    scope_value = normalize_scope(scope_value)
     cwd = os.getcwd()
-    if scope_value == "everywhere":
-        reason = universal_refusal([text], cwd)
+    if scope_value in ("core", "user", "unscoped-tier"):
+        reason = universal_refusal([text], cwd, kind="learn")
         if reason:
             print(refusal_text(reason))
             return 2
@@ -218,15 +252,22 @@ def cmd_learn(argv):
     if scope_value == "project":
         from . import handover
         handover.move_learn(store.stamp(rec), project_id(cwd))
-        print("recorded for this project (quarantined until verified); it will be handed over to this "
+        print("recorded for this project; it will be handed over to this "
               "project at session start (`sisi handover` lists it)")
         return 0
-    store.append("quarantine", store.stamp(rec))
+    store.append("learn", store.stamp(rec))
     try:
         from . import cli
-        cli._commit_personal(store.file_path("quarantine"),
+        cli._commit_personal(store.file_path("learn"),
                              "learn: %s" % " ".join(text.split())[:60])
     except Exception:
         pass
-    print("recorded (quarantined until verified)")
+    if scope_value == "core":
+        print("recorded as core; it takes effect at once (`sisi oracle` shows it) and is queued "
+              "for the product (`sisi promote` lists core items)")
+    elif scope_value == "unscoped-tier":
+        print("recorded (the old everywhere scope); it takes effect at once and the next "
+              "learning round will tier it core, user or project")
+    else:
+        print("recorded; it takes effect at once as a standing principle (`sisi oracle` shows it)")
     return 0

@@ -9,7 +9,8 @@ def retro_args(**kw):
              cause="rows were joined by hand in acme-widgets instead of with a quoting writer",
              change_kind="rule",
              change="Write delimited files with a quoting writer so embedded newlines survive",
-             when=WHEN, short="Use a quoting writer for delimited exports.", topic="data files")
+             when=WHEN, short="Use a quoting writer for delimited exports.", topic="data files",
+             pattern="Build the obvious thing instead of using what the environment already provides")
     f.update(kw)
     out = []
     for k, v in f.items():
@@ -93,7 +94,7 @@ class RetroScopeTests(ScopeCase):
     def test_missing_scope_refused_with_explanation(self):
         r = self.sisi("retro", *retro_args())
         self.assertEqual(r.returncode, 2, r.stdout)
-        self.assertIn("everywhere", r.stdout); self.assertIn("project", r.stdout)
+        self.assertIn("core", r.stdout); self.assertIn("user", r.stdout); self.assertIn("project", r.stdout)
         self.assertIn("general terms", r.stdout)
 
     def test_everywhere_naming_project_refused(self):
@@ -182,7 +183,8 @@ class StaleReadingTests(ScopeCase):
         self.assertEqual(st["status"], "applied")  # retirement deferred while the round is open
         doc = {"version": 1, "base": base, "summary": "keep",
                "notes": [{"lesson": lid, "action": "set-short", "short": "Seed fuzz corpus from golden files.", "topic": "testing"},
-                         {"lesson": lid, "action": "set-scope", "scope": "everywhere"}]}
+                         {"lesson": lid, "action": "set-pattern", "pattern": "Reach for the familiar tool instead of the check that fits the claim"},
+                         {"lesson": lid, "action": "set-scope", "scope": "core"}]}
         p = os.path.join(self.tmp, "cyc.json")
         with open(p, "w") as f: json.dump(doc, f)
         r = self.sisi("cycle", "check", p)

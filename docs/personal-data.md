@@ -14,14 +14,18 @@ Under `SISI_HOME` (tests) the personal folder is `$SISI_HOME/.local/share/sisi` 
 
     VERSION              format version of this folder, a single integer (an update migrates older folders after taking a backup).
                          Not the product's release number: that is the VERSION file in the clone, shown by `sisi --version`
-    oracle.md            what the person wants
+    oracle.md            what the person wants: the standing principles (user-tier statements, plus
+                         core ones until the product carries them), rewritten as a whole document
+                         by learning rounds; absent until a round writes it, in which case
+                         `sisi oracle` prints the live statements directly
     overlay/             learned changes to the product (below); overlay/enforced.json holds enforced lessons
     notes/<id>.md        field notes per verifier or recipe id (notes/draft-<id>.md: a recipe that does not exist yet)
     cycles/              one JSON record per learning cycle, including the bytes revert restores
     config.json          settings (over config.default.json)
     trusted.json         projects whose contracts may run commands
     lessons.jsonl        sorted dump of the lessons database, committed whenever lessons change
-    learn-quarantine.jsonl, notes.jsonl, proposals.jsonl
+    learn.jsonl, notes.jsonl, proposals.jsonl   what the person stated (`sisi learn`, live at once;
+                         an older learn-quarantine.jsonl is migrated into learn.jsonl on first read)
     retest.jsonl         replaced items whose base changed in an update (id, old base hash, new base hash)
     retro.db             lessons database (sqlite; not in git; lessons.jsonl is its committed form)
     generated/core.md    the effective rulebook (not in git; rebuilt by `sisi build-canon`)

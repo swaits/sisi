@@ -31,7 +31,7 @@ class RuleTableTests(SisiCase):
 
 class RuleDetailTests(SisiCase):
     def test_rule_by_number_and_by_id(self):
-        by_num = self.sisi("rule", "5")
+        by_num = self.sisi("rule", "6")
         by_id = self.sisi("rule", "decide-dont-ask")
         self.assertEqual(by_num.returncode, 0, by_num.stderr)
         self.assertEqual(by_id.returncode, 0, by_id.stderr)

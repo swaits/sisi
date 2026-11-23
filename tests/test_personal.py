@@ -554,7 +554,7 @@ class ExportImportTests(PersonalCase):
         self.ok("learn", "--scope", "everywhere", "never", "ask", "twice")
         self.ok("retro", "--scope", "everywhere", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
                 "--cause", "the test was written after the code", "--change-kind", "rule",
-                "--when", "tests, pytest, failing first, regression, test quality, red green",
+                "--when", "tests, pytest, failing first, regression, test quality, red green", "--pattern", "Reach for the familiar tool instead of the check that fits the claim", 
                 "--change", "write the failing test first and show it fail with `pytest -k new`")
         os.makedirs(os.path.join(self.state, "sessions"))
         open(os.path.join(self.state, "sessions", "s1.json"), "w").write('{"a": 1}')
@@ -590,7 +590,7 @@ class ExportImportTests(PersonalCase):
     def test_import_sets_existing_data_aside_and_rebuilds_db_from_the_dump(self):
         self.ok("retro", "--scope", "everywhere", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
                 "--cause", "the test was written after the code", "--change-kind", "rule",
-                "--when", "tests, pytest, failing first, regression, test quality, red green",
+                "--when", "tests, pytest, failing first, regression, test quality, red green", "--pattern", "Reach for the familiar tool instead of the check that fits the claim", 
                 "--change", "write the failing test first and show it fail with `pytest -k new`")
         arc = os.path.join(self.tmp, "out.tar.gz")
         self.ok("export", arc)
@@ -634,7 +634,7 @@ def LessonRows():
 class LessonDumpTests(PersonalCase):
     RETRO = ["--scope", "everywhere", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
              "--cause", "the test was written after the code", "--change-kind", "rule",
-             "--when", "tests, pytest, failing first, regression, test quality, red green",
+             "--when", "tests, pytest, failing first, regression, test quality, red green", "--pattern", "Reach for the familiar tool instead of the check that fits the claim", 
              "--change", "write the failing test first and show it fail with `pytest -k new`"]
 
     def test_dump_is_committed_sorted_and_the_database_is_not(self):
@@ -661,8 +661,8 @@ class LessonDumpTests(PersonalCase):
     def test_learn_and_note_are_personal_and_committed(self):
         self.ok("learn", "--scope", "everywhere", "Always", "use", "options")
         self.assertIn("learn: Always use options", self.git_log()[0])
-        self.assertIn("learn-quarantine.jsonl", pdata.git("ls-files").stdout)
-        self.assertFalse(os.path.exists(os.path.join(self.state, "learn-quarantine.jsonl")))
+        self.assertIn("learn.jsonl", pdata.git("ls-files").stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.state, "learn.jsonl")))
         self.assertIn("oracle", self.ok("oracle").stdout.lower())
 
 

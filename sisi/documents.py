@@ -55,12 +55,18 @@ def max_bullet_chars():
 
 
 def doc_key(kind, id):
-    return "rulebook" if kind == "rulebook" else "%s:%s" % (kind, id)
+    if kind == "rulebook":
+        return "rulebook"
+    if kind == "oracle":
+        return "oracle"
+    return "%s:%s" % (kind, id)
 
 
 def parse_doc_key(key):
     if key == "rulebook":
         return "rulebook", "rulebook"
+    if key in ("oracle", "oracle:oracle"):
+        return "oracle", "oracle"
     if isinstance(key, str) and ":" in key:
         kind, _, id = key.partition(":")
         if kind in ("recipe", "verifier") and id:
@@ -140,6 +146,9 @@ def next_round_number():
 def effective_text(kind, id):
     if kind == "rulebook":
         return overlay.render()
+    if kind == "oracle":
+        from . import principles
+        return principles.oracle_text()
     from . import verifiers as V
     entries = V.load_recipes() if kind == "recipe" else V.load_verifiers()
     for e in entries:
@@ -226,12 +235,32 @@ def required_documents(con):
     reviews = load_reviews()
     rounds = len(cycle.cycle_records())
     every = review_every_rounds()
-    cands = [("rulebook", "rulebook")]
+    cands = [("rulebook", "rulebook"), ("oracle", "oracle")]
     cands += [("recipe", e["id"]) for e in V.load_recipes() if e["header"]]
     cands += [("verifier", e["id"]) for e in V.load_verifiers() if e["header"]]
     out = []
     for kind, id in cands:
         key = doc_key(kind, id)
+        if kind == "oracle":
+            from . import principles as _pr
+            recs = _pr.statements()
+            if not recs:
+                continue
+            file_text = _pr._oracle_file_text() or ""
+            entries = trace_entries(kind, id)
+            traced_texts = {e.get("statement") for e in entries.values() if isinstance(e, dict)}
+            missing = [r for r in recs if r["text"] not in traced_texts or r["text"] not in file_text]
+            reasons = []
+            if missing:
+                reasons.append("standing principles not yet integrated and traced into the "
+                               "oracle document (they are in force; this round owns the document)")
+            last = int((reviews.get(key) or {}).get("round") or 0)
+            if rounds >= every and rounds - last >= every:
+                reasons.append("no whole-document review for %d rounds" % (rounds - last))
+            if reasons:
+                out.append({"doc": key, "kind": kind, "id": id, "reasons": reasons,
+                            "lessons": [], "statements": [r["text"] for r in missing]})
+            continue
         folded = folded_lesson_ids(con, kind, id)
         traced = {int(k) for k in trace_entries(kind, id) if str(k).isdigit()}
         covered = set((reviews.get(key) or {}).get("covered") or [])
@@ -448,6 +477,8 @@ def structure_problems(kind, text, doc_id=None):
             out.append("a bullet of %d characters holds %d sentences; one instruction per "
                        "bullet (limit %d characters): %r" % (len(b), _sentence_count(b), limit, b[:60]))
     out.extend(_long_line_problems(text))
+    if kind == "oracle" and not (text or "").lstrip().startswith("# "):
+        out.append("the oracle document must start with a `# title` heading")
     if kind == "rulebook":
         out.extend(rulebook_problems(text))
     elif kind in ("recipe", "verifier"):
@@ -487,11 +518,11 @@ def validate_documents(doc, con, required=None):
     by_doc = {}
     for e in entries:
         if not isinstance(e, dict) or not e.get("doc"):
-            errs.append("each documents entry needs a doc (\"rulebook\", \"recipe:<id>\" or \"verifier:<id>\"): %r" % (e,))
+            errs.append("each documents entry needs a doc (\"rulebook\", \"oracle\", \"recipe:<id>\" or \"verifier:<id>\"): %r" % (e,))
             continue
         kind, id = parse_doc_key(e["doc"])
         if kind is None:
-            errs.append("documents entry %r: doc must be \"rulebook\", \"recipe:<id>\" or \"verifier:<id>\"" % e["doc"])
+            errs.append("documents entry %r: doc must be \"rulebook\", \"oracle\", \"recipe:<id>\" or \"verifier:<id>\"" % e["doc"])
             continue
         if kind != "rulebook" and not effective_text(kind, id):
             errs.append("document %s: no such %s" % (e["doc"], kind))
@@ -499,6 +530,14 @@ def validate_documents(doc, con, required=None):
         by_doc[e["doc"]] = e
     if required is None:
         required = required_documents(con)
+    # an oracle whose only unintegrated statements this same file scopes to their project
+    # needs no rewrite: they leave the global store in this round
+    _to_project = {e.get("text") for e in doc.get("learn") or []
+                   if isinstance(e, dict) and e.get("scope") == "project"}
+    if _to_project:
+        required = [r for r in required
+                    if not (r.get("doc") == "oracle" and r.get("statements")
+                            and all(t in _to_project for t in r["statements"]))]
     for req in required:
         if req["doc"] not in by_doc:
             errs.append("document %s: missing whole-document entry - the brief listed it (%s); add a "
@@ -584,6 +623,19 @@ def validate_documents(doc, con, required=None):
                         errs.append("lesson #%d: cannot retire it in a rewrite: %s" % (lid, why_not))
             else:
                 errs.append("lesson #%d: disposition must be carried, moved, merged or retired" % lid)
+        if kind == "oracle":
+            from . import principles as _pr
+            stmt_seen = {t["statement"]: t for t in trace
+                         if isinstance(t, dict) and isinstance(t.get("statement"), str)}
+            for rec in _pr.statements():
+                t = stmt_seen.get(rec["text"])
+                if t is None:
+                    errs.append("principle %r: no trace entry in the rewrite of oracle - give the "
+                                "exact fragment of the new text that carries it (every statement "
+                                "must be traced)" % rec["text"][:60])
+                elif not _fragment_in(t.get("fragment"), text):
+                    errs.append("principle %r: its fragment %r does not occur in the new oracle text"
+                                % (rec["text"][:60], str(t.get("fragment"))[:60]))
         if kind == "rulebook":
             _pre, new_rules = overlay.parse_rules(text)
             new_ids = [r["id"] for r in new_rules]
@@ -697,6 +749,25 @@ def apply_documents(doc, con, touched):
                  if isinstance(t, dict) and isinstance(t.get("lesson"), int)}
         if kind == "rulebook":
             _apply_rulebook(e, text, con, touched)
+        elif kind == "oracle":
+            from . import principles as _pr
+            p = _pr.oracle_path()
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            tmp = p + ".tmp%d" % os.getpid()
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.replace(tmp, p)
+            for t in e.get("trace") or []:
+                if isinstance(t, dict) and isinstance(t.get("statement"), str):
+                    entries = trace_entries(kind, id)
+                    entries[t["statement"]] = {"statement": t["statement"],
+                                                "fragment": t.get("fragment"),
+                                                "disposition": t.get("disposition") or "carried"}
+                    rec = {"doc": key, "kind": kind, "id": id, "base_hash": None, "entries": entries}
+                    overlay._write(_trace_rel(kind, id), json.dumps(rec, indent=1, sort_keys=True) + "\n")
+            _record_review(reviews, key, con, kind, id, "rewrite")
+            changed[key] = []
+            continue
         else:
             _id, rel, mine = overlay._put_entry(kind, text, id, True)
             for p in mine:

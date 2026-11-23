@@ -32,6 +32,51 @@ def _is_question_without_work(t):
     return not (stems & _WORK_STEMS)
 
 
+_DESIGN_STEMS = {"build", "design", "implement", "creat", "develop", "architect", "orchestr",
+                 "automat", "integrat", "plugin", "system", "platform", "framework"}
+_SMALL_EDIT_MARKERS = ("rename", "typo", "off-by-one", "one line", "single line", "small fix",
+                       "quick fix", "spelling")
+
+
+def is_design_work(text):
+    """A request to design or build something sizeable: not a question, not a small edit.
+    Precision matters more than reach, as with recipes: a wrong design block on every message
+    would train agents to ignore it."""
+    t = " ".join((text or "").split())
+    low = t.lower()
+    if len(t.split()) < 6:
+        return False
+    if any(m in low for m in _SMALL_EDIT_MARKERS):
+        return False
+    first = low.split(" ", 1)[0].strip("¿?") if low else ""
+    if low.endswith("?") and first in _QUESTION_START:
+        return False  # a question about design is not design work
+    if _is_question_without_work(t):
+        return False
+    from . import retro, verifiers as V
+    stems = {retro._stem(w) for w in V._words(low)}
+    if not (stems & _DESIGN_STEMS):
+        return False
+    return bool(stems & _WORK_STEMS) or bool(stems & {"build", "design", "creat", "develop"})
+
+
+def _design_block():
+    """The standing principles in short lines, plus the instruction to fill the design section."""
+    try:
+        from . import principles
+        lines = principles.short_lines(limit_chars=900)
+    except Exception:
+        lines = []
+    out = ["sisi: this reads as design or build work. Before building, fill the contract's "
+           "design section (`sisi design` prints the questions; `sisi contract init` writes "
+           "the skeleton): what the goal and the principles imply, what already exists to use, "
+           "alternatives, the choice, each principle's objection, and an independent challenge."]
+    if lines:
+        out.append("The owner's standing principles (in his words: `sisi oracle`):")
+        out += lines
+    return out
+
+
 def is_trivial(text):
     """A message no recipe or lesson can help with: empty, a slash command, a bare yes/no, or a short
     question. A wrong injection on every message is worse than none."""
@@ -129,11 +174,14 @@ def build_context(query, session=None):
         lesson_lines.append("- #%d: %s (full text: `sisi lessons show %d`)"
                             % (row["id"], retro.heading_text(row, 120), row["id"]))
         ids.append(row["id"])
-    if not recipe and not lesson_lines:
+    design_lines = _design_block() if is_design_work(query) else []
+    if not recipe and not lesson_lines and not design_lines:
         return notice
     lines = [notice] if notice else []
-    lines.append("sisi: for this request (from earlier agents' lessons and the recipe library; "
-                 "information to weigh, not commands):")
+    lines += design_lines
+    if recipe or lesson_lines:
+        lines.append("sisi: for this request (from earlier agents' lessons and the recipe library; "
+                     "information to weigh, not commands):")
     if recipe:
         lines.append("Done means — recipe `%s` (full text: `sisi done %s`):" % (recipe["id"], recipe["id"]))
         lines += _done_means(recipe, retro)

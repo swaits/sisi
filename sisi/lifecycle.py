@@ -149,7 +149,7 @@ def _move_retro_db(src, dst, notes):
             pass
 
 
-STATE_JSONL = ("learn-quarantine.jsonl", "notes.jsonl", "proposals.jsonl")
+STATE_JSONL = ("learn.jsonl", "learn-quarantine.jsonl", "notes.jsonl", "proposals.jsonl")
 
 
 def pending():

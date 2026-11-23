@@ -383,22 +383,86 @@ def _merge_rule(core_text, pid, rule_md):
     return body
 
 
-def cmd_promote(args):
-    apply = "--apply" in args
-    rest = [a for a in args if a != "--apply"]
-    if len(rest) != 1:
-        print("usage: sisi promote <id> [--apply]", file=sys.stderr)
-        return 1
-    pid = rest[0]
+def core_items():
+    """Core-tier items not yet in the product: ([lesson rows], [statement texts])."""
+    lessons = []
     try:
-        src = source()
-    except ReleaseError as e:
-        print("sisi promote: %s" % e, file=sys.stderr)
-        return 1
+        from . import retro
+        if os.path.exists(retro.db_path()):
+            con = retro.connect()
+            try:
+                lessons = [dict(r) for r in con.execute(
+                    "SELECT * FROM lessons WHERE scope='core' AND status IN ('open','applied') "
+                    "AND COALESCE(promoted,'')='' ORDER BY id")]
+            finally:
+                con.close()
+    except Exception:
+        lessons = []
+    statements = []
+    try:
+        from . import principles
+        statements = [r["text"] for r in principles.core_statements()]
+    except Exception:
+        statements = []
+    return lessons, statements
+
+
+def _norm_text(t):
+    return " ".join(str(t or "").split())
+
+
+def _product_contains(target, out, kind, clean):
+    """The product file now holds the promoted text (checked by reading it back)."""
+    try:
+        with open(target, encoding="utf-8") as fh:
+            now = fh.read()
+    except OSError:
+        return False
+    if kind == "rule":
+        from . import overlay
+        try:
+            body = overlay.parse_rule_file(clean)["body"]
+        except Exception:
+            body = clean
+        return _norm_text(body) in _norm_text(now)
+    return now == out
+
+
+def _drop_personal_copy(kind, pid, f):
+    """Once the product contains the text, the personal overlay copy goes, so nothing lives
+    in two places; core lessons folded into the item are marked promoted."""
+    try:
+        os.unlink(f)
+    except OSError:
+        pass
+    try:
+        from . import overlay
+        if kind == "rule":
+            overlay._set_base("rule", pid, None)
+            overlay.build_canon()
+    except Exception:
+        pass
+    try:
+        from . import retro, store
+        if os.path.exists(retro.db_path()):
+            con = retro.connect()
+            try:
+                con.execute("UPDATE lessons SET promoted=? WHERE scope='core' AND "
+                            "(folded_into=? OR folded_into=? OR folded_into LIKE ?)",
+                            (store.now(), pid, "rule:" + pid, "%" + pid + "%"))
+                con.commit()
+            finally:
+                con.close()
+            retro.sync("lessons: core item %s promoted into the product" % pid)
+    except Exception:
+        pass
+
+
+def _promote_overlay(pid, apply, src):
+    """The long-standing overlay promote, now dropping the personal copy once verified."""
     item = _find_item(pid)
     if not item:
-        print("sisi promote: no overlay rule, verifier or recipe with id %r in %s" % (pid, paths.overlay_dir()), file=sys.stderr)
-        return 1
+        return None
     kind, f, dest = item
     with open(f, encoding="utf-8") as fh:
         text = fh.read()
@@ -425,11 +489,177 @@ def cmd_promote(args):
         print(clean.rstrip("\n"))
         print("-" * 20 + "\nrun again with --apply to write it")
         return 0
-    os.makedirs(os.path.dirname(target), exist_ok=True)
-    tmp = target + ".sisi-tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(out)
-    os.replace(tmp, target)
-    print("written: %s (not committed). After the next release, remove the overlay copy so the two do not diverge:"
-          " `sisi overlay list`" % target)
+    already = _product_contains(target, out, kind, clean)
+    if not already:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        tmp = target + ".sisi-tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(out)
+        os.replace(tmp, target)
+    if not _product_contains(target, out, kind, clean):
+        print("sisi promote: the product does not contain the text after writing; the personal "
+              "copy is kept", file=sys.stderr)
+        return 1
+    _drop_personal_copy(kind, pid, f)
+    print("%s: %s (not committed; an ordinary uncommitted edit for your normal review). "
+          "The personal copy was dropped: the product contains the text."
+          % ("already in the product" if already else "written", target))
     return 0
+
+
+def _promote_lesson(lid, apply):
+    from . import retro
+    if not os.path.exists(retro.db_path()):
+        print("sisi promote: no lessons yet", file=sys.stderr)
+        return 1
+    con = retro.connect()
+    try:
+        row = con.execute("SELECT * FROM lessons WHERE id=?", (lid,)).fetchone()
+    finally:
+        con.close()
+    if not row:
+        print("sisi promote: no lesson with id %d" % lid, file=sys.stderr)
+        return 1
+    r = dict(row)
+    if retro._get(r, "scope") != "core":
+        print("sisi promote: lesson #%d is in the %s tier, not core; only core items are queued "
+              "for the product" % (lid, retro._get(r, "scope") or "unscoped-tier"), file=sys.stderr)
+        return 1
+    if retro._get(r, "promoted"):
+        print("lesson #%d is already in the product (promoted %s)" % (lid, retro._get(r, "promoted")))
+        return 0
+    targets = [t.strip() for t in str(r.get("folded_into") or "").split(",") if t.strip()]
+    pid = None
+    for t in targets:
+        cand = t[5:] if t.startswith("rule:") else t
+        if cand.startswith("draft:") or cand == "enforced":
+            continue
+        if _find_item(cand):
+            pid = cand
+            break
+    if pid is None:
+        print("sisi promote: lesson #%d is core but is not folded into a personal rule, recipe or "
+              "technique yet, so there is no product file to write. Fold it in a learning round "
+              "(`sisi cycle`) first, then promote it; or send it upstream with "
+              "`sisi promote --export`." % lid, file=sys.stderr)
+        return 1
+    src = dev_source()
+    if not src or not is_source(src):
+        print("sisi promote: this is not a developer install (no developer source set): nothing "
+              "was written. `sisi promote --export` writes a contribution file you may send "
+              "upstream; on a developer install (`sisi dev on PATH`) promote writes into the "
+              "source tree.", file=sys.stderr)
+        return 1
+    return _promote_overlay(pid, apply, src)
+
+
+def _export_core(path=None):
+    lessons, statements = core_items()
+    if not lessons and not statements:
+        print("no core items are waiting: nothing to export")
+        return 0
+    extra_terms = set()
+    try:
+        from . import retro
+        con = retro.connect()
+        try:
+            for r in lessons:
+                for (repo,) in con.execute("SELECT repo FROM occurrences WHERE lesson_id=?", (r["id"],)):
+                    if repo:
+                        extra_terms.add(os.path.basename(str(repo).rstrip("/")))
+        finally:
+            con.close()
+    except Exception:
+        pass
+    lines = ["# sisi core contributions", "",
+             "Universal text only: no history, no user or project names. Nothing was sent "
+             "anywhere; send this file upstream yourself if you choose.", ""]
+    for t in statements:
+        lines += ["## Statement (core)", "", t, ""]
+    for r in lessons:
+        pat = ""
+        try:
+            from . import retro
+            con = retro.connect()
+            try:
+                if r.get("pattern_id"):
+                    prow = con.execute("SELECT statement FROM patterns WHERE id=?",
+                                       (r["pattern_id"],)).fetchone()
+                    pat = prow[0] if prow else ""
+            finally:
+                con.close()
+        except Exception:
+            pat = ""
+        lines += ["## Lesson %d (core, kind %s%s)" % (r["id"], r.get("change_kind") or "",
+                                                      ", target " + r["target"] if r.get("target") else ""), ""]
+        if pat:
+            lines += ["Pattern: " + pat, ""]
+        if r.get("short"):
+            lines += [str(r["short"]), ""]
+        lines += [str(r.get("change") or ""), ""]
+        if r.get("when_terms"):
+            lines += ["When: " + str(r["when_terms"]), ""]
+    text = "\n".join(lines)
+    for term in sorted(extra_terms):
+        if len(term) >= 3:
+            text = _word(term).sub("<project>", text)
+    clean, found, left = scrub(text)
+    if left:
+        print("sisi promote: refused, personal terms remain on these lines:", file=sys.stderr)
+        for n, l in left:
+            print("  %d: %s" % (n, l), file=sys.stderr)
+        return 1
+    path = path or os.path.join(os.getcwd(), "sisi-core-contribution.md")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(clean if clean.endswith("\n") else clean + "\n")
+    print("wrote %s (%d lesson(s), %d statement(s); universal text only). Nothing was sent anywhere."
+          % (path, len(lessons), len(statements)))
+    return 0
+
+
+def cmd_promote(args):
+    apply = "--apply" in args
+    args = [a for a in args if a != "--apply"]
+    if "--export" in args:
+        rest = [a for a in args if a != "--export"]
+        if len(rest) > 1:
+            print("usage: sisi promote --export [PATH]", file=sys.stderr)
+            return 1
+        return _export_core(rest[0] if rest else None)
+    if not args:
+        lessons, statements = core_items()
+        if not lessons and not statements:
+            print("no core items are waiting to be promoted")
+            print("promote one overlay rule, recipe or technique by id: sisi promote <id> [--apply]")
+            return 0
+        print("Core items not yet in the product (in force for you through the personal overlay):")
+        for r in lessons:
+            from . import retro
+            print("  lesson:%d [%s] %s (`sisi promote lesson:%d --apply` on a developer install)"
+                  % (r["id"], r.get("change_kind") or "", retro.heading_text(r, 100), r["id"]))
+        for t in statements:
+            print("  statement (core): %r (fold it into a rule in a learning round, then promote "
+                  "the rule; or `sisi promote --export`)" % t[:100])
+        return 0
+    if len(args) != 1:
+        print("usage: sisi promote [<id>|lesson:N] [--apply] | sisi promote --export [PATH]",
+              file=sys.stderr)
+        return 1
+    pid = args[0]
+    if pid.startswith("lesson:"):
+        if not pid[7:].isdigit():
+            print("usage: sisi promote lesson:N [--apply]", file=sys.stderr)
+            return 1
+        return _promote_lesson(int(pid[7:]), apply)
+    try:
+        src = source()
+    except ReleaseError as e:
+        print("sisi promote: %s" % e, file=sys.stderr)
+        return 1
+    rc = _promote_overlay(pid, apply, src)
+    if rc is None:
+        print("sisi promote: no overlay rule, verifier or recipe with id %r in %s" % (pid, paths.overlay_dir()), file=sys.stderr)
+        return 1
+    return rc
+
+

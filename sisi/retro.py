@@ -22,6 +22,8 @@ RETIRE_SHOWS = 20  # shown this often with no recurrence (and folded somewhere) 
 MIN = {"moment": (30, 5), "cause": (15, 3), "change": (25, 4)}  # (characters, words)
 SHORT_MAX = 140
 TOPIC_MAX = 30
+PATTERN_RULE_MIN_LESSONS = 3       # a pattern explaining at least this many lessons ...
+PATTERN_RULE_MIN_OCCURRENCES = 6   # ... and at least this many incidents belongs in the rulebook
 
 
 def _get(row, key):
@@ -97,7 +99,8 @@ NEW_LESSON_COLS = (("strength", "INTEGER DEFAULT 1"), ("triggers", "TEXT"), ("ef
                    ("applied_at", "TEXT"), ("folded_into", "TEXT"), ("needs_cycle", "INTEGER DEFAULT 0"),
                    ("check_json", "TEXT"), ("change_fp", "TEXT"), ("promoted_shown", "INTEGER DEFAULT 0"),
                    ("when_terms", "TEXT"), ("short", "TEXT"), ("topic", "TEXT"),
-                   ("scope", "TEXT"), ("project", "TEXT"))
+                   ("scope", "TEXT"), ("project", "TEXT"), ("pattern_id", "INTEGER"),
+                   ("promoted", "TEXT"))
 
 
 def connect():
@@ -115,8 +118,12 @@ def connect():
     ready = bool(lcols) and all(c in lcols for c, _ in NEW_LESSON_COLS) and \
         con.execute("SELECT 1 FROM sqlite_master WHERE name='occ_lesson'").fetchone() and \
         con.execute("SELECT 1 FROM sqlite_master WHERE name='impressions'").fetchone() and \
+        con.execute("SELECT 1 FROM sqlite_master WHERE name='patterns'").fetchone() and \
         con.execute("SELECT 1 FROM sqlite_master WHERE name='sightings'").fetchone()
     if ready:
+        if con.execute("SELECT 1 FROM lessons WHERE scope='everywhere' LIMIT 1").fetchone():
+            con.execute("UPDATE lessons SET scope='unscoped-tier' WHERE scope='everywhere'")
+            con.commit()
         return con  # schema is there: executescript commits and syncs, so skip it
     con.executescript("""
     CREATE TABLE IF NOT EXISTS lessons(
@@ -129,6 +136,8 @@ def connect():
       id INTEGER PRIMARY KEY, lesson_id INTEGER, ts TEXT, session TEXT, place TEXT, occ_count INTEGER);
     CREATE TABLE IF NOT EXISTS sightings(
       id INTEGER PRIMARY KEY, lesson_id INTEGER, ts TEXT, session TEXT, moment TEXT);
+    CREATE TABLE IF NOT EXISTS patterns(
+      id INTEGER PRIMARY KEY, statement TEXT, created TEXT, folded_into TEXT);
     CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
     CREATE INDEX IF NOT EXISTS occ_repo ON occurrences(repo, ts);
     CREATE INDEX IF NOT EXISTS occ_lesson ON occurrences(lesson_id);
@@ -137,6 +146,7 @@ def connect():
     for name, decl in NEW_LESSON_COLS:  # migrate a database from before the learning loop, losing nothing
         if name not in lcols:
             con.execute("ALTER TABLE lessons ADD COLUMN %s %s" % (name, decl))
+    con.execute("UPDATE lessons SET scope='unscoped-tier' WHERE scope='everywhere'")
     con.commit()
     _backfill(con)
     return con
@@ -155,10 +165,11 @@ def _backfill(con):
 # ---- the committed dump ------------------------------------------------------
 LESSON_COLS = ("id", "created", "aim", "change_kind", "target", "moment", "cause", "change", "status", "count", "last_seen",
                "strength", "triggers", "effect", "applied_at", "folded_into", "needs_cycle", "check_json", "change_fp",
-               "promoted_shown", "when_terms", "short", "topic", "scope", "project")
+               "promoted_shown", "when_terms", "short", "topic", "scope", "project", "pattern_id", "promoted")
 OCC_COLS = ("id", "lesson_id", "ts", "session", "tool", "cwd", "repo", "moment", "fp", "delivery_s")
 IMP_COLS = ("id", "lesson_id", "ts", "session", "place", "occ_count")
 SIGHT_COLS = ("id", "lesson_id", "ts", "session", "moment")
+PATTERN_COLS = ("id", "statement", "created", "folded_into")
 
 
 def dump_lines(con):
@@ -166,7 +177,8 @@ def dump_lines(con):
     Columns a table predates are omitted, so an old dump and a new one describe the same lessons."""
     out = []
     for t, cols, table in (("lesson", LESSON_COLS, "lessons"), ("occurrence", OCC_COLS, "occurrences"),
-                           ("impression", IMP_COLS, "impressions"), ("sighting", SIGHT_COLS, "sightings")):
+                           ("impression", IMP_COLS, "impressions"), ("sighting", SIGHT_COLS, "sightings"),
+                           ("pattern", PATTERN_COLS, "patterns")):
         try:
             have = [r[1] for r in con.execute("PRAGMA table_info(%s)" % table)]
         except sqlite3.Error:
@@ -213,7 +225,9 @@ def import_jsonl(path, con):
             except ValueError:
                 continue
             t = d.pop("t", None)
-            if t == "lesson":
+            if t == "pattern":
+                cols, table, i = PATTERN_COLS, "patterns", 1
+            elif t == "lesson":
                 cols, table, i = LESSON_COLS, "lessons", 0
             elif t == "occurrence":
                 cols, table, i = OCC_COLS, "occurrences", 1
@@ -422,6 +436,98 @@ def triggers_for(change, target=None, when=None):
     return " ".join(sorted(_stems(when or "") | _stems(change) | _stems((target or "").replace("-", " "))))
 
 
+def pattern_refusal(pattern, change, cwd, moment=None):
+    """One refusal reason for a pattern, or None. Structural only: the general failure of
+    thinking in one line that would apply to unrelated work. It must not name the current
+    project (the scope module's check) and must not merely restate the incident's change."""
+    from . import scope as _scope
+    p = str(pattern or "")
+    if "\n" in p or "\r" in p:
+        return "pattern must be one line (check: pattern one line)"
+    p = " ".join(p.split())
+    if len(p) < 25 or len(p.split()) < 5:
+        return ("pattern is too short: %s - name the general failure of thinking this incident "
+                "is an instance of, in one line that would apply to unrelated work "
+                "(check: pattern length)" % _quote(p))
+    if _normalized(p) == _normalized(change) or (moment and _normalized(p) == _normalized(moment)):
+        return ("pattern merely restates the incident: %s - state the general failure of "
+                "thinking behind it instead (check: pattern differs from change)" % _quote(p))
+    reason = _scope.universal_refusal([p], cwd)
+    if reason:
+        return ("pattern %s (check: pattern names no project; a pattern must apply to "
+                "unrelated work)" % reason)
+    return None
+
+
+def get_or_create_pattern(con, statement):
+    """The id of a pattern, reusing an existing one with the same statement instead of
+    adding a duplicate (exact normalised match; near-duplicates are a learning round's job)."""
+    p = " ".join(str(statement or "").split())
+    for r in con.execute("SELECT id, statement FROM patterns ORDER BY id"):
+        if _normalized(r[1]) == _normalized(p):
+            return r[0]
+    cur = con.execute("INSERT INTO patterns(statement, created) VALUES (?,?)", (p, store.now()))
+    return cur.lastrowid
+
+
+def assign_pattern(con, lesson_id, pattern=None, pattern_id=None):
+    if pattern_id is None and pattern:
+        pattern_id = get_or_create_pattern(con, pattern)
+    if pattern_id is not None:
+        con.execute("UPDATE lessons SET pattern_id=? WHERE id=?", (int(pattern_id), lesson_id))
+    return pattern_id
+
+
+def patterns(con=None):
+    """Patterns first-class: [{id, statement, created, folded_into, lessons, n_lessons, incidents}]."""
+    own = con is None
+    if own:
+        if not os.path.exists(db_path()):
+            return []
+        con = connect()
+    try:
+        out = []
+        try:
+            rows = [dict(r) for r in con.execute("SELECT * FROM patterns ORDER BY id")]
+        except Exception:
+            return []
+        for r in rows:
+            try:
+                lessons = [dict(x) for x in con.execute(
+                    "SELECT * FROM lessons WHERE pattern_id=? ORDER BY id", (r["id"],))]
+            except Exception:
+                lessons = []
+            out.append(dict(r, lessons=[x["id"] for x in lessons], lesson_rows=lessons,
+                            n_lessons=len(lessons),
+                            incidents=sum(int(x.get("count") or 1) for x in lessons)))
+        return out
+    finally:
+        if own:
+            con.close()
+
+
+def pattern_recurrence_trend(con, pattern):
+    """'falling', 'not falling', or 'too little data': incidents in the last 7 days against the 7 before."""
+    ids = pattern.get("lessons") or []
+    if not ids:
+        return "too little data"
+    w = lambda d: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - d * 86400))
+    q = ",".join("?" * len(ids))
+    cur = con.execute("SELECT count(*) FROM occurrences WHERE lesson_id IN (%s) AND ts>=?" % q,
+                      list(ids) + [w(7)]).fetchone()[0]
+    prev = con.execute("SELECT count(*) FROM occurrences WHERE lesson_id IN (%s) AND ts>=? AND ts<?" % q,
+                       list(ids) + [w(14), w(7)]).fetchone()[0]
+    if cur + prev < 2:
+        return "too little data"
+    return "falling" if cur < prev else "not falling"
+
+
+def pattern_ready_for_rule(pattern):
+    return (pattern.get("n_lessons", 0) >= PATTERN_RULE_MIN_LESSONS
+            and pattern.get("incidents", 0) >= PATTERN_RULE_MIN_OCCURRENCES
+            and not pattern.get("folded_into"))
+
+
 def change_fp(change):
     """Fingerprint of a lesson's change, so a withdrawn form is not re-learned word for word."""
     return hashlib.sha256(" ".join(sorted(_stems(change))).encode("utf-8")).hexdigest()[:16]
@@ -622,7 +728,7 @@ def new_lesson(con, f, cwd, fp):
     cols = [r[1] for r in con.execute("PRAGMA table_info(lessons)")]
     extra_cols = [c for c in ("short", "topic", "scope", "project") if c in cols]
     _scope_vals = {"short": short, "topic": topic,
-                   "scope": (f.get("scope") or "unscoped"),
+                   "scope": (f.get("scope") or "unscoped-tier"),
                    "project": (f.get("project") or None)}
     extra_vals = [_scope_vals[c] for c in extra_cols]
     base_cols = ("created, aim, change_kind, target, moment, cause, change, status, count, last_seen,"
@@ -633,6 +739,13 @@ def new_lesson(con, f, cwd, fp):
                       (now, f["aim"], f["change_kind"], target, f["moment"].strip(), f["cause"].strip(),
                        change, now, triggers_for(change, target, when), change_fp(change), when) + tuple(extra_vals))
     lid = cur.lastrowid
+    if f.get("pattern") or f.get("pattern_id"):
+        _pid = f.get("pattern_id")
+        try:
+            _pid = int(_pid) if _pid is not None and str(_pid).strip() != "" else None
+        except (TypeError, ValueError):
+            _pid = None
+        assign_pattern(con, lid, pattern=f.get("pattern"), pattern_id=_pid)
     add_occurrence(con, lid, f["moment"].strip(), cwd, fp)
     apply_effect(con, lid)  # every lesson takes effect on its first occurrence
     return lid
@@ -834,10 +947,12 @@ def satisfied(repo, since, fp):
 
 
 TEMPLATE = ('sisi: before you finish, record how this work could have gone better. The question is how, not whether. Run:\n'
-            '  sisi retro --aim <level|verified|hands-off|intent|speed> --moment "<what concretely happened: the point it went slower, weaker or wider than it should have, quoting a command, file or number>" '
+            '  sisi retro --scope <core|user|project> --aim <level|verified|hands-off|intent|speed> --moment "<what concretely happened: the point it went slower, weaker or wider than it should have, quoting a command, file or number>" '
             '--cause "<why>" --change-kind <rule|recipe|verifier|oracle|tool|brief> --change "<the specific change to sisi that would make the next agent do it right without being told>" '
             '--when "<at least 5 comma-separated words or short phrases for the kinds of work this applies to, in the words a different agent would use, synonyms included; '
-            'for a CSV lesson: csv, tsv, spreadsheet, tabular data, import, export, parse, delimited file>" [--target <verifier or recipe id>]\n'
+            'for a CSV lesson: csv, tsv, spreadsheet, tabular data, import, export, parse, delimited file>" '
+            '--pattern "<the general failure of thinking this incident is an instance of, in one line that would apply to unrelated work>" '
+            '(or --pattern-id N to reuse one; `sisi retro patterns` lists them) [--target <verifier or recipe id>]\n'
             '"Nothing" and generic advice are refused. If an earlier lesson already covers it, add --same-as ID instead. (send-back {n})')
 
 
@@ -1184,7 +1299,8 @@ def _parse(argv):
     f, flags, i = {}, set(), 0
     names = {"--aim": "aim", "--moment": "moment", "--cause": "cause", "--change-kind": "change_kind",
              "--change": "change", "--target": "target", "--same-as": "same_as", "--when": "when",
-             "--short": "short", "--topic": "topic", "--scope": "scope", "--project": "project"}
+             "--short": "short", "--topic": "topic", "--scope": "scope", "--project": "project",
+             "--pattern": "pattern", "--pattern-id": "pattern_id"}
     while i < len(argv):
         a = argv[i]
         if a in names:
@@ -1205,7 +1321,28 @@ def _parse(argv):
     return f, flags
 
 
+def cmd_retro_patterns():
+    pats = patterns()
+    if not pats:
+        print("no patterns yet: name the general failure of thinking behind this incident "
+              "with --pattern (one line that would apply to unrelated work)")
+        return 0
+    print("Patterns so far - reuse one with --pattern-id N instead of inventing a near-duplicate:")
+    con = connect()
+    try:
+        for p in pats:
+            print("  %d. %s (%d lesson(s), %d incident(s); recurrence %s%s)"
+                  % (p["id"], p["statement"], p["n_lessons"], p["incidents"],
+                     pattern_recurrence_trend(con, p),
+                     "; in the rulebook" if p.get("folded_into") else ""))
+    finally:
+        con.close()
+    return 0
+
+
 def cmd_retro(argv, stdin=None):
+    if argv and argv[0] == "patterns":
+        return cmd_retro_patterns()
     try:
         f, flags = _parse(argv)
     except ValueError as e:
@@ -1224,7 +1361,7 @@ def cmd_retro(argv, stdin=None):
             if k == "new":
                 if v:
                     flags.add("new")
-            elif isinstance(v, (str, int)) and k in ("aim", "moment", "cause", "change_kind", "change", "target", "same_as", "when", "short", "topic", "scope", "project"):
+            elif isinstance(v, (str, int)) and k in ("aim", "moment", "cause", "change_kind", "change", "target", "same_as", "when", "short", "topic", "scope", "project", "pattern", "pattern_id"):
                 f.setdefault(k, str(v))
     for k in list(f):
         f[k] = f[k].strip()
@@ -1234,15 +1371,30 @@ def cmd_retro(argv, stdin=None):
         print("sisi retro: refused, nothing was recorded:")
         for e in errs:
             print("  - " + e)
-        print("Answer how it could have gone better, concretely: see `sisi help` and canon rule 7.")
+        print("Answer how it could have gone better, concretely: see `sisi help` and the rule "
+              "retro-every-time (`sisi rule retro-every-time`).")
         return 2
+    if not same:
+        if not (f.get("pattern") or "").strip() and not str(f.get("pattern_id") or "").strip():
+            print("sisi retro: refused, nothing was recorded: --pattern is required: the general "
+                  "failure of thinking this incident is an instance of, in one line that would "
+                  "apply to unrelated work. `sisi retro patterns` lists the patterns so far; "
+                  "reuse one with --pattern-id N instead of inventing a near-duplicate.")
+            return 2
+        if (f.get("pattern") or "").strip():
+            reason = pattern_refusal(f["pattern"], f.get("change"), os.getcwd(), f.get("moment"))
+            if reason:
+                print("sisi retro: refused, nothing was recorded: %s" % reason)
+                return 2
     if not same:
         from . import scope as _scope
         sc = f.get("scope")
-        if sc not in _scope.SCOPES:
+        if sc not in _scope.SCOPES and sc != "everywhere":
             print(_scope.MISSING_SCOPE)
             return 2
-        if sc == "everywhere":
+        sc = _scope.normalize_scope(sc)
+        f["scope"] = sc
+        if sc in ("core", "user", "unscoped-tier"):
             reason = _scope.universal_refusal(
                 [f.get("change"), f.get("short"), f.get("when")], os.getcwd(), kind=f.get("change_kind"))
             if reason:
@@ -1262,11 +1414,21 @@ def cmd_retro(argv, stdin=None):
                       "withdrawn because the problem kept recurring after it was enforced. Record what is "
                       "different this time, not the same change again." % w[0])
                 return 2
+        if str(f.get("pattern_id") or "").strip():
+            pid = f["pattern_id"]
+            if not str(pid).isdigit() or not con.execute("SELECT 1 FROM patterns WHERE id=?", (int(pid),)).fetchone():
+                print("sisi retro: no pattern with id %r (see `sisi retro patterns`)" % pid)
+                return 2
         if same:
             if not same.isdigit() or not con.execute("SELECT 1 FROM lessons WHERE id=?", (int(same),)).fetchone():
                 print("sisi retro: no lesson with id %r (see `sisi lessons`)" % same)
                 return 2
             lid = int(same)
+            if f.get("pattern") or f.get("pattern_id"):
+                cur = con.execute("SELECT pattern_id FROM lessons WHERE id=?", (lid,)).fetchone()
+                if cur and not cur[0]:
+                    assign_pattern(con, lid, pattern=f.get("pattern"),
+                                   pattern_id=int(f["pattern_id"]) if str(f.get("pattern_id") or "").isdigit() else None)
             add_occurrence(con, lid, f["moment"], cwd, None)
             con.commit()
             applied = maybe_auto_apply(con, lid)
@@ -1376,14 +1538,22 @@ def digest_lines(include_all=False, con=None):
             con.close()
     if not include_all:
         rows = [r for r in rows if r.get("status") not in ("retired", "withdrawn", "superseded")]
-    said = []
+    from . import scope as _scope0
+    said, said_core, said_user = [], [], []
     try:
-        for rec in store.read("quarantine"):
+        for rec in store.read("learn"):
             t = " ".join(str(rec.get("text") or "").split())
-            if t and rec.get("scope") != "project":
+            if not t:
+                continue
+            tier = _scope0.tier_of(rec.get("scope"))
+            if tier == "core":
+                said_core.append(t)
+            elif tier == "user":
+                said_user.append(t)
+            elif tier != "project":
                 said.append(t)
     except Exception:
-        said = []
+        said, said_core, said_user = [], [], []
     # any project-scoped rows still in the store (recorded before handover, not yet moved)
     # are not global lessons: the digest names only how many wait to be filed, per project
     from . import scope as _scope, handover as _ho
@@ -1410,8 +1580,59 @@ def digest_lines(include_all=False, con=None):
         for t in said:
             out.append('- "%s"' % t)
         out.append("")
+    active_ids = {r["id"] for r in rows}
+    try:
+        _pcon = connect()
+        try:
+            pats = [p for p in patterns(_pcon) if active_ids & set(p.get("lessons") or [])]
+            trends = {p["id"]: pattern_recurrence_trend(_pcon, p) for p in pats}
+        finally:
+            _pcon.close()
+    except Exception:
+        pats, trends = [], {}
+    if pats:
+        out.append("## Patterns")
+        out.append("The handful of general failures of thinking behind the incidents below; "
+                   "each lesson under one says what to do differently.")
+        for p in sorted(pats, key=lambda x: (-(x.get("incidents") or 0), x.get("id") or 0)):
+            state = "in the rulebook" if p.get("folded_into") else "not in the rulebook yet"
+            out.append("- %s (pattern %d; explains %d incident(s) in %d lesson(s): %s; "
+                       "recurrence %s; %s)"
+                       % (p["statement"], p["id"], p.get("incidents") or 0, p.get("n_lessons") or 0,
+                          ", ".join("lesson %d" % i for i in p.get("lessons") or []) or "-",
+                          trends.get(p["id"], "too little data"), state))
+        out.append("")
+    def _tier_line(r, extra_state=None):
+        text = " ".join(str(r["short"]).split()) if (r.get("short") or "").strip() else word_cut(r.get("change") or "", 140)
+        line = "- %s (lesson %d; %s" % (text, r["id"], extra_state or plain_state(r))
+        if (r.get("count") or 1) > 1:
+            line += "; seen %d times" % r["count"]
+        return line + ")"
+
+    core_rows = [r for r in rows if _scope.row_scope(r) == "core"]
+    user_rows = [r for r in rows if _scope.row_scope(r) == "user"]
+    rest_ids = {r["id"] for r in core_rows + user_rows}
+    if core_rows or said_core:
+        out.append("## In sisi itself, for every user")
+        out.append("Changes to sisi itself: in force for you now, and queued for the product "
+                   "until promoted (`sisi promote`).")
+        for t in said_core:
+            out.append('- "%s" (what you said; waiting to be promoted)' % t)
+        for r in sorted(core_rows, key=lambda x: x.get("id")):
+            out.append(_tier_line(r, "in the product" if _get(r, "promoted")
+                                   else "waiting to be promoted"))
+        out.append("")
+    if user_rows or said_user:
+        out.append("## How you want work done")
+        for t in said_user:
+            out.append('- "%s" (what you said)' % t)
+        for r in sorted(user_rows, key=lambda x: x.get("id")):
+            out.append(_tier_line(r))
+        out.append("")
     groups = {}
     for r in summarized:
+        if r["id"] in rest_ids:
+            continue
         groups.setdefault(" ".join(str(r["topic"]).split()), []).append(r)
     for topic in sorted(groups, key=lambda t: (-len(groups[t]), t)):
         out.append("## %s" % topic)
@@ -1421,6 +1642,7 @@ def digest_lines(include_all=False, con=None):
                 line += "; seen %d times" % r["count"]
             out.append(line + ")")
         out.append("")
+    pending = [r for r in pending if r["id"] not in rest_ids]
     if pending:
         out.append("## Not yet summarized")
         for r in sorted(pending, key=lambda x: x.get("id")):
@@ -1469,7 +1691,17 @@ def cmd_lessons(argv):
             from . import scope as _scope
             _sc = _scope.row_scope(r)
             print("scope : %s%s" % (_sc, (" (%s)" % _get(r, "project")) if _sc == "project" else
-                                    " (not yet scoped; a learning round will ask)" if _sc == "unscoped" else ""))
+                                    " (not yet tiered; a learning round will ask)" if _sc == "unscoped-tier" else ""))
+            _pid = _get(r, "pattern_id")
+            _pstmt = None
+            if _pid:
+                try:
+                    _prow = con.execute("SELECT statement FROM patterns WHERE id=?", (_pid,)).fetchone()
+                    _pstmt = _prow[0] if _prow else None
+                except Exception:
+                    _pstmt = None
+            print("pattern: %s" % (("%d. %s" % (_pid, _pstmt)) if _pstmt else
+                                   "- (none yet; a learning cycle can assign one)"))
             print("change: %s" % r["change"])
             print("short : %s" % (_get(r, "short") or "- (none yet; a learning cycle can write one)"))
             print("topic : %s" % (_get(r, "topic") or "-"))
