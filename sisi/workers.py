@@ -21,6 +21,12 @@ Personal files (all in the personal data folder):
   model-strength.json      worker facts (benchmark standing, a published figure; never the measured
                            accepted rate): {"models": {"<model or worker>":
                            {"standing": 0..100, "source": text, "date": "YYYY-MM-DD"}}}
+  worker-models.json       what the lead agent decided about each model: {"models": {"<model or worker>":
+                           {"class": name, "family": name, "maker": name, "released": "YYYY-MM-DD",
+                           "source": text, "date": "YYYY-MM-DD"}}, "classes": {"<maker>": {"order": [class,
+                           most capable first], "source": text, "date": "YYYY-MM-DD"}}}, written by
+                           `sisi workers fact --class ...` and `sisi workers classes`. A recorded
+                           fact always beats what the parser reads from the id (sisi/modelid.py).
   worker-prefs.json        the user's own routing constraints: {"avoid": [{"pattern", "why"}],
                            "prefer": [...], "only": [{"provider", "patterns", "why"}]}, written by
                            `sisi workers avoid|prefer|only`
@@ -33,7 +39,7 @@ researched when they are missing or old. No price, score or model name ships in 
 import datetime, json, os, re, shutil, statistics, subprocess, sys, time, uuid
 
 from . import brief as brief_contract
-from . import paths, routing, store
+from . import modelid, paths, routing, store
 
 LIST_TIMEOUT_S = 30
 DEFAULT_REFRESH_AFTER_S = 24 * 3600
@@ -568,6 +574,28 @@ def entry_cost(entry):
     return float(single) if isinstance(single, (int, float)) and not isinstance(single, bool) else None
 
 
+def models_path():
+    return _data_file("worker-models.json")
+
+
+def load_model_facts():
+    """({worker or model: class fact}, {maker: class order}) from worker-models.json."""
+    d = read_json(models_path())
+    models = d.get("models") if isinstance(d.get("models"), dict) else {}
+    classes = d.get("classes") if isinstance(d.get("classes"), dict) else {}
+    return models, classes
+
+
+_WORDS = []
+
+
+def model_words():
+    """The tier words and ignored words in canon/model-words.json (data the parser reads; cached)."""
+    if not _WORDS:
+        _WORDS.append(read_json(paths.canon("model-words.json")))
+    return _WORDS[0]
+
+
 def route_floors():
     """{difficulty: percent of the best usable standing needed} from `route.standing_floor`."""
     return routing.standing_floors(route_cfg().get("standing_floor"))
@@ -615,10 +643,11 @@ def build_candidates(disc=None, records=None):
     records = read_records() if records is None else records
     prices = load_prices()
     prior = load_strength_prior()
+    model_facts = load_model_facts()[0]
     disc_tools = disc.get("tools") or []
     cands, seen = [], set()
 
-    def add(tool, model, usable=True, reason=None, allowance=None, tool_plan=None):
+    def add(tool, model, usable=True, reason=None, allowance=None, tool_plan=None, host_native=False):
         worker = _canonical(tool, model) if tool else str(model)
         if worker.lower() in seen:
             return None
@@ -628,7 +657,11 @@ def build_candidates(disc=None, records=None):
         prior_entry = next((prior[k] for k in (worker, model)
                             if k and isinstance(prior.get(k), dict)), {})
         standing = standing_of(prior_entry)
-        c = {"worker": worker, "tool": tool, "model": model,
+        fact = next((model_facts[k] for k in (worker, model) if k and isinstance(model_facts.get(k), dict)), {})
+        maker_fact = price.get("maker") or prior_entry.get("maker") or fact.get("maker")
+        lineage = modelid.resolve(worker, model_words(), fact=dict(fact, maker=maker_fact) if maker_fact else fact,
+                                  host_native=host_native)
+        c = {"worker": worker, "lineage": lineage, "tool": tool, "model": model,
              "maker": price.get("maker") or prior_entry.get("maker") or routing.maker_of(model or worker),
              "plan": price.get("plan") or tool_plan,
              "cost": cost,
@@ -664,7 +697,7 @@ def build_candidates(disc=None, records=None):
         if "/" not in str(w):
             # No provider prefix: the host tool's own subagent model. It needs no discovered
             # command-line tool and is usable unless marked down (routing checks that).
-            c = add(None, str(w), usable=True)
+            c = add(None, str(w), usable=True, host_native=True)
             if c is not None:
                 c["host_native"] = True
                 alias_set.add(str(w).lower())
@@ -777,7 +810,7 @@ def notes_for(candidates_by_worker, chosen, passed, notes=None, limit=5):
 
 
 DATA_FILES = ("delegations.jsonl", "worker-availability.json", "worker-prices.json",
-              "model-strength.json", "worker-prefs.json", "worker-notes.json")
+              "model-strength.json", "worker-prefs.json", "worker-notes.json", "worker-models.json")
 
 
 def _data_state():
@@ -1376,6 +1409,36 @@ def _price_lines(tool_name, models, prices, shown_keys=None):
     return lines
 
 
+def _recency_text(l):
+    if l.get("alias"):
+        return "newest of its class (a bare host alias)"
+    bits = []
+    if l.get("released"):
+        bits.append("released %s (recorded)" % l["released"])
+    if l.get("version"):
+        bits.append("version %s" % ".".join(str(x) for x in l["version"]))
+    if l.get("date"):
+        bits.append("dated %s" % l["date"])
+    return ", ".join(bits) or "no version or date in the id"
+
+
+def model_lines(cands, limit=40):
+    """One line per routable worker: its maker, class (recorded, or a guess read from the id, or unknown) and
+    how recent it is. Workers whose class is only a guess say so; unknown ones say how to record it."""
+    out = []
+    for c in sorted(cands, key=lambda c: c["worker"]):
+        l = c.get("lineage") or {}
+        if l.get("source") == "unknown" or not l:
+            what = "class unknown: the id does not say it with confidence"
+        else:
+            what = "maker %s, class %s (%s)" % (l["maker"], l["label"], "recorded" if l["source"] == "fact"
+                                               else "a guess read from the id")
+        out.append("  %s: %s; %s" % (c["worker"], what, _recency_text(l)))
+    if len(out) > limit:
+        out = out[:limit] + ["  ... and %d more" % (len(out) - limit)]
+    return out
+
+
 def cmd_workers(args=()):
     args = list(args)
     if args[:1] == ["fact"]:
@@ -1444,6 +1507,12 @@ def cmd_workers(args=()):
         for standing, worker, entry in standings:
             print("  benchmark standing %g - %s: %s (%s)" % (standing, worker, entry.get("source") or "no source stated",
                                                           entry.get("date") or "no date stated"))
+    routable, cold, _excluded = routable_candidates(build_candidates(disc, records), records)
+    if routable and not cold:
+        print("Model lines (the class of each routable worker; a guess is read from the id alone: confirm it "
+              "with `sisi workers fact WORKER --class NAME --source S`):")
+        for line in model_lines(routable):
+            print(line)
     down_now = [(k, v) for k, v in sorted(avail.items()) if isinstance(v, dict)]
     for k, v in down_now:
         if k in {t["name"] for t in disc.get("tools") or []}:
@@ -1880,7 +1949,9 @@ def _cmd_import(args):
 def _cmd_fact(args):
     usage = ("usage: sisi workers fact WORKER --price-in N --price-out N [--plan flat|per-use] [--maker M] --source S [--date YYYY-MM-DD]\n"
              "       sisi workers fact WORKER --price N (one blended figure) [--plan ...] [--maker M] --source S\n"
-             "       sisi workers fact WORKER --standing 0..100 --source S [--date YYYY-MM-DD]   (--score is the old name)")
+             "       sisi workers fact WORKER --standing 0..100 --source S [--date YYYY-MM-DD]   (--score is the old name)\n"
+             "       sisi workers fact WORKER --class NAME [--family NAME] [--maker M] [--released YYYY-MM-DD] --source S\n"
+             "       (the class, family and release date the lead agent decided for a model; a recorded fact beats the parser)")
     if not args:
         print(usage)
         return 1
@@ -1897,10 +1968,13 @@ def _cmd_fact(args):
     if not (price_ok and in_ok and out_ok and standing_ok and old_ok):
         print(usage)
         return 1
+    model_fact = _model_fact_args(args)
+    if model_fact is False:
+        return 1
     if (price_in is None) != (price_out is None) or (price is not None and price_in is not None):
         print("sisi: record either --price-in with --price-out, or one blended --price, not a mix", file=sys.stderr)
         return 1
-    if price is None and price_in is None and standing is None:
+    if price is None and price_in is None and standing is None and not model_fact:
         print(usage)
         return 1
     if min([v for v in (price, price_in, price_out) if v is not None] or [0]) < 0:
@@ -1912,6 +1986,16 @@ def _cmd_fact(args):
     if standing is not None and not (0 <= standing <= 100):
         print("sisi: --standing wants a number from 0 to 100", file=sys.stderr)
         return 1
+    if model_fact:
+        data = read_json(models_path())
+        models = data.get("models") if isinstance(data.get("models"), dict) else {}
+        entry = dict(models.get(worker) or {})
+        entry.update(model_fact, source=source, date=date)
+        models[worker] = entry
+        data["models"] = models
+        write_json(models_path(), data)
+        print("recorded for %s: %s (from %s, %s)" % (worker, ", ".join("%s %s" % kv for kv in sorted(model_fact.items())),
+                                                    source, date))
     if price is not None or price_in is not None:
         plan = _opt(args, "--plan")
         if plan is not None and plan not in ("flat", "per-use"):
@@ -1956,6 +2040,34 @@ def _cmd_fact(args):
         write_json(strength_path(), data)
         print("recorded benchmark standing for %s: %g (from %s, %s)" % (worker, standing, source, date))
     return 0
+
+
+_NAME = re.compile(r"[a-z0-9][a-z0-9.+-]*")
+
+
+def _model_fact_args(args):
+    """{class, family, maker, released} from the command line, {} when none is given, False (after saying why)
+    when one is malformed. The maker alone belongs to a price or standing fact, so it is read here only
+    beside a class, family or release date."""
+    out = {}
+    for opt, field in (("--class", "class"), ("--family", "family"), ("--released", "released")):
+        v = _opt(args, opt)
+        if v is None:
+            continue
+        v = v.strip().lower()
+        if field == "released":
+            try:
+                datetime.date.fromisoformat(v)
+            except ValueError:
+                print("sisi: --released wants a date as YYYY-MM-DD", file=sys.stderr)
+                return False
+        elif not _NAME.fullmatch(v):
+            print("sisi: %s wants a short name (letters, digits, hyphens)" % opt, file=sys.stderr)
+            return False
+        out[field] = v
+    if out and _opt(args, "--maker"):
+        out["maker"] = _opt(args, "--maker").strip().lower()
+    return out
 
 
 def _cmd_pref(kind, args):
