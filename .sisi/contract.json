@@ -47,7 +47,9 @@
   "assumptions": [
     "Tests never touch the real home: SISI_HOME and SISI_STATE point to temp dirs.",
     "The critique, plan and design section are added to this contract once the inventory of the existing system (SPEC 19, steps 1-4) is back; implementation checks are added with the plan.",
-    "Work happens on a branch with local commits as checkpoints; nothing is pushed without the owner asking."
+    "Work happens on a branch with local commits as checkpoints; nothing is pushed without the owner asking.",
+    "Owner amendment 2026-11-23: the standalone orch.py is deprecated and orchestration becomes a core part of sisi, generic and strategic (objectives for discovering models, prices and benchmarks, measuring performance, dispatching dynamically; no named models), feeding the objective function on wall time, cost and efficiency.",
+    "Owner amendment 2026-11-23: gross change and re-architecture are acceptable; the only measure is implementing the specification plus the orchestration layer perfectly. Backward compatibility with the old design is not a goal."
   ],
   "questions": [],
   "design": {
@@ -159,6 +161,12 @@
         "applicable": true,
         "objection": "Do not leave me with a journal of lessons that grows forever.",
         "answer": "The baseline measures what the lessons are really worth. The plan replaces appended notes with structured learning records that end in a mechanism or are closed with a reason, and keeps the rulebook as one whole document rebuilt from its parts."
+      },
+      {
+        "principle": "OBTW part of this is deprecating the whole standalone orch.py thing to make that a core part of sisi. But it should be GENERIC and STRATEGIC in direction, so the agent works out the tactics on the fly. IOW, it shouldn't explicitly say use THIS EXACT MODEL or whatever. It sets out OBJECTIVES about how to discover models, discover pricing, discover benchmarking, measure performance, and dispatch and orchestrate DYNAMICALLY and INTELLIGENTLY. And it can leverage subagents with specific orchestration tasks like assessing, routing decisions, whatever. That could be a Haiku/Ember level model sometimes too! This should play DIRECTLY into the main system's objective function, especially around wall time, cost, efficiency.",
+        "applicable": true,
+        "objection": "Do not ship my hand-written list of models as the product's orchestrator, and do not leave orch.py running beside it.",
+        "answer": "The product carries direction and a record, and names no model: objectives for discovering what is installed, what it costs and how it scores, a judged ledger in the user store, a recommendation command, a delegation contract, and the option of handing orchestration legwork to a cheap worker. Delegation time, tokens and overlap feed the work unit's scorecard. The old ledger is merged with a row-count check and orch.py and its section of the Claude instructions are then removed (docs/target.md section 9)."
       }
     ],
     "challenge": {
