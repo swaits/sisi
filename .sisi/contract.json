@@ -49,7 +49,8 @@
     "The critique, plan and design section are added to this contract once the inventory of the existing system (SPEC 19, steps 1-4) is back; implementation checks are added with the plan.",
     "Work happens on a branch with local commits as checkpoints; nothing is pushed without the owner asking.",
     "Owner amendment 2026-11-23: the standalone orch.py is deprecated and orchestration becomes a core part of sisi, generic and strategic (objectives for discovering models, prices and benchmarks, measuring performance, dispatching dynamically; no named models), feeding the objective function on wall time, cost and efficiency.",
-    "Owner amendment 2026-11-23: gross change and re-architecture are acceptable; the only measure is implementing the specification plus the orchestration layer perfectly. Backward compatibility with the old design is not a goal."
+    "Owner amendment 2026-11-23: gross change and re-architecture are acceptable; the only measure is implementing the specification plus the orchestration layer perfectly. Backward compatibility with the old design is not a goal.",
+    "Owner amendment 2026-11-23: at cutover the old orch.py and everything related to it (its folder, ledger, routing table and the orchestrator section of his Claude instructions) is removed completely, after its ledger is merged into the user store and a backup is taken. He will restart T3 Code and try the release in a new session in ~/Code/highroute, and wants to be told the moment it is ready."
   ],
   "questions": [],
   "design": {
