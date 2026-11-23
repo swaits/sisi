@@ -221,6 +221,8 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
 
     def load_ratio(c):
         left = c.get("allowance_pct_left")
+        if left is None and c.get("host_native"):
+            return 0.0   # a host worker has no allowance to spread work across: the record decides
         weight = float(left) if left else UNKNOWN_ALLOWANCE
         return stats.get(c["worker"], {}).get("uses", 0) / max(weight, 1.0)
 

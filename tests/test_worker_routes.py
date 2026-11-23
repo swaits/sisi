@@ -78,6 +78,35 @@ class HostNativeTests(RouteCase):
         self.assertNotIn("wk-", r.stdout.splitlines()[0])
 
 
+class DownProvidersTests(RouteCase):
+    def test_host_worker_recommended_while_providers_are_down(self):
+        """R-7.2-1, R-7.2-3, R-17-5: every provider down, a record exists: route still names the best
+        host worker, says which providers are down and when each is due, and gives the mechanism."""
+        self.seed_real_shape()
+        self.down("muse", "codex")
+        r = self.sisi("route", "--kind", "impl", "--difficulty", "2", env=self.env())
+        self.assertEqual(r.returncode, 0, r.stdout)
+        lines = r.stdout.splitlines()
+        self.assertTrue(lines[0].startswith("wk-"), r.stdout)
+        self.assertIn("host's own subagent tool", r.stdout)
+        down = [l for l in lines if l.startswith("down now")]
+        self.assertEqual(len(down), 1, r.stdout)
+        self.assertIn("muse", down[0])
+        self.assertIn("codex", down[0])
+        self.assertIn("2099-01-02", down[0])
+
+    def test_nothing_usable_says_exactly_what_to_do(self):
+        """R-7.2-3, R-17-5: only when nothing is usable does route say so, with providers, due times
+        and that the main agent does the task itself meanwhile."""
+        self.seed([("muse/beta-1", 12, 11), ("codex/alpha-1", 9, 8)])
+        self.down("muse", "codex")
+        r = self.sisi("route", "--kind", "impl", "--difficulty", "2", env=self.env())
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no usable worker", r.stdout)
+        self.assertIn("2099-01-02", r.stdout)
+        self.assertIn("main agent does this task itself", r.stdout)
+
+
 class SessionStartTests(RouteCase):
     def tick(self, sid, model="mystery-9", source="startup"):
         return self.sisi("tick", stdin=json.dumps({"session_id": sid, "cwd": self.proj, "source": source,

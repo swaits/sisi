@@ -1291,6 +1291,22 @@ def cmd_workers(args=()):
     return 0
 
 
+def _down_now(avail, now):
+    """[(key, entry)] for every provider or worker marked down whose retry time is still ahead."""
+    return [(k, v) for k, v in sorted((avail or {}).items())
+            if isinstance(v, dict) and float(v.get("retry_at") or 0) > now]
+
+
+def _down_lines(down, limit=3):
+    """One line naming what is down and when each is due for another try, or nothing."""
+    if not down:
+        return []
+    shown = ["%s (%s, next try %s)" % (k, v.get("reason") or "down", _when(v.get("retry_at")))
+             for k, v in down[:limit]]
+    more = " and %d more" % (len(down) - limit) if len(down) > limit else ""
+    return ["down now: %s%s" % ("; ".join(shown), more)]
+
+
 def _route_setup(args):
     ensure_imported()
     kind = _opt(args, "--kind")
@@ -1318,14 +1334,22 @@ def cmd_route(args=()):
     result = routing.choose(candidates, records, read_availability(), kind, difficulty,
                             review_of=_opt(args, "--review-of"), now=time.time(),
                             avoid=prefs["avoid"], prefer=prefs["prefer"])
+    down = _down_now(read_availability(), time.time())
     if result["choice"] is None:
         print("no usable worker for kind %s at difficulty %d" % (kind, difficulty))
+        for line in _down_lines(down):
+            print(line)
+        print("nothing is usable right now: the main agent does this task itself meanwhile, "
+              "and tries `sisi route` again after the next-try time above%s."
+              % ("" if down else " or once a worker is recorded or fixed (`sisi workers`)"))
         if "--explain" in args:
             for line in routing.explain_choice(result, kind, difficulty)[1:]:
                 print(line)
         return 1
     print(result["choice"]["worker"])
     print("mechanism: %s" % mechanism_for(result["choice"]))
+    for line in _down_lines(down):
+        print(line)
     if "--explain" in args:
         for line in routing.explain_choice(result, kind, difficulty):
             print(line)
