@@ -683,7 +683,8 @@ def classify(tool, payload, cmd):
     t = tool or ""
     if t in _list("edit_tools") or any(w in t.lower() for w in _list("edit_name_words")):
         return "edit"
-    if t in _list("delegation_tools"):
+    from . import orchestration
+    if orchestration.is_delegation(store.tool() or "claude-code", t):
         return "delegate"
     if watch.is_shell(t, cmd):
         return "shell"
@@ -805,22 +806,22 @@ def before(payload):
 
 
 def _before(payload):
-    from . import attribution, watch, workers
+    from . import attribution, watch, workerid
     tool, cmd, _ev, cwd, sid = watch.extract(payload)
     kind = classify(tool, payload, cmd)
     if kind is None:
         return None
-    if not store.config()["gate"].get("enabled", True) or workers.is_subagent_payload(payload):
+    if not store.config()["gate"].get("enabled", True):
         return None
     sid = sid or "cwd-" + cwd
+    if workerid.session_is_worker(payload, sid, cwd):
+        return None
     if kind == "shell":
         if CLAIM_RE.search(cmd or ""):
             note_claim(sid, cwd)
         if watch._may_write(cmd) is False or _is_sisi_command(cmd):
             return None
     sess = store.load_session(sid)
-    if sess.get("subagent"):
-        return None
     top = git_top(cwd)
     if top is None:
         return None  # nothing to measure outside a repository
@@ -918,12 +919,12 @@ def after(payload):
 
 
 def _after(payload):
-    from . import watch
+    from . import watch, workerid
     tool, cmd, _ev, cwd, sid = watch.extract(payload)
     sid = sid or "cwd-" + cwd
     sess = store.load_session(sid)
-    if not sess:
-        return
+    if not sess or workerid.session_is_worker(payload, sid, cwd):
+        return  # a worker's changes are its parent's to answer for, never bookkept as this session's
     dirty = False
     top = git_top(cwd)
     if sess.get("ug_will_bind"):
@@ -933,7 +934,7 @@ def _after(payload):
         if c is not None:
             bind(sid, proj, c, "wrote")
             sess = store.load_session(sid)
-    if top and classify(tool, payload, cmd) == "shell" and not sess.get("subagent"):
+    if top and classify(tool, payload, cmd) == "shell":
         dirty = _absorb(sess, top) or dirty  # a change the before-hook could not see: the next counted call answers for it
     if dirty:
         store.save_session(sid, sess)

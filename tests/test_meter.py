@@ -245,7 +245,7 @@ class WhoIsMeteredTests(MeterBase):
     def test_a_main_prompt_that_only_mentions_worker_later_is_still_metered(self):
         from sisi import brief
         line = brief.template().splitlines()[0]
-        self.prompt("fix the parser, and remember this: " + line + " you are a worker of mine")
+        self.prompt("fix the parser and explain each module in the project. " * 8 + "remember this: " + line + " you are a worker of mine")
         self.assertEqual(self.read_n(8), [False] * 6 + [True] * 2)
         # nor does a brief line in the second prompt change a session that began as a main thread
         self.prompt(line + " again please do this")

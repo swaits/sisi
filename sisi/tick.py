@@ -103,8 +103,8 @@ def main(args=()):
             store.log_error("tick-workers", e)
         try:
             sess3 = rec or store.load_session(sid)
-            from . import workers as _W3
-            if not sess3.get("subagent") and not _W3.is_subagent_payload(payload):
+            from . import workers as _W3, workerid as _WI
+            if not _WI.is_worker_session(payload, sess3, {}):
                 line = _W3.new_worker_line()
                 if line:
                     sys.stdout.write(line + "\n")

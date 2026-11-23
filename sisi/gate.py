@@ -251,15 +251,13 @@ def _decide(payload):
     cfg = store.config()
     if not cfg["gate"].get("enabled", True):
         return "allow", None
-    from . import workers
-    if workers.is_subagent_payload(payload):
-        return decide_subagent(payload)
+    from . import workerid
     cwd = _cwd(payload)
     sid = _session_key(payload, cwd)
+    if workerid.session_is_worker(payload, sid, cwd):
+        return decide_subagent(payload)  # a worker's last message is its report to the agent that started it
     os.environ["SISI_SESSION_ID"] = sid
     sess = store.load_session(sid)
-    if sess.get("subagent"):
-        return "allow", None  # a session another agent started: its last message is its report to that agent
     if not (sess.get("started") or sess.get("first_seen")):
         sess["first_seen"] = store.now()
     top = gitutil.root(cwd)
@@ -525,12 +523,10 @@ def _orchestration_step(payload, action):
     """Rule 6 at the end of a turn, main thread only: ask once for the judgement of this session's finished
     delegations (a send-back like any other missing item); when the turn really ends, the meter starts over."""
     try:
-        from . import orchestration, workers
-        if workers.is_subagent_payload(payload):
-            return None
+        from . import orchestration, workerid
         cwd = _cwd(payload)
         sid = _session_key(payload, cwd)
-        if store.load_session(sid).get("subagent"):
+        if workerid.session_is_worker(payload, sid, cwd):
             return None
         if action == "allow":
             text = (orchestration.fallback_sendback(payload, sid) or orchestration.judgement_sendback(payload, sid)
