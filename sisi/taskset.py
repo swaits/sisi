@@ -246,6 +246,60 @@ def get_task(con, tid):
     return dict(rows[0]) if len(rows) == 1 else None
 
 
+def to_benchmark_case(row, commits=None):
+    """One harvested task as an evaluation-harness benchmark case (see sisi/evaluate.py),
+    or None when it is not replayable: only human tasks graded A or B with a test command,
+    a repository and a start commit qualify. The fix commit is the last following commit
+    ground truth recorded. The dev/holdout split is the same deterministic id hash as the
+    task itself, so importing never moves a case between splits. The product ships no such
+    case: they are built only from the user's own harvested sessions, into the user store."""
+    try:
+        t = dict(row)
+    except (TypeError, ValueError):
+        return None
+    if t.get("kind") not in (None, "human"):
+        return None
+    if t.get("grade") not in ("A", "B"):
+        return None
+    test_cmd = t.get("test_cmd")
+    repo, start = t.get("repo_root") or t.get("repo"), t.get("start_commit")
+    if not test_cmd or not repo or not start or not (t.get("request") or "").strip():
+        return None
+    from . import groundtruth
+    if commits is None:
+        try:
+            commits = json.loads(t.get("commits") or "[]")
+        except (TypeError, ValueError):
+            commits = []
+    fix = groundtruth.fix_commit_of(commits)
+    return {"id": str(t.get("id")), "kind": "task",
+            "source": {"unit": str(t.get("session_id") or ""), "learning": ""},
+            "project": {"repo": str(repo), "start_commit": str(start), "fix_commit": str(fix or "")},
+            "request": t.get("request"),
+            "checks": [{"id": "tests", "cmd": str(test_cmd), "expect": {"exit": 0}}],
+            "tags": ["harvested"],
+            "split": t.get("split") if t.get("split") in ("dev", "holdout") else split_of(t.get("id")),
+            "added": time.strftime("%Y-%m-%d", time.gmtime())}
+
+
+def benchmark_cases(con):
+    """All replayable harvested tasks as benchmark cases, ordered by task id."""
+    rows = con.execute(
+        "SELECT t.*, g.commits FROM tasks t LEFT JOIN groundtruth g ON g.session_id=t.session_id "
+        "WHERE t.kind='human' ORDER BY t.id")
+    out = []
+    for r in rows:
+        t = dict(r)
+        try:
+            commits = json.loads(t.pop("commits") or "[]")
+        except (TypeError, ValueError):
+            commits = []
+        case = to_benchmark_case(t, commits)
+        if case:
+            out.append(case)
+    return out
+
+
 def counts(con):
     """{kind: {grade: {split: n}}} for the scoreboard."""
     out = {}
