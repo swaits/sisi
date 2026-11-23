@@ -29,6 +29,24 @@ class RuleTableTests(SisiCase):
         self.assertTrue("dialog" in ask or "asking" in ask, ask)
 
 
+class EnforcementMapMatchesGateTests(SisiCase):
+    def test_rules_the_gate_enforces_say_enforced(self):
+        """The map must not call a rule 'measured only' or 'left to the agent' alone when the gate enforces it."""
+        from sisi import rulecmd
+        for rid in ("size-by-risk", "define-done", "verify-enough", "close-with-retro"):
+            self.assertIn("enforced", rulecmd.enforcement_for(rid), rid)
+        r = self.sisi("rule")
+        rows = {l.split()[1]: l for l in r.stdout.splitlines() if l[:1].isdigit()}
+        for n, rid in ((2, "size-by-risk"), (3, "define-done"), (4, "verify-enough"), (8, "close-with-retro")):
+            self.assertIn("enforced", rows[rid], rows[rid])
+
+    def test_no_statement_names_code_that_has_moved(self):
+        from sisi import rulecmd
+        text = " ".join(rulecmd.enforcement_for(r) for r in rulecmd.ENFORCEMENT)
+        self.assertNotIn("sisi time", text)
+        self.assertFalse(hasattr(rulecmd, "_floors"))
+
+
 class RuleDetailTests(SisiCase):
     def test_rule_by_number_and_by_id(self):
         by_num = self.sisi("rule", "1")
