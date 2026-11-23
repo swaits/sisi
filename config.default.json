@@ -21,5 +21,12 @@
   },
   "unit": {
     "stale_hours": 12
+  },
+  "orchestrate": {
+    "enabled": true,
+    "direct_calls": 6,
+    "direct_chars": 30000,
+    "extension": 10,
+    "route_window_min": 15
   }
 }

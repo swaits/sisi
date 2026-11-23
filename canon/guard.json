@@ -28,6 +28,13 @@
     "tests",
     "debug"
   ],
+  "other_kinds": [
+    "read",
+    "search",
+    "research",
+    "review",
+    "docs"
+  ],
   "build_words": [
     "change",
     "fix",

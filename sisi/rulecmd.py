@@ -142,12 +142,49 @@ def _deliver_fast():
                 judgement=["parallel work, background checks, handing over early, changing approach when stuck"])
 
 
+def _pre_tool_wired():
+    try:
+        from . import wiring
+        return "PreToolUse" in wiring.hook_cmds() and not wiring.HOOK_MATCHERS.get("PreToolUse")
+    except Exception:
+        return False
+
+
 def _orchestrate():
+    meter = _pre_tool_wired() and _has("orchestration", "before", "cmd_direct")
     return _say(enforced=["a delegation brief without outcome, acceptance or files it may change is refused (`sisi delegate`)"
-                          if _has("workers", "cmd_delegate") and _has("brief", "missing_required") else None],
+                          if _has("workers", "cmd_delegate") and _has("brief", "missing_required") else None,
+                          "the before-tool hook counts the main thread's direct tool calls and result characters for every tool, and "
+                          "refuses the next one past the budget (`orchestrate.direct_calls`, `orchestrate.direct_chars`), naming the router's "
+                          "workers; `sisi unit direct \"<reason>\"` extends the turn with a specific reason (a generic one is refused)"
+                          if meter else None,
+                          "a delegation that names no model, or the session's own model, is refused with the router's pick; an allowed "
+                          "one has its brief checked and is written to the ledger as a run"
+                          if meter and _has("orchestration", "_before_delegation") else None,
+                          "the end-of-turn gate asks for the judgement of each finished delegation, once per set of runs"
+                          if _gate_wired() and _has("orchestration", "judgement_sendback") else None,
+                          "a shell command that failed three times in a row with no file changed is refused once (rule 5)"
+                          if meter else None,
+                          "an unavailable worker (a limit, quota, login or connection failure arriving as a delegation result or as "
+                          "a later notice) is recorded down with the reset time parsed from the message, the router's next worker "
+                          "is handed over for the same brief; a question-dialog call right after it is refused once, ending the turn with no fallback "
+                          "started is sent back once, and so is a final message that names the unavailable worker"
+                          if meter and _has("fallback", "handle", "fallback_text") else None,
+                          "a delegation with no `sisi route` decision in the last minutes (`orchestrate.route_window_min`) is refused once; "
+                          "the run keeps the kind and difficulty guess, and a worker other than the router's pick is recorded as an override"
+                          if meter and _has("orchestration", "record_route") else None,
+                          "`sisi route --retry-of ID` keeps the worker with a better brief after a first rejection and moves to a stronger "
+                          "one after a second"
+                          if _has("workers", "retry_context", "stronger_choice") else None],
                 measured=["the delegation ledger and `sisi delegate judge`, `sisi route` recommends the worker from that record"
-                          if _has("routing", "choose") and _has("workers", "cmd_delegate") else None],
-                judgement=["who gets the task, how much to check what comes back, recording the judgement"])
+                          if _has("routing", "choose") and _has("workers", "cmd_delegate") else None,
+                          "the unit record and `sisi status` show direct calls and characters, refusals, extensions with their reasons, "
+                          "delegations started, judged and unjudged, and the share of tool calls delegated"
+                          if _has("orchestration", "telemetry") else None,
+                          "`sisi workers` shows how often the router was overridden and how the overrides turned out; a model discovery "
+                          "has not seen before is named once at session start as unproven"
+                          if _has("workers", "override_line", "new_worker_line") else None],
+                judgement=["who gets the task, how much to check what comes back, the quality of a brief"])
 
 
 def _report_plainly():

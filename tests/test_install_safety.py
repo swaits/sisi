@@ -1,4 +1,4 @@
-import json, os, random, shutil, stat, subprocess, sys, unittest
+import contextlib, io, json, os, random, shutil, stat, subprocess, sys, unittest
 from unittest import mock
 from support import *
 from test_wiring import WiringBase, snapshot
@@ -547,3 +547,116 @@ class WidenedPropertyTests(SafetyBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+real_cmds = wiring.hook_cmds  # the registration as this version makes it, kept before any test patches it
+
+
+class AllToolsHookMigrationTests(SafetyBase):
+    """Item 7: an installed shell-only configuration becomes all-tool hooks, span-preserving, and uninstall restores
+    the original bytes (R-7.1-1 / R-6.3-1: the meter must see every tool)."""
+
+    ORIGINAL = (b'{\n    "theme": "dark",   \n    "hooks": {\n        "PreToolUse": [\n'
+                b'            {"matcher": "Edit", "hooks": [{"type": "command", "command": "echo mine"}]}\n        ]\n    },\n'
+                b'    "model": "x"\n}\n')
+
+    def settings(self):
+        return self.path(".claude/settings.json")
+
+    def install_old_style(self):
+        """What the previous release wrote: shell-only matchers on the tool hooks and no failure hook."""
+        old = {"PreToolUse": "Bash", "PostToolUse": "Bash"}
+        with mock.patch.object(wiring, "HOOK_MATCHERS", old), \
+                mock.patch.object(wiring, "hook_cmds", lambda: {k: v for k, v in real_cmds().items() if k != "PostToolUseFailure"}):
+            rc, notes = wiring.install()
+        self.assertEqual(rc, 0, notes)
+
+    def groups(self, ev):
+        return json.load(open(self.settings()))["hooks"][ev]
+
+    def test_shell_only_install_is_migrated_and_uninstall_restores_the_original_bytes(self):
+        self.put(".claude/settings.json", self.ORIGINAL)
+        self.install_old_style()
+        self.assertTrue(any(g.get("matcher") == "Bash" for g in self.groups("PreToolUse")))
+        self.assertNotIn("PostToolUseFailure", json.load(open(self.settings()))["hooks"])
+        self.assertIn("watch-failure hook", wiring.doctor_claude())            # doctor says what is missing
+        rc, notes = wiring.install()                                          # `sisi install` again, with this version
+        self.assertEqual(rc, 0, notes)
+        for ev in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
+            mine = [g for g in self.groups(ev) if any("watch --tool" in h["command"] for h in g["hooks"])]
+            self.assertEqual(len(mine), 1, ev)
+            self.assertFalse(mine[0].get("matcher"), (ev, mine))                 # every tool: no matcher
+        user = [g for g in self.groups("PreToolUse") if g.get("matcher") == "Edit"]
+        self.assertEqual(user, [{"matcher": "Edit", "hooks": [{"type": "command", "command": "echo mine"}]}])
+        self.assertEqual(wiring.doctor_claude(), "")
+        before = open(self.settings(), "rb").read()
+        wiring.install()
+        self.assertEqual(open(self.settings(), "rb").read(), before)            # idempotent
+        wiring.uninstall()
+        self.assertEqual(open(self.settings(), "rb").read(), self.ORIGINAL)     # the original bytes, spelling and all
+
+    def test_a_group_shared_with_a_users_own_hook_is_split_not_widened(self):
+        """Our entry sharing a Bash-matcher group with a user's hook must not widen the user's hook to every tool."""
+        cmd = real_cmds()["PreToolUse"][0]
+        shared = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+            {"type": "command", "command": "echo mine"}, {"type": "command", "command": cmd, "timeout": 60}]}]}}
+        self.put(".claude/settings.json", json.dumps(shared, indent=2).encode() + b"\n")
+        wiring.install()
+        groups = self.groups("PreToolUse")
+        user = [g for g in groups if any(h["command"] == "echo mine" for h in g["hooks"])]
+        self.assertEqual(len(user), 1)
+        self.assertEqual(user[0]["matcher"], "Bash")
+        self.assertEqual(len(user[0]["hooks"]), 1)
+        ours = [g for g in groups if any("watch --tool" in h["command"] for h in g["hooks"])]
+        self.assertEqual(len(ours), 1)
+        self.assertFalse(ours[0].get("matcher"))
+
+    def test_sisi_update_brings_an_existing_installation_to_all_tool_hooks(self):
+        self.put(".claude/settings.json", self.ORIGINAL)
+        self.install_old_style()
+        from sisi import lifecycle
+        with contextlib.redirect_stdout(io.StringIO()):
+            lifecycle._rewire_existing()
+        self.assertFalse(any(g.get("matcher") == "Bash" for g in self.groups("PreToolUse")))
+        self.assertIn("PostToolUseFailure", json.load(open(self.settings()))["hooks"])
+        wiring.uninstall()
+        self.assertEqual(open(self.settings(), "rb").read(), self.ORIGINAL)
+
+    def test_update_without_an_installation_changes_nothing(self):
+        self.put(".claude/settings.json", self.ORIGINAL)
+        from sisi import lifecycle
+        with contextlib.redirect_stdout(io.StringIO()):
+            lifecycle._rewire_existing()
+        self.assertEqual(open(self.settings(), "rb").read(), self.ORIGINAL)
+
+    def test_codex_shell_only_hooks_are_widened_too(self):
+        os.makedirs(self.path(".codex"))
+        old = {"PreToolUse": {"cmd": "x"}}
+        spec = adapters.BY_NAME["codex"].spec()
+        spec_old = {k: dict(v, matcher="Bash") if k in ("PreToolUse", "PostToolUse") else v for k, v in spec.items()}
+        with mock.patch.object(adapters.Codex, "spec", lambda self: spec_old):
+            wiring.install()
+        self.assertTrue(any(g.get("matcher") == "Bash" for g in json.load(open(self.path(".codex/hooks.json")))["hooks"]["PreToolUse"]))
+        wiring.install()
+        self.assertFalse(any(g.get("matcher") for g in json.load(open(self.path(".codex/hooks.json")))["hooks"]["PreToolUse"]))
+        wiring.uninstall()
+        self.assertFalse(os.path.exists(self.path(".codex/hooks.json")))
+
+    def test_doctor_says_what_the_meter_can_do_per_tool(self):
+        from sisi import orchestration
+        shutil.copy(os.path.join(REPO, "canon", "orchestration-tools.json"), os.path.join(self.repo, "canon"))
+        orchestration._HOSTS.clear()
+        self.addCleanup(orchestration._HOSTS.clear)
+        os.makedirs(self.path(".codex"))
+        os.makedirs(self.path(".qwen"))
+        wiring.install()
+        rows = {r["tool"]: r for r in wiring.doctor()}
+        self.assertIn("can refuse", rows["claude-code"]["meter"])
+        self.assertIn("observed live", rows["claude-code"]["meter"])
+        self.assertIn("exit status 2", rows["codex"]["meter"])
+        self.assertIn("not run live", rows["codex"]["meter"])
+        self.assertIn("cannot run", rows["qwen"]["meter"])
+        out = self.sisi("doctor").stdout
+        self.assertIn("orchestration meter: cannot run", out)
+
+

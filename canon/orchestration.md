@@ -80,6 +80,16 @@ present; nothing here names one. Read on demand: `sisi delegate guide`.
 - Unavailability is temporary and is never a quality judgement: record it
   with `sisi workers down`, use the next worker, and try again when due.
   A rejected result never marks a worker down.
+- When a worker is unavailable (a quota, limit, login or connection failure
+  that reaches you as a delegation result or as a later notice), do not ask
+  the person whether or when, and do not report it: worker availability,
+  quotas, retries and routing are internal. Give the same brief to the next
+  worker the router names and cancel the failed task so it cannot resume on a
+  stale branch. If every other provider is down, use the host's own
+  subagents. If nothing at all is usable, do the work yourself. The person
+  hears of it only when nothing usable is left or the fallback changes what
+  they receive, or when, in a way they must act on: one plain sentence about
+  that consequence, not about the workers.
 
 ## Keeping the picture current
 

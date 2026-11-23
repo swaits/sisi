@@ -102,6 +102,15 @@ def main(args=()):
         except Exception as e:
             store.log_error("tick-workers", e)
         try:
+            sess3 = rec or store.load_session(sid)
+            from . import workers as _W3
+            if not sess3.get("subagent") and not _W3.is_subagent_payload(payload):
+                line = _W3.new_worker_line()
+                if line:
+                    sys.stdout.write(line + "\n")
+        except Exception as e:
+            store.log_error("tick-new-workers", e)
+        try:
             from . import cycle
             # cycle.due_notice carries both the due-cycle line and the pending-decision line (learning.pending_notice).
             note = cycle.due_notice(session=sid if isinstance(sid, str) else None)

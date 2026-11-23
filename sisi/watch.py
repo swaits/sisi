@@ -14,11 +14,17 @@ Both hooks fail open: any error is logged and the tool call proceeds.
 """
 import json, os, re, time
 
-from . import gitutil, paths, store
+from . import paths, store
+
+
+def _git():
+    """gitutil, imported when a measurement needs it: a hook call that only meters (most tools) must stay light."""
+    from . import gitutil
+    return gitutil
 
 BEFORE_EVENTS = {"PreToolUse", "BeforeTool", "preToolUse", "beforeShellExecution", "tool_call"}
 AFTER_EVENTS = {"PostToolUse", "AfterTool", "postToolUse", "afterShellExecution",
-                "postToolUseFailure", "tool_result"}
+                "PostToolUseFailure", "postToolUseFailure", "tool_result"}
 SHELL_TOOLS = ("bash", "shell", "command", "terminal", "exec")
 
 
@@ -57,8 +63,8 @@ def is_shell(tool, cmd):
 
 
 def _may_write(cmd):
-    from . import gate
-    return gate._shell_may_write(cmd)
+    from . import attribution  # the classifier the gate uses (gate._shell_may_write is this function)
+    return attribution.shell_may_write(cmd)
 
 
 def snap_file(sid, kind):
@@ -113,9 +119,8 @@ def note_shell(sess, cmd, payload):
     its hook payload came from a subagent (an agent id or a subagent transcript path). `sisi retro`
     reads this from the session record to quarantine what a subagent records; it never trusts the
     caller's environment. The command text itself is not kept."""
-    from . import workers
     shells = sess.setdefault("shells", [])
-    shells.append({"retro": "retro" in (cmd or ""), "subagent": bool(workers.is_subagent_payload(payload)),
+    shells.append({"retro": "retro" in (cmd or ""), "subagent": bool(store.is_subagent_payload(payload)),
                    "ts": time.time()})
     del shells[:-8]
 
@@ -130,7 +135,7 @@ def before(payload):
     store.save_session(sid, sess)
     if _may_write(cmd) is False:
         return  # provably read-only (incl. sisi's own and git commit): no measurement paid
-    snap = gitutil.snapshot(cwd)
+    snap = _git().snapshot(cwd)
     _save(snap_file(sid, "watch"), {"root": snap["root"], "files": snap["files"],
                                     "command": (cmd or "")[:500], "ts": time.time()})
 
@@ -151,16 +156,16 @@ def after(payload):
         os.unlink(snap_file(sid, "watch"))
     except OSError:
         pass
-    root = pend.get("root") or gitutil.root(cwd) or cwd
-    now = gitutil.snapshot(root)
-    changed = gitutil.snapshot_diff(pend, now)
+    root = pend.get("root") or _git().root(cwd) or cwd
+    now = _git().snapshot(root)
+    changed = _git().snapshot_diff(pend, now)
     if changed:
         note_edit(sess, changed, root)
     store.save_session(sid, sess)
 
 
 def pend_root(sess, cwd):
-    return gitutil.root(cwd) or sess.get("req_project") or cwd
+    return _git().root(cwd) or sess.get("req_project") or cwd
 
 
 def consume_pending(sess, sid, cwd):
@@ -178,7 +183,7 @@ def consume_pending(sess, sid, cwd):
 
 
 def save_pass_snapshot(sid, cwd):
-    snap = gitutil.snapshot(cwd)
+    snap = _git().snapshot(cwd)
     _save(snap_file(sid, "pass"), snap)
     return snap
 
@@ -188,7 +193,7 @@ def changed_since_pass(sid, cwd):
     pend = _load(snap_file(sid, "pass"))
     if pend is None:
         return None
-    return gitutil.snapshot_diff(pend, gitutil.snapshot(cwd))
+    return _git().snapshot_diff(pend, _git().snapshot(cwd))
 
 
 _COMMIT_RE = re.compile(r"(?:^|[;&|(]\s*)(?:\w+=\S+\s+)*git\s+(?:(?:-C|-c)\s+\S+\s+|--[\w-]+\s+)*(?:commit|merge)\b")
@@ -213,28 +218,121 @@ def commit_notice(payload):
             "`sisi verify` first (a notice, not a block)." % c.get("id"))
 
 
-def main(args=()):
+def _read_payload():
     try:
-        from . import gate
-        payload = gate._read_payload()
-        _tool, _cmd, ev, _cwd, _sid = extract(payload)
-        if "--before" in args or ev in BEFORE_EVENTS:
-            from . import unitguard
-            if unitguard.before(payload):  # refused (rule 3: no valid unit): the call must not run, nothing to measure
-                return 0
+        import sys
+        if sys.stdin is None or sys.stdin.isatty():
+            return {}
+        d = json.loads(store.read_stdin() or "{}")
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def meter(payload, after_call, host=None):
+    """The orchestration meter's answer for one tool call ({"deny": text} / {"context": text} / {}); never
+    raises: an error inside the meter lets the call through."""
+    try:
+        from . import orchestration
+        return (orchestration.after if after_call else orchestration.before)(payload, host)
+    except Exception as e:
+        store.log_error("watch-meter", e)
+        return {}
+
+
+def contract_guard(payload):
+    """The refusal text of rule 3's before-tool guard (no valid unit behind a project change or a build
+    delegation), or None. Never raises."""
+    try:
+        from . import unitguard
+        return unitguard.check(payload)
+    except Exception as e:
+        store.log_error("watch-unitguard", e)
+        return None
+
+
+def run(payload, args=(), host=None):
+    """One before/after hook call for any tool: {"deny": text} (the call must not run) or {"context": text} or {}.
+
+    Before a call, in this order, and the first refusal is the only one the agent sees (a refused call is not
+    measured or counted): worker and subagent sessions are exempt from all of it; then the contract guard (a
+    call that would change a project file, or delegate a build, with no valid unit behind it: it comes before
+    the budget, so an agent told to delegate is not then refused for a contract it was never told about); then
+    the delegation guard and the direct-work meter (orchestration.before). Every stage fails open."""
+    _tool, _cmd, ev, _cwd, sid = extract(payload)
+    out = {}
+    if "--before" in args or ev in BEFORE_EVENTS:
+        if not worker_session(payload, sid, _cwd):
+            text = contract_guard(payload)
+            if text:
+                return {"deny": text}
+            out = meter(payload, False, host)
+            if out.get("deny"):
+                return out
+        try:
             before(payload)
-            try:
-                line = commit_notice(payload)
-                if line:
-                    import sys
-                    sys.stdout.write(json.dumps({"systemMessage": line, "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse", "additionalContext": line}}) + "\n")
-            except Exception as e:
-                store.log_error("watch-commit-notice", e)
-        elif "--after" in args or ev in AFTER_EVENTS:
+        except Exception as e:
+            store.log_error("watch", e)
+        try:
+            line = commit_notice(payload)
+            if line:
+                out = dict(out, notice=line)
+        except Exception as e:
+            store.log_error("watch-commit-notice", e)
+    elif "--after" in args or ev in AFTER_EVENTS:
+        out = meter(payload, True, host)
+        try:
             after(payload)
+        except Exception as e:
+            store.log_error("watch", e)
+        try:
             from . import unitguard
             unitguard.after(payload)
+        except Exception as e:
+            store.log_error("watch-unitguard", e)
+    return out
+
+
+def worker_session(payload, sid, cwd):
+    """Is this call from a worker or subagent (the host marks it, `sisi delegate` started it, or its first
+    prompt opened with the brief template's line)? Workers are exempt from the contract guard and the meter.
+    False when it cannot be told."""
+    try:
+        if store.is_subagent_payload(payload):
+            return True
+        from . import orchestration
+        sid = sid or "cwd-" + cwd
+        return bool(store.load_session(sid).get("subagent") or orchestration.worker_flag(sid))
+    except Exception as e:
+        store.log_error("watch-worker", e)
+        return False
+
+
+def render_claude(out, event):
+    """The Claude Code hook output for a run() result, or None."""
+    if out.get("deny"):
+        return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                  "permissionDecisionReason": out["deny"]}})
+    ctx = "\n".join(x for x in (out.get("context"), out.get("notice")) if x)
+    if not ctx:
+        return None
+    d = {"hookSpecificOutput": {"hookEventName": event, "additionalContext": ctx}}
+    if out.get("notice"):
+        d["systemMessage"] = out["notice"]
+    return json.dumps(d)
+
+
+def main(args=()):
+    try:
+        payload = _read_payload()
+        _tool, _cmd, ev, _cwd, _sid = extract(payload)
+        out = run(payload, args)
+        before_call = "--before" in args or ev in BEFORE_EVENTS
+        # the host rejects output whose event name is not the event it is answering (found by the live check)
+        text = render_claude(out, "PreToolUse" if before_call else (ev if ev in AFTER_EVENTS else "PostToolUse"))
+        if text:
+            import sys
+            sys.stdout.write(text + "\n")
     except Exception as e:  # fail open: a tool call must never be held up by measurement
         store.log_error("watch", e)
     return 0

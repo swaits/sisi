@@ -656,16 +656,20 @@ def _brief_text(payload):
     return " ".join(str(inp.get(k) or "") for k in ("description", "prompt", "task", "message")).lower()
 
 
-def routed_kind(sess, payload):
-    """The kind of work a delegation was routed as (impl, review, search, ...), or None when no routing
-    decision is recorded for it. The one place that reads the routing record."""
-    r = sess.get("route") if isinstance(sess.get("route"), dict) else None
-    k = r.get("kind") if r else None
-    return k if isinstance(k, str) and k else None
+def routed_kind(sid):
+    """The kind of work the session's routing decision names (impl, review, search, ...), or None when no
+    decision is recorded. `sisi route` stores the decision in the orchestration meter; this reads it there."""
+    from . import orchestration
+    return orchestration.routed_kind(sid)
 
 
-def is_building_delegation(sess, payload):
-    kind = routed_kind(sess, payload)
+def ledger_kinds():
+    """The kinds of work the delegation ledger knows (canon/guard.json): building kinds, then the others."""
+    return _list("build_kinds") + [k for k in _list("other_kinds") if k not in _list("build_kinds")]
+
+
+def is_building_delegation(sid, payload):
+    kind = routed_kind(sid)
     if kind:
         return kind in _list("build_kinds")
     text = _brief_text(payload)
@@ -743,13 +747,22 @@ def _is_contract_target(rel):
     return rel.replace(os.sep, "/") == ".sisi/contract.json"
 
 
-def before(payload):
-    """True when this call was refused (the refusal is printed in the host's shape and the call must not run)."""
+def check(payload):
+    """The refusal text when this call must not run (no valid unit stands behind it), else None. Fails open:
+    a tool call is never held up by an error in here. The caller prints it in the host's shape."""
     try:
         return _before(payload)
-    except Exception as e:  # fail open: a tool call is never held up by an error in here
+    except Exception as e:
         store.log_error("unitguard-before", e)
-        return False
+        return None
+
+
+def before(payload):
+    """True when this call was refused (the refusal is printed in the host's shape and the call must not run)."""
+    msg = check(payload)
+    if msg:
+        _deny(msg)
+    return bool(msg)
 
 
 def _before(payload):
@@ -757,26 +770,26 @@ def _before(payload):
     tool, cmd, _ev, cwd, sid = watch.extract(payload)
     kind = classify(tool, payload, cmd)
     if kind is None:
-        return False
+        return None
     if not store.config()["gate"].get("enabled", True) or workers.is_subagent_payload(payload):
-        return False
+        return None
     sid = sid or "cwd-" + cwd
     if kind == "shell":
         if CLAIM_RE.search(cmd or ""):
             note_claim(sid, cwd)
         if watch._may_write(cmd) is False or _is_sisi_command(cmd):
-            return False
+            return None
     sess = store.load_session(sid)
     if sess.get("subagent"):
-        return False
+        return None
     top = git_top(cwd)
     if top is None:
-        return False  # nothing to measure outside a repository
+        return None  # nothing to measure outside a repository
     rels, outside = [], False
     if kind == "edit":
         files = attribution._input_files(payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {})
         if not files:
-            return False
+            return None
         targets = files
     elif kind == "shell":
         targets = shell_targets(cmd, cwd)
@@ -788,10 +801,10 @@ def _before(payload):
             outside = True
         else:
             rels.append(r)
-    if kind == "delegate" and not is_building_delegation(sess, payload):
-        return False
+    if kind == "delegate" and not is_building_delegation(sid, payload):
+        return None
     if kind == "edit" and not rels:
-        return False  # only outside the project
+        return None  # only outside the project
     c, cpath, project = open_unit(cwd, top)
     project = project or top
     if any(_is_contract_target(r) for r in rels):
@@ -802,7 +815,7 @@ def _before(payload):
     if kind != "delegate" and not paths_all:
         if changed:
             store.save_session(sid, sess)
-        return False
+        return None
     floor, _reasons = floor_of(paths_all, project) if paths_all else ("trivial", [])
     if kind != "delegate" and floor == "trivial":
         have = sess.setdefault("ug_paths", [])
@@ -810,14 +823,14 @@ def _before(payload):
             if r not in have:
                 have.append(r)
         store.save_session(sid, sess)
-        return False
+        return None
     v = verdict(sid, sess, cwd, floor, c, cpath, project)
     v.setdefault("project", project)
     if v["state"] == "ok":
         _cover(sess)
         store.save_session(sid, sess)
         touch(project, c, throttle=60.0)
-        return False
+        return None
     if kind == "delegate":
         what = "delegating this work to a worker"
     else:
@@ -829,8 +842,7 @@ def _before(payload):
         msg = msg.replace("Then retry the call.", "The contract is where the worker's brief takes its acceptance from. Then retry.")
     record_refusal(sid, project, what, v, sess, tool)
     store.save_session(sid, sess)
-    _deny(msg)
-    return True
+    return msg
 
 
 def _guard_contract_write(sid, sess, c, project, cwd, kind):
@@ -840,17 +852,16 @@ def _guard_contract_write(sid, sess, c, project, cwd, kind):
     if c is None:
         sess["ug_will_bind"] = os.path.realpath(project)
         store.save_session(sid, sess)
-        return False
+        return None
     state, last = bound_fresh(sess, project, c)
     if state == "ok":
-        return False
+        return None
     v = {"state": state, "problems": [], "unit": c, "profile": "isolated", "last": last, "project": project}
     what = "this call would rewrite the contract of unit %s" % c.get("id")
     msg = assure.fit(["sisi refused: %s, which this session has not opened or continued." % what] + how_on(c, state, last)
                      + ["Then retry the call."], MAX_LINES)
     record_refusal(sid, project, what, v, sess, "contract-write")
-    _deny(msg)
-    return True
+    return msg
 
 
 def after(payload):

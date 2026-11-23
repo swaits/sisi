@@ -78,6 +78,19 @@ def tool():
     return None
 
 
+def is_subagent_payload(payload):
+    """Is this hook call from a worker: started by `sisi delegate`, or marked by the host as a subagent? Kept here
+    (not in workers.py) so the per-tool hooks need not import the worker code."""
+    if os.environ.get("SISI_WORKER_RUN"):
+        return True
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("agent_id") or payload.get("agentId") or payload.get("agent_transcript_path"):
+        return True
+    tp = str(payload.get("transcript_path") or "")
+    return "/subagents/" in tp or tp.endswith("/subagents")
+
+
 def session_id():
     return os.environ.get("SISI_SESSION_ID") or None
 
@@ -157,6 +170,7 @@ def stamp(extra):
 DEFAULTS = {"gate": {"enabled": True, "budget_s": 120, "max_blocks": 3},
             "verify": {"default_timeout_s": 60, "fast_limit_s": 60},
             "retro": {"required": True},
+            "orchestrate": {"enabled": True, "direct_calls": 6, "direct_chars": 30000, "extension": 10, "route_window_min": 15},
             "scratch": {"session_max_age_days": 30, "prune_every": 20, "prune_max_delete": 1000,
                         "prune_budget_s": 0.25}}
 
