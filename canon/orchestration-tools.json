@@ -11,6 +11,10 @@
       "Agent": {
         "model": "model",
         "brief": "prompt"
+      },
+      "mcp__t3-code__delegate_task": {
+        "model": "target.model",
+        "brief": "task"
       }
     },
     "exempt": {
@@ -26,12 +30,26 @@
         "TaskList",
         "TaskGet",
         "TaskOutput",
-        "TaskStop"
+        "TaskStop",
+        "mcp__t3-code__task_status",
+        "mcp__t3-code__task_cancel",
+        "mcp__t3-code__orchestrator_capabilities",
+        "mcp__t3-code__t3_thread_read",
+        "mcp__t3-code__t3_thread_wait",
+        "mcp__t3-code__t3_background_wait",
+        "mcp__t3-code__schedule_task",
+        "mcp__t3-code__t3_thread_interrupt",
+        "ToolSearch",
+        "ListAgents",
+        "Skill"
       ],
       "messaging": [
         "SendMessage",
         "SendUserMessage",
-        "PushNotification"
+        "PushNotification",
+        "mcp__t3-code__t3_thread_send",
+        "mcp__t3-code__send_to_user",
+        "mcp__t3-code__t3_thread_send_attachments"
       ]
     }
   },

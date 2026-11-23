@@ -19,7 +19,8 @@
   ],
   "delegation_tools": [
     "Agent",
-    "Task"
+    "Task",
+    "mcp__t3-code__delegate_task"
   ],
   "build_kinds": [
     "impl",
