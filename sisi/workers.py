@@ -383,6 +383,12 @@ def _parse_time(value):
         return float(text)
     except ValueError:
         pass
+    # a trailing Z (UTC) and a +HHMM offset are accepted on every Python version; a time with no
+    # zone is read as local time, a bare date as the start of that day
+    if text[-1:] in ("Z", "z"):
+        text = text[:-1] + "+00:00"
+    elif re.search(r"[+-]\d{4}$", text) and "T" in text.upper().replace(" ", "T"):
+        text = text[:-2] + ":" + text[-2:]
     try:
         return datetime.datetime.fromisoformat(text).timestamp()
     except ValueError:
@@ -1737,17 +1743,17 @@ def _cmd_brief_check(args):
 
 def _cmd_down(args):
     if not args:
-        print("usage: sisi workers down WORKER --reason limit|auth|missing|error [--until DATE] [--note TEXT]")
+        print("usage: sisi workers down WORKER --reason limit|auth|missing|error [--until DATE|DATETIME] [--note TEXT]")
         return 1
     worker = str(args[0]).strip().lower().rstrip("/")
     reason = _opt(args, "--reason")
     if reason not in REASONS:
-        print("usage: sisi workers down WORKER --reason limit|auth|missing|error [--until DATE] [--note TEXT]")
+        print("usage: sisi workers down WORKER --reason limit|auth|missing|error [--until DATE|DATETIME] [--note TEXT]")
         return 1
     until = _opt(args, "--until")
     until_ts = _parse_time(until) if until is not None else None
     if until is not None and until_ts is None:
-        print("sisi: --until wants a date like 2026-12-01 or 2026-12-01T09:00", file=sys.stderr)
+        print("sisi: --until wants a date like 2026-12-01 or a time like 2026-12-01T09:00 (add Z or an offset such as +02:00 for a zone)", file=sys.stderr)
         return 1
     note = _opt(args, "--note")
     record_down([worker], reason, note, until_ts=until_ts)
