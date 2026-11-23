@@ -75,8 +75,7 @@ def main(args=()):
                     rec["attr_offset"] = os.path.getsize(os.path.expanduser(payload["transcript_path"]))
                 except OSError:
                     rec["attr_offset"] = 0
-                rec.update(attr_gen=0, attr_pass_gen=0, attr_retro_gen=0, attr_baseline_gen=0,
-                           attr_writing=False, attr_files=[], attr_sub_offsets={})
+                rec.update(attr_gen=0, seen_gen=0, dirty=False, attr_writing=False, attr_files=[], attr_sub_offsets={})
             from . import contract as C, gitutil
             if gitutil.root(cwd):
                 rec["head"] = gitutil.head(cwd)

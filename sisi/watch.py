@@ -12,7 +12,7 @@ that errs strict, which is the safe side. A pending before-record with no after 
 killed) is likewise treated as this session having edited, with no known paths (a sentinel).
 Both hooks fail open: any error is logged and the tool call proceeds.
 """
-import json, os, time
+import json, os, re, time
 
 from . import gitutil, paths, store
 
@@ -178,6 +178,28 @@ def changed_since_pass(sid, cwd):
     return gitutil.snapshot_diff(pend, gitutil.snapshot(cwd))
 
 
+_COMMIT_RE = re.compile(r"(?:^|[;&|(]\s*)(?:\w+=\S+\s+)*git\s+(?:(?:-C|-c)\s+\S+\s+|--[\w-]+\s+)*(?:commit|merge)\b")
+
+
+def commit_notice(payload):
+    """One line, never a block: the command is a `git commit` or `git merge` and the open unit's fast
+    checks have no passing result for the tree as it is now. None when there is nothing to say."""
+    tool, cmd, _ev, cwd, _sid = extract(payload)
+    if not is_shell(tool, cmd) or not _COMMIT_RE.search(cmd):
+        return None
+    from . import contract as C, trust, unit
+    path = C.find(cwd)
+    if not path or not trust.is_trusted(C.project_dir(path)):
+        return None
+    c = C.load(path)
+    if not isinstance(c, dict) or c.get("status", "open") != "open" or C.is_unedited_skeleton(c) or C.validate(c):
+        return None
+    if unit.verified_for_tree(c, C.project_dir(path), path):
+        return None
+    return ("sisi: unit %s has no passing `sisi verify` result for the tree you are about to commit; run "
+            "`sisi verify` first (a notice, not a block)." % c.get("id"))
+
+
 def main(args=()):
     try:
         from . import gate
@@ -185,6 +207,14 @@ def main(args=()):
         _tool, _cmd, ev, _cwd, _sid = extract(payload)
         if "--before" in args or ev in BEFORE_EVENTS:
             before(payload)
+            try:
+                line = commit_notice(payload)
+                if line:
+                    import sys
+                    sys.stdout.write(json.dumps({"systemMessage": line, "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse", "additionalContext": line}}) + "\n")
+            except Exception as e:
+                store.log_error("watch-commit-notice", e)
         elif "--after" in args or ev in AFTER_EVENTS:
             after(payload)
     except Exception as e:  # fail open: a tool call must never be held up by measurement
