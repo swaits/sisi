@@ -2074,10 +2074,8 @@ def _model_fact_args(args):
             continue
         v = v.strip().lower()
         if field == "released":
-            try:
-                datetime.date.fromisoformat(v)
-            except ValueError:
-                print("sisi: --released wants a date as YYYY-MM-DD", file=sys.stderr)
+            if not _valid_date(v):
+                print("sisi: --released wants a date as YYYY-MM-DD (or YYYY-MM)", file=sys.stderr)
                 return False
         elif not _NAME.fullmatch(v):
             print("sisi: %s wants a short name (letters, digits, hyphens)" % opt, file=sys.stderr)
@@ -2115,6 +2113,15 @@ def _classify_answer(text):
         if isinstance(d, dict):
             return d
     return None
+
+
+def _valid_date(v):
+    """A release date as YYYY-MM-DD or YYYY-MM."""
+    try:
+        datetime.date.fromisoformat(v if len(v) == 10 else v + "-01")
+    except (ValueError, TypeError):
+        return False
+    return len(v) in (7, 10)
 
 
 def _valid_name(v):
@@ -2157,10 +2164,7 @@ def _cmd_classify(args):
         released = e.get("released", "unknown") if isinstance(e, dict) else None
         ok = isinstance(e, dict) and _valid_name(e.get("maker")) and _valid_name(e.get("class"))
         if ok and str(released).lower() != "unknown":
-            try:
-                ok = routing.days(released) > 0 and (len(released) == 7 or datetime.date.fromisoformat(released) is not None)
-            except (ValueError, TypeError):
-                ok = False
+            ok = isinstance(released, str) and _valid_date(released)
         if not ok:
             print("sisi: the entry for %s is not {maker, class, released} with short names and a YYYY-MM[-DD] date "
                   "(or unknown); nothing recorded" % w, file=sys.stderr)

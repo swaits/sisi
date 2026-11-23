@@ -1,5 +1,5 @@
 """Recency breaks ties: where the arithmetic falls back to a stable order, the more recently released model wins
-first (its recorded release date, else the old tie-break by worker id), and the
+first (a newer version of the same model, never across makers or classes), and the
 rule is in the text agents and people read. Requirement ids: R-7.2-1, R-7.2-2."""
 import os, unittest
 from support import *
@@ -8,27 +8,26 @@ from test_model_supersession import cand, pick
 
 
 class RecencyTieBreakTests(unittest.TestCase):
-    def test_a_recorded_release_date_decides_a_tie_between_unrelated_models(self):
+    def test_a_newer_release_never_beats_a_different_model_just_for_being_newer(self):
+        """The owner: newer means a newer version of the SAME model, not the newest release across models."""
         a = cand("prov/aaa-1.0", cost=1.0, rel="2026-01-10", maker="aaa")
         b = cand("prov/bbb-2.0", cost=1.0, rel="2026-08-01", maker="bbb")
         who, r = pick([a, b])
-        self.assertEqual(who, "prov/bbb-2.0")
-        self.assertIn(("prov/aaa-1.0", "equal on price and load; the choice is the more recently released"), r["passed_over"])
-        self.assertEqual(pick([b, a])[0], "prov/bbb-2.0")
+        self.assertEqual(who, "prov/aaa-1.0")   # the old tie-break (worker id), whatever the release dates
+        self.assertEqual(pick([b, a])[0], "prov/aaa-1.0")
+        flash = cand("prov/abc-flash", cls="flash", cost=1.0, rel="2026-01-10")
+        std = cand("prov/abc-std", cls="standard", cost=1.0, rel="2026-08-01")
+        self.assertEqual(pick([flash, std])[0], "prov/abc-flash")
+        self.assertEqual(routing.recency_order([a, b, flash, std]), {w: 0 for w in ("prov/aaa-1.0", "prov/bbb-2.0", "prov/abc-flash", "prov/abc-std")})
 
-    def test_unknown_recency_keeps_the_old_tie_break(self):
-        a, b = cand("prov/aaa-1.0", cost=1.0, maker="aaa"), cand("prov/bbb-9.0", cost=1.0, maker="bbb", rel="2026-08-01")
-        who, r = pick([a, b])
-        self.assertEqual(who, "prov/bbb-9.0")   # a recorded date beats none
-        a2, b2 = cand("prov/aaa-1.0", cost=1.0, maker="aaa", known=False), cand("prov/bbb-9.0", cost=1.0, maker="bbb", known=False)
-        who, r = pick([a2, b2])
-        self.assertEqual(who, "prov/aaa-1.0")
-        self.assertIn(("prov/bbb-9.0", "equal on price and load; the choice came first in worker-id order"), r["passed_over"])
+    def test_within_one_model_the_newer_version_goes_first(self):
+        old, new = cand("prov/abc-old", rel="2026-01-10"), cand("prov/abc-new", rel="2026-08-01")
+        self.assertEqual(routing.recency_order([old, new]), {"prov/abc-new": 0, "prov/abc-old": 1})
 
-    def test_price_and_load_still_come_before_recency(self):
-        cheap_old = cand("prov/aaa-1.0", cost=0.5, rel="2026-01-10", maker="aaa")
-        dear_new = cand("prov/bbb-2.0", cost=1.0, rel="2026-08-01", maker="bbb")
-        self.assertEqual(pick([cheap_old, dear_new])[0], "prov/aaa-1.0")
+    def test_price_and_load_still_come_before_the_tie_break(self):
+        cheap = cand("prov/aaa-1.0", cost=0.5, maker="aaa")
+        dear = cand("prov/bbb-2.0", cost=1.0, maker="bbb", rel="2026-08-01")
+        self.assertEqual(pick([cheap, dear])[0], "prov/aaa-1.0")
 
 
 class TextTests(unittest.TestCase):
@@ -39,13 +38,13 @@ class TextTests(unittest.TestCase):
     def test_the_rule_is_in_the_always_loaded_rulebook_the_playbook_and_the_docs(self):
         core = self.read("canon", "core.md")
         rule6 = core[core.index("## 6. Orchestrate"):core.index("## 7.")]
-        self.assertIn("most recently released", rule6)
+        self.assertIn("newest version of a given model", rule6)
         self.assertIn("never an older version", rule6)
-        self.assertIn("class", rule6)
+        self.assertIn("different model or class", rule6)
         for path in (("canon", "orchestration.md"), ("docs", "workers.md")):
             text = self.read(*path).lower()
-            self.assertIn("most recently released", text, path)
-            self.assertIn("different classes", text, path)
+            self.assertIn("newest version of a given model", text.replace("\n", " ").replace("  ", " "), path)
+            self.assertIn("different model or class", text.replace("\n", " ").replace("  ", " "), path)
             self.assertIn("cheaper", text, path)   # the reason: newer models are better and cheaper
 
     def test_the_rulebook_is_inside_its_budget(self):

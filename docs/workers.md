@@ -97,8 +97,10 @@ one per group of workers passed over as not capable enough, and names an explora
 
 ## Newest version of a class, always
 
-Newer models are almost always better and almost always cheaper, so `sisi route` always uses the
-most recently released model of a class that is usable, and never an older version of it. sisi reads
+Newer versions of a model are almost always better and almost always cheaper, so `sisi route` always uses
+the newest version of a given model (the same maker and class) that is usable, and never an older version of
+it. This is about versions of one model: a newer release of a different model or class never wins for being
+newer. sisi reads
 nothing from a model's name: a model's maker, class and release date are facts, researched by a cheap,
 fast worker (session start and `sisi route` say when they are missing) and recorded with
 `sisi workers fact WORKER --maker M --class C --released YYYY-MM-DD --source S`. A model's identity is its
@@ -129,7 +131,8 @@ its maker and class (one version back at a time), named in `--explain`. It ranks
 own record and above a benchmark, counts as a judged record for the rule that proof comes before
 benchmark, stops once the model has a thick record of its own, and a predecessor's bad record is not
 inherited. A discovered model with no data of its own is routable when its predecessor is. Where the
-arithmetic falls back to a stable tie-break, the more recently released model wins first.
+arithmetic falls back to a stable tie-break, the newer version of the same model goes first (never across makers
+or classes).
 
 ## Costs and failures
 

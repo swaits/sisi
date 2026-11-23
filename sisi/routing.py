@@ -51,8 +51,8 @@ The rule, in order:
      is never compared.
   8. Load balancing: within the same price tier and price, the worker that has taken the least work
      relative to its remaining allowance goes first (recorded uses divided by allowance left, an
-     unknown allowance counting as half). Ties break on the more recently released model (its recorded
-     release date), then on the worker id.
+     unknown allowance counting as half). Ties break on the newer version of the same model (never across
+     makers or classes), then on the worker id.
 
 Candidates reach here already restricted to workers with a judged record, a known price or a
 benchmark standing (see workers.routable_candidates); on a cold start none qualifies and every
@@ -584,18 +584,19 @@ def _assess_all(eligible, stats, kind, difficulty, floors, opts=None):
 
 
 def recency_order(candidates):
-    """{worker: (recorded release date as days, negated; position among the versions of its class, newest first)}.
-    Smaller sorts first, so the more recently released model goes first; what cannot be compared is (0, 0)."""
-    out = {c["worker"]: (0, 0) for c in candidates}
+    """{worker: position among the versions of its own model, newest first (0)}. Only versions of the same model
+    (the same recorded maker and class) are ever compared; models of different makers or classes are different
+    things, however recently each was released, and stay at 0 so the old tie-break decides between them."""
+    out = {c["worker"]: 0 for c in candidates}
     groups = {}
     for c in candidates:
-        l = _lineage(c)
-        if l and l.get("key"):
+        l = _comparable(c)
+        if l:
             groups.setdefault(tuple(l["key"]), []).append(c)
     for group in groups.values():
         for i, level in enumerate(_versions_newest_first(group)):
             for d in level:
-                out[d["worker"]] = (-days(_lineage(d).get("released")), i)
+                out[d["worker"]] = i
     return out
 
 
@@ -625,7 +626,7 @@ def _make_key(stats, kind, difficulty, prefer, recency=None):
                 standing_key(c),
                 load_ratio(c),
                 -(r if r is not None else -1.0),
-                recency.get(c["worker"], (0, 0)),
+                recency.get(c["worker"], 0),
                 c["worker"])
 
     return key, rate, load_ratio, recency
@@ -732,7 +733,7 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
                 reason = ("lower measured accepted rate for this kind and difficulty"
                           if r is not None and cr is not None and r < cr else
                           "equal on price and load; the choice is the more recently released"
-                          if recency.get(choice["worker"], (0, 0)) < recency.get(c["worker"], (0, 0)) else
+                          if recency.get(choice["worker"], 0) < recency.get(c["worker"], 0) else
                           "equal on price and load; the choice came first in worker-id order")
             passed.append((w, reason))
     judged_first = basis == "capable" and _prefer_judged(pool, assessments, difficulty)[1]
