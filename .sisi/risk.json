@@ -1,0 +1,15 @@
+{
+  "patterns": [
+    {"glob": ["sisi/hookio.py", "sisi/tick.py", "sisi/prompt.py", "sisi/watch.py", "sisi/gate.py",
+              "sisi/attribution.py", "sisi/questions.py", "sisi/assure.py", "bin/sisi"],
+     "profile": "critical", "reason": "sisi's hooks and the end-of-turn gate: they run inside every session and decide when an agent may stop"},
+    {"glob": ["sisi/wiring.py", "sisi/lifecycle.py", "sisi/adapters.py"],
+     "profile": "critical", "reason": "sisi's installer, wiring and tool adapters: they edit other tools' configuration"},
+    {"glob": ["sisi/hookjson.py"],
+     "profile": "critical", "reason": "sisi's JSON editor: it rewrites other tools' settings files in place"},
+    {"glob": ["sisi/release.py"],
+     "profile": "critical", "reason": "sisi's release code: it publishes what users install"},
+    {"glob": ["canon/core.md", "canon/risk.json", "sisi/risk.py", "sisi/rulecmd.py", "sisi/overlay.py"],
+     "profile": "integration", "reason": "sisi's rulebook and risk table: every session and every gate decision reads them"}
+  ]
+}
