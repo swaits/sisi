@@ -27,7 +27,7 @@ OWNER_RES = [
 HOME_RE = re.compile(r"(?<![\w.])/(?:home|Users)/([A-Za-z0-9_.-]+)")
 _ALLOWED_HOME_USERS = {"alice", "bob", "user", "you", "name", "username", "example", "me"}
 CURRENCY_RE = re.compile(r"[$£€]\s?\d{2,}(?:[.,]\d+)*|[$£€]\s?\d+\.\d{2}")
-MODEL_ID_RE = re.compile(r"\b(?:claude|gpt|gemini|llama|mistral|qwen|deepseek|kimi)-[a-z0-9][a-z0-9.-]*\b", re.I)
+MODEL_ID_RE = re.compile(r"\b(?:claude|gpt|gemini|llama|mistral|qwen|deepseek|kimi)-[a-z0-9.-]*\d[a-z0-9.-]*\b", re.I)
 MODEL_RES = [
     ("model family name", re.compile(r"\b(?:haiku|sonnet|opus|fable)\b", re.I)),
 ]
