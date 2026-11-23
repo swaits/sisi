@@ -11,7 +11,63 @@
       "expect": {
         "exit": 0
       },
-      "timeout_s": 20
+      "timeout_s": 10,
+      "covers": "the specification being altered or replaced without the owner",
+      "mandatory": true
+    },
+    {
+      "id": "critique-and-plan-complete",
+      "claim": "the critique gives a verdict for every module and command at the base commit, and the plan names every reconciliation stage",
+      "kind": "general",
+      "rung": 3,
+      "cmd": "cd tests && python3 -m unittest test_reconciliation",
+      "expect": {
+        "exit": 0
+      },
+      "timeout_s": 10,
+      "covers": "a component left out of the inventory",
+      "mandatory": true
+    },
+    {
+      "id": "requirements-accounted-for",
+      "claim": "every numbered requirement of the specification has an entry in the conformance table",
+      "kind": "general",
+      "rung": 2,
+      "cmd": "cd tests && python3 -m unittest test_spec test_conformance",
+      "expect": {
+        "exit": 0
+      },
+      "timeout_s": 10,
+      "covers": "a requirement silently dropped from the table or the list",
+      "mandatory": true
+    },
+    {
+      "id": "product-is-universal",
+      "claim": "the product contains no owner name, model name, price or home path",
+      "kind": "general",
+      "rung": 3,
+      "cmd": "cd tests && python3 -m unittest test_product_universal",
+      "expect": {
+        "exit": 0
+      },
+      "timeout_s": 10,
+      "covers": "owner-specific or perishable material shipped to every user",
+      "mandatory": true
+    },
+    {
+      "id": "learning-gates-hold",
+      "claim": "the approval, scope, validation and delivery gates of the learning loop refuse the abuse cases an independent reviewer found",
+      "kind": "general",
+      "rung": 3,
+      "cmd": "cd tests && python3 -m unittest test_learning_loop",
+      "expect": {
+        "exit": 0
+      },
+      "timeout_s": 30,
+      "covers": "a learning cycle weakening a rule, widening its scope or injecting text without the owner",
+      "mandatory": true,
+      "independent": true,
+      "by": "abuse cases probed by a Claude Sonnet reviewer against a build by a different model family; each became a test"
     }
   ],
   "invariants": [
@@ -22,7 +78,8 @@
       "expect": {
         "exit": 0
       },
-      "timeout_s": 60
+      "timeout_s": 60,
+      "covers": "existing behaviour getting worse"
     },
     {
       "id": "library-lint",
@@ -31,7 +88,8 @@
       "expect": {
         "exit": 0
       },
-      "timeout_s": 20
+      "timeout_s": 10,
+      "covers": "existing behaviour getting worse"
     },
     {
       "id": "launcher-help",
@@ -41,7 +99,8 @@
         "exit": 0,
         "stdout_contains": "sisi verify"
       },
-      "timeout_s": 20
+      "timeout_s": 10,
+      "covers": "existing behaviour getting worse"
     }
   ],
   "assumptions": [
@@ -53,150 +112,123 @@
     "Owner amendment 2026-11-23: at cutover the old orch.py and everything related to it (its folder, ledger, routing table and the orchestrator section of his Claude instructions) is removed completely, after its ledger is merged into the user store and a backup is taken. He will restart T3 Code and try the release in a new session in ~/Code/highroute, and wants to be told the moment it is ready."
   ],
   "questions": [],
-  "design": {
-    "implies": [
-      "The specification is the standard, so the critique has to account for every requirement in it, not a sample: a numbered list of its normative statements with a test that the list is complete and verbatim, and a conformance table that gives each requirement its mechanism, its evidence and its honest status.",
-      "SPEC 19 fixes the method and the order: inventory, map to the spec, classify gaps and liabilities, measure a baseline, keep what demonstrably works, then make the objective explicit, then the work-unit record, then the learning mechanism, then the evaluation harness. Its first milestone is observability and control. 'Perfection' therefore means every requirement accounted for and every unjustified mechanism gone, not a rewrite.",
-      "SPEC 14.3 says an agent must not weaken the objective, so the saved specification is protected: checksums, a test that fails when it changes, and a note that only the owner changes it.",
-      "The owner's two questions (does it apply to all projects, would every user want it) decide what ships in the product and what stays in a user's own data. The audit has to find owner-specific material in the product and learning that is stuck in personal data and can never reach another user.",
-      "He already asked for one orchestrator and for the old one to be deleted. The hand-written orchestrator in his Claude settings and sisi's own router cannot both survive, and the delegation history must move to the user store.",
-      "His installed copy runs in every session he has open. Changes land on a branch; the installed copy is switched only after the checks pass; personal data is backed up and migrated, never dropped; sessions already running must keep working or be told.",
-      "There is no size target for always-loaded text, in either direction. A block is cut only when a mechanism makes it redundant or measurement shows it is noise for the request it was added to; a block is added when it is shown to change behaviour. The numbers are measured in characters actually loaded and reported.",
-      "SPEC 20.3 and Appendix D ask for improvement shown over comparable work. That evidence cannot exist on day one. The work must build what measures it and say plainly which criteria are met, which are measurable from now on, and which are not yet demonstrated."
+  "parent": "owner request 2026-11-23: reconcile sisi with SPEC.md",
+  "scope": {
+    "in": [
+      "the critique against SPEC.md",
+      "the plan",
+      "the rebuild of sisi to meet the specification, including one generic orchestrator",
+      "the switch of the owner's installation and removal of the old orchestrator"
     ],
-    "provided": [
-      {
-        "what": "A contract, a check runner and an end-of-turn gate that already enforce a definition of done; they are the starting point for the work-unit record and the verification record, not something to rebuild.",
-        "evidence": "file:sisi/gate.py"
-      },
-      {
-        "what": "The check runner with fast and deep tiers and stored results.",
-        "evidence": "file:sisi/verify.py"
-      },
-      {
-        "what": "A hermetic test suite with a parallel runner, used as the baseline and the regression net for every stage.",
-        "evidence": "file:tests/run_parallel.py"
-      },
-      {
-        "what": "A library of verification techniques and definitions of done, to be judged by the audit and kept where it earns its place.",
-        "evidence": "file:sisi/verifiers.py"
-      },
-      {
-        "what": "A stable installed copy with release and rollback, so the owner's sessions are switched once, after checks, and can be switched back.",
-        "evidence": "file:sisi/release.py"
-      },
-      {
-        "what": "The personal data folder as its own git repository, which already gives provenance and rollback for learned changes.",
-        "evidence": "file:sisi/pdata.py"
-      },
-      {
-        "what": "Worker discovery and a judged delegation record inside sisi, to become the single router.",
-        "evidence": "file:sisi/routing.py"
-      },
-      {
-        "what": "pandoc, for a faithful Markdown copy of the owner's document.",
-        "evidence": "command:pandoc"
-      }
-    ],
+    "out": [
+      "new host-tool adapters",
+      "evidence of improvement over time (SPEC 20.3): only the means to measure it are in scope"
+    ]
+  },
+  "risk": {
+    "profile": "release",
+    "why": "this changes hooks that run in every session of every tool the owner uses, migrates his personal data, and replaces his installed copy",
+    "blast_radius": "every agent session on the owner's machine: session start, each prompt, each shell command and the end of each turn; his learned data; his Claude instructions and settings",
+    "rollback": "sisi rollback switches the installed copy back and the old code runs against the migrated data; the timestamped archive made by the cutover restores the data folder, CLAUDE.md, settings.json and the old orchestrator"
+  },
+  "approach": {
+    "chosen": "staged reconciliation in the order SPEC 19 gives, each stage built in its own checkout and merged only with the suite passing",
+    "why": "it keeps what the audits showed is working, removes what serves no requirement, and lets each stage be verified and reviewed on its own",
     "alternatives": [
-      {
-        "name": "Rewrite sisi from the specification on a clean slate",
-        "cost": "Weeks of worker time, and it solves again what already works (safe install, hooks for several tools, the check runner).",
-        "risk": "Loses working parts and the owner's data paths; the specification itself forbids a wholesale rewrite without evidence that it is needed (19)."
-      },
-      {
-        "name": "Patch: add the missing pieces (scorecard, learning record, requirement list) on top of everything that exists",
-        "cost": "The least work now: a few new modules and commands beside the existing ones, perhaps two days of worker time, and nothing is removed.",
-        "risk": "Keeps every duplicate, every ceremony and every prose-only rule; the product gets bigger and the complexity the owner objects to grows."
-      }
+      "rewrite from the specification on a clean slate: loses the safe installer and the hooks that work",
+      "patch the missing pieces on top: keeps every duplicate and every unenforced rule"
     ],
-    "chosen": {
-      "name": "Staged reconciliation as SPEC 19 describes it",
-      "why": "It is the method the owner's own document prescribes. It removes what serves no requirement (one of everything, nothing that is only good intentions), keeps what the evidence shows is working, builds the missing mechanisms in the order the specification gives, and every stage ends with checks that can fail. He gets a critique he can trust because it is tied to numbered requirements and measured data, and a product that is smaller and stricter instead of one more layer."
+    "reuses": [
+      "the contract, check runner and gate",
+      "the safe installer and release with rollback",
+      "the personal data repository",
+      "the transcript evidence layer"
+    ]
+  },
+  "requirements": [
+    {
+      "id": "q1",
+      "kind": "explicit",
+      "text": "a brutal critique against the specification, naming every flaw and needless complexity",
+      "decision": "now",
+      "why": "asked for",
+      "check": "critique-and-plan-complete"
     },
-    "objections": [
-      {
-        "principle": "my Claude usage is pushing my weekly limit. We definitely want to not hit that if at all possible!!!",
-        "applicable": true,
-        "objection": "An audit and overhaul of an 18,000-line tool will burn my Claude allowance.",
-        "answer": "The audits, the requirement extraction and the building go to Muse Code and, when its allowance is back, the cheap OpenCode Go models. The main thread reads reports and conclusions, not source files. Claude workers are used only where a call must block (a short design challenge) or where the other workers fail."
-      },
-      {
-        "principle": "when OpenCode-Go renews (2d 18h) let's try to stick to the most affordable models only on there. (shown with prices for GPT-6 Luna, Qwen3.8 Flash, GLM-5.3-Flash, MiMo-V2.6-Flash, DeepSeek V4.1 Flash).",
-        "applicable": true,
-        "objection": "Do not reach for the expensive OpenCode Go models when Muse runs out.",
-        "answer": "OpenCode Go is marked down until its allowance renews. After that only the five affordable models are used there, and only for search, reading and mechanical edits."
-      },
-      {
-        "principle": "I said no external dependencies. That means NO CRON jobs. So if you need something to do some updates, check a counter at the run of a normal turn and see if it's due, and if so run it. Or roll a dice or something. You install it. You use your AI. It gets smarter and better and faster and stronger JUST BY YOU USING IT!",
-        "applicable": true,
-        "objection": "Do not solve measurement, learning or model discovery with a scheduler, a service or a package.",
-        "answer": "Everything stays Python standard library and runs inside hooks and commands during normal use. Telemetry is read from what the host tool already writes; anything periodic stays a counter checked on a normal turn. The audit checks that this still holds today."
-      },
-      {
-        "principle": "You shouldn've automatically known this BEFORE implementation. I shouldn't have to wait this long for an incorrect implementation! (on a crossfade built as a slow smear instead of a short transition between two tones).",
-        "applicable": true,
-        "objection": "Do not build for a day and then discover it is the wrong thing.",
-        "answer": "Nothing is built before the inventory, the measured baseline and the numbered requirement list exist; the target design is attacked by another model playing the owner before any stage starts; each stage lands separately so a wrong turn costs one stage."
-      },
-      {
-        "principle": "I want everything as close to 'mechanisms over good intentions' as absolutely possible.",
-        "applicable": true,
-        "objection": "Half of sisi is prose telling agents to behave. Do not give me a nicer set of prose.",
-        "answer": "The audit classifies every rule and every learning path as enforced by a mechanism or prose only. The plan keeps a rule only with its mechanism, turns learning into changes to executable things with a validation step, and the conformance table names the mechanism and the test for each requirement."
-      },
-      {
-        "principle": "I need the agent to be sharp as a tack and act exactly as I want in every possible way. We may want a bigger limit on the always-included context size, unless you have concrete data and published information that goes against this.",
-        "applicable": true,
-        "objection": "Do not cut the always-loaded rules so far that agents stop doing what I want.",
-        "answer": "Size is not the target, obedience is. Text is removed where a mechanism enforces the behaviour or where the baseline shows it is noise; what stays is ordered as one document. What each hook adds is measured before and after, in characters actually loaded."
-      },
-      {
-        "principle": "The orchestrator should always be dynamic and automatic. It shouldn't be a hard set of models and harnesses to use. It should look for every available tool and use what it finds, constantly updating its data. It should always use the MOST affordable choice (plus apply some load balancing and multi model check and balance use, peer review style) available for any given task. It should also know that the main thread should be a higher quality, higher reasoning model (ie Fable 5.2 level as of today). The idea is it could drop into any user's environment and figure out how to work extremely well, efficiently, intelligently.",
-        "applicable": true,
-        "objection": "I asked for one dynamic orchestrator that finds what is available and uses the host's own subagents. I still have two, one of them a hand-written list of models.",
-        "answer": "The audit compares the two with their real ledgers. The plan keeps one, inside sisi: discovery of what is installed, the judged record in the user store, the host's native delegation first, and the hand-written section removed from his settings once the single one is proven."
-      },
-      {
-        "principle": "Over time lessons get appended and maybe turn into new rules. These lists can become convoluted nonsense. Part of the regular update has to look at them holistically and make sure they're properly structured, clear, present in a logical order and structure. Basically follow good UX and information architecture for them. It has to include everything we want included, all the rules or lessons or whatever, but it has to be constructed in a way that most effectively conveys ALL of it, with an objective of maximizing the consuming agents' instruction following. The ultimate goal is to get all agents to perfectly follow all our rules and lessons and mechanics. It shouldn't just be a gross journal of arbitrary shit. It should be a proper document!!!!",
-        "applicable": true,
-        "objection": "Do not leave me with a journal of lessons that grows forever.",
-        "answer": "The baseline measures what the lessons are really worth. The plan replaces appended notes with structured learning records that end in a mechanism or are closed with a reason, and keeps the rulebook as one whole document rebuilt from its parts."
-      },
-      {
-        "principle": "OBTW part of this is deprecating the whole standalone orch.py thing to make that a core part of sisi. But it should be GENERIC and STRATEGIC in direction, so the agent works out the tactics on the fly. IOW, it shouldn't explicitly say use THIS EXACT MODEL or whatever. It sets out OBJECTIVES about how to discover models, discover pricing, discover benchmarking, measure performance, and dispatch and orchestrate DYNAMICALLY and INTELLIGENTLY. And it can leverage subagents with specific orchestration tasks like assessing, routing decisions, whatever. That could be a Haiku/Ember level model sometimes too! This should play DIRECTLY into the main system's objective function, especially around wall time, cost, efficiency.",
-        "applicable": true,
-        "objection": "Do not ship my hand-written list of models as the product's orchestrator, and do not leave orch.py running beside it.",
-        "answer": "The product carries direction and a record, and names no model: objectives for discovering what is installed, what it costs and how it scores, a judged ledger in the user store, a recommendation command, a delegation contract, and the option of handing orchestration legwork to a cheap worker. Delegation time, tokens and overlap feed the work unit's scorecard. The old ledger is merged with a row-count check and orch.py and its section of the Claude instructions are then removed (docs/target.md section 9)."
-      }
-    ],
-    "challenge": {
-      "by": "Claude Sonnet 5.5 subagent playing the owner (the lead is Claude Fable 5.2); it read the draft design, the oracle, the handover items and SPEC.md",
-      "recorded_at": "2026-11-23T10:41:00-07:00",
-      "objections": [
-        "You are still planning. There is no cut list: nothing names what will be deleted, and nothing says what I will see at the end of the first hour.",
-        "You are hiding behind SPEC 19's 'incremental'. A conformance table with an 'honest status' column lets you mark things 'not yet demonstrated' and call that finished.",
-        "Product versus personal data is only a bullet. It is the first thing I asked for; the cleanup and backfill of my global data is not carried out anywhere in the plan.",
-        "My live setup is at risk: no backup step, no rollback trigger, no mechanism for telling running sessions, and I said I should not have to restart them.",
-        "How I will know it worked is missing. A scorecard I never see does not count; I want a before-and-after I can look at.",
-        "'Always-loaded text must shrink' contradicts what I said (weigh a bigger limit unless you have data) and contradicts the design's own 'size is not the target'.",
-        "Cost is promised but not budgeted: no cap on Claude spend, no fallback order, no stop condition when the cheap workers are down.",
-        "Removing my hand-written orchestrator 'once the single one is proven' is risky and out of order. The ledger is 898 rows of real data and both must not stay in place for days.",
-        "Learning is the heart of the specification and the plan puts it fourth with no concrete mechanism, no first visible effect, and nothing that stops a rule being promoted from one incident.",
-        "You wrote the plan, the attack and the grading. The specification warns against self-scoring; one attack by a model playing me is not independent evaluation of the result."
-      ],
-      "changes": [
-        "The first deliverable is a ranked defect list with a verdict (keep, simplify, replace, retire) and line counts for every module and command, held complete by a test. Fixes that an audit shows are certain start as soon as that audit is back, without waiting for the whole plan.",
-        "Stages are an order, not a ceiling. Every MUST and SHOULD in the numbered requirement list is either implemented with a named mechanism and a test, or appears in a short plain-language list of exceptions for the owner with the reason and what it would take. Nothing is left as 'later' without being on that list.",
-        "The sort comes first after the audit: every rule, recipe, verifier, lesson and default is classified product, user or project by the owner's two questions and moved; project items leave his global data for their projects; universal lessons that exist only in his data are queued for the product; a test scans the product for owner-specific names, model ids, prices and paths.",
-        "A written cutover checklist: timestamped archive of his data folder and Claude settings first; migration proven on a copy of his real data; rollback proven in a sandbox as one command; the installed copy is never changed in the middle of a stage; hooks of the new version must accept state written by sessions that are already running, with a test, and a one-time notice reaches running sessions through the existing prompt hook.",
-        "The measured baseline is taken before any change and kept in the repository as a script that prints it. It is re-run after every stage and shown as one before-and-after table (characters loaded at session start and per prompt, hook time, test time, commands, lines of code, rules without a mechanism, requirements met). The contract gets checks that fail when these regress. Criteria that cannot be shown yet are named with when they could be.",
-        "The design now has one rule on always-loaded text: no size target; a block is cut only when a mechanism makes it redundant or measurement shows it is noise, and the numbers are reported.",
-        "Budget: Claude workers only for short blocking reviews, at most ten Sonnet calls in the whole job and no Opus. Order of workers: Muse Wonder, Muse Wonder Full for the hard stages, the five affordable OpenCode Go models once renewed. If all of those are down the work pauses at a stage boundary and says so instead of moving the build to Claude.",
-        "Orchestrator order: copy the old ledger into the user store with a row-count check and the original kept; prove the single sisi router on a real delegation; then remove the hand-written section from his settings in one reversible edit with a backup, in the same stage, and notify running sessions.",
-        "The plan names the minimum learning loop concretely: a structured learning record per work unit, a validation step before promotion, promotion as a commit in the data repository so rollback is a revert, monitoring by recurrence, and a test that fails when something seen once is promoted as a universal rule. It is built as soon as the work-unit record it depends on exists.",
-        "A different model family grades the finished conformance table against the specification text, requirement by requirement; a test holds that every requirement has a mechanism or a recorded exception; the exceptions are given to the owner in plain words."
-      ]
+    {
+      "id": "q2",
+      "kind": "explicit",
+      "text": "the specification saved verbatim in the project",
+      "decision": "now",
+      "why": "asked for",
+      "check": "spec-saved-verbatim"
+    },
+    {
+      "id": "q3",
+      "kind": "explicit",
+      "text": "a plan and an implementation that meet the specification, plus a generic, strategic orchestration layer replacing orch.py",
+      "decision": "now",
+      "why": "asked for",
+      "check": "unit-tests"
+    },
+    {
+      "id": "q4",
+      "kind": "explicit",
+      "text": "what is product (all projects, all users) is separated from what is learned for one user",
+      "decision": "now",
+      "why": "asked for",
+      "check": "product-is-universal"
+    },
+    {
+      "id": "q5",
+      "kind": "implied",
+      "text": "the owner's learned data, statements and delegation history survive the switch",
+      "decision": "now",
+      "why": "a rebuild that loses his data is not an improvement",
+      "check": null
+    },
+    {
+      "id": "q6",
+      "kind": "implied",
+      "text": "sessions already running keep working, or he is told to restart them",
+      "decision": "now",
+      "why": "his installed copy serves every open session",
+      "check": null
+    },
+    {
+      "id": "q7",
+      "kind": "contextual",
+      "text": "standard library only, no scheduler, nothing in the product naming a model, price or person",
+      "decision": "now",
+      "why": "his standing constraints",
+      "check": "product-is-universal"
+    },
+    {
+      "id": "q8",
+      "kind": "anticipated",
+      "text": "he will want to try it on another project before every stage is finished",
+      "decision": "now",
+      "why": "he asked; the release is ordered before the documents and the grading",
+      "check": null
+    },
+    {
+      "id": "q9",
+      "kind": "anticipated",
+      "text": "evidence that sisi improves over comparable work (SPEC 20.3)",
+      "decision": "architect",
+      "why": "it needs time; the unit record, scorecard and evaluation harness are what will show it",
+      "check": null
+    },
+    {
+      "id": "q10",
+      "kind": "experiential",
+      "text": "hooks stay quiet unless a session can act on what they say, and always-loaded text does not grow without reason",
+      "decision": "now",
+      "why": "his statements about context size and noise",
+      "check": null
     }
-  }
+  ],
+  "limitations": [
+    "Hooks have been run with Claude-Code-shaped input in temporary homes and a sandbox copy of the owner's setup, not yet inside a live session of the new release.",
+    "Token and cost telemetry is tested against hand-made transcripts only."
+  ]
 }
