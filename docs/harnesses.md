@@ -40,6 +40,14 @@ the question-dialog rule here: `AskUserQuestion` exists and the transcript is re
 turn by asking in reply text without using the dialog is sent back once. Evidence: the hooks
 reference documents `UserPromptSubmit` and its added-context output. Nothing for you to do.
 
+The before-tool hook also carries the contract guard (`sisi/unitguard.py`, docs/design.md section 4): it
+refuses a file-changing call, or a build delegation, that has no valid unit behind it, with
+`hookSpecificOutput.permissionDecision: "deny"` and the reason (the hooks reference documents the shape;
+`tools/live_contract_check.py` confirms a headless run honours it and shows the agent the reason). It sees
+every tool only where the hook is registered for every tool (a `Bash`-only matcher covers shell writes
+alone). The refusal is written in Claude Code's shape only; the other tools' before-tool hooks still just
+measure, so for them the end-of-turn gate is the enforcement.
+
 ## Codex CLI
 
 Rulebook symlink at `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md`), plus hooks in
