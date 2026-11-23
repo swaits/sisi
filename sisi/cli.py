@@ -86,14 +86,19 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
   sisi verifiers doctor | lint       which tools are installed; validate the library
   sisi done [ID] [--trace]           recipes: which checks make a kind of work done; --trace also prints where each folded lesson lives in the recipe
   sisi done for "<work>"             best-matching recipe
-  sisi workers [--refresh]           the agent tools and models found here, what is usable now and why not, allowance and price where known, and delegations waiting for a judgement
+  sisi workers [--refresh]           the agent tools and models found here, what is usable now and why not, allowance and price where known, delegations waiting for a judgement, and the judged record as three tables
+  sisi workers fact W --price N|--score N --source S  record a price (per million tokens) or benchmark standing (0-100), with its source and date
+  sisi workers avoid|prefer PATTERN --why TEXT  your own routing constraints, honoured by `sisi route`
+  sisi workers down W --reason limit|auth|missing|error [--until DATE] | up W  mark a worker unavailable / available again
+  sisi workers import FILE           merge another ledger file into the delegation ledger (row counts printed; safe to repeat)
   sisi route --kind K --difficulty N [--review-of W] [--explain]
-                                     the most affordable usable worker for this kind and difficulty, by the judged record alone; --explain says why, and why the rest were passed over
+                                     the most affordable usable worker for this kind and difficulty, and the mechanism to start it with (host subagents, host cross-provider delegation, or sisi delegate); --explain says why
+  sisi delegate brief | check FILE | guide  the delegation-contract template (eight parts); which parts a brief lacks; the orchestration playbook
   sisi delegate --kind K --difficulty N --brief FILE [--worker W] [--review-of W] [--cwd DIR]
-                                     run one brief on the chosen worker unattended; prints only its final report, the transcript path, and the judge command
+                                     run one brief on the chosen worker unattended; prints only its final report, the transcript path, and the judge command; a brief without outcome, acceptance or files it may change is refused
   sisi delegate judge ID --outcome accepted|rejected --check none|diffstat|tests|read|review [--minutes N]
-                                     record your judgement of a delegation run, so the next choice learns from it
-  sisi delegate amend ID             mark a judged delegation that later proved wrong
+                                     record your judgement of a delegation run, so the next choice learns from it; judge work run any other way with --worker W --type K --difficulty N instead of ID
+  sisi delegate amend ID | recent [-n N] [--project P]  mark a judged delegation that later proved wrong; list recent judgements to find an id
   sisi version | --version           print the product version (the VERSION file in the product folder)
   sisi help                          this text
 
