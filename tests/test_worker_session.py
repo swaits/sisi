@@ -160,11 +160,11 @@ class UnlistedToolTests(Base):
     def counts(self):
         return orchestration._peek(self.sid).get("calls")
 
-    def test_an_unlisted_delegation_named_tool_at_the_limit_is_neither_refused_nor_counted(self):
+    def test_an_unlisted_spawn_named_tool_at_the_limit_is_neither_refused_nor_counted(self):
         self.transcript(ORDINARY)
         self.assertEqual(self.reads(6), [False] * 6)
         n = self.counts()
-        denied, text = self.hook("mcp__somehost__delegate_task", {"task": "do x", "target": {"model": "alpha-small"}})
+        denied, text = self.hook("mcp__somehost__spawn_helper", {"task": "do x"})
         self.assertFalse(denied, text)
         self.assertEqual(self.counts(), n)
         self.assertTrue(self.reads(1)[0])          # the meter still bites for legwork
