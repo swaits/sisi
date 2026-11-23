@@ -10,7 +10,7 @@ def _session_key(payload, cwd):
     return sid if isinstance(sid, str) and sid else "cwd-" + hashlib.sha1(cwd.encode()).hexdigest()[:12]
 
 
-# ---------------------------------------------------------------- rule 5: ask through the dialog
+# ---------------------------------------------------------------- rule 1 (own the outcome): ask through the dialog
 # Tools with a confirmed question dialog whose transcripts sisi can read in Claude-Code shape.
 # Codex's request_user_input is behind a flag that is off by default, OpenCode's question tool has
 # no readable transcript file here, and the other tools name no dialog at all, so they are exempt.
@@ -127,4 +127,4 @@ def sendback(payload):
     return "block", ("sisi: you ended by asking the human a question in the text of your reply. Ask it through the "
                      "tool's question dialog (%s), with options to pick from and the one you recommend marked — or "
                      "decide it yourself, record the assumption, and finish without the question. "
-                     "(The rule in full: `sisi rule decide-dont-ask`.)" % dialogs[0])
+                     "(The rule in full: `sisi rule own-the-outcome`.)" % dialogs[0])

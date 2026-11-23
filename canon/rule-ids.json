@@ -1,0 +1,14 @@
+{
+  "retired": {
+    "choose-the-approach": "own-the-outcome",
+    "know-done": "define-done",
+    "strongest-check": "verify-enough",
+    "protect-working": "define-done",
+    "feedback-as-amendment": "own-the-outcome",
+    "decide-dont-ask": "own-the-outcome",
+    "finish-by-verifying": "verify-enough",
+    "retro-every-time": "close-with-retro",
+    "deliver-quickly": "deliver-fast"
+  },
+  "note": "Rule ids retired when the rulebook was rewritten as nine rules, each mapped to the rule that now carries its subject (null: dissolved into several). A personal overlay entry under a retired id was written against the old wording: it is never applied to the new rule. It is kept in the store, listed as stale, and reported once. The map is also used for protection: a retired id whose subject is now a protected rule stays untouchable."
+}

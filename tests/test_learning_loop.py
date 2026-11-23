@@ -571,12 +571,12 @@ class Mechanisms(Base):
         self.assertEqual(self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
                                       "rule_id": "check-contents", "rule_text": rule}], base=L.store_base()).returncode, 0)
         self.assertTrue(self.exists("overlay/rules/check-contents.md"))  # earned: an addition applies
-        replace = "## Deliver {#deliver-quickly}\n\nShip it.\n\nWhy: speed.\n"
+        replace = "## Deliver {#deliver-fast}\n\nShip it.\n\nWhy: speed.\n"
         self.assertEqual(self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                                      "rule_id": "deliver-quickly", "rule_text": replace}], base=L.store_base()).returncode, 0)
+                                      "rule_id": "deliver-fast", "rule_text": replace}], base=L.store_base()).returncode, 0)
         self.assertEqual(len(self.pending()), 2)  # a replacement waits even when earned
         r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                         "rule_id": "strongest-check", "rule_text": replace}], base=L.store_base())
+                         "rule_id": "verify-enough", "rule_text": replace}], base=L.store_base())
         self.assertNotEqual(r.returncode, 0)
 
     def test_protection_fails_closed_when_the_file_cannot_be_read(self):
@@ -587,29 +587,50 @@ class Mechanisms(Base):
 
         def broken(*a):
             return os.path.join(self.tmp, "no-such-dir", "protected.json") if a == ("protected.json",) else orig(*a)
-        rule = "## Weak {#strongest-check}\n\nSkip checks.\n\nWhy: faster.\n"
+        rule = "## Weak {#verify-enough}\n\nSkip checks.\n\nWhy: faster.\n"
         with unittest.mock.patch("sisi.paths.canon", side_effect=broken):
             r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                             "rule_id": "strongest-check", "rule_text": rule}])
+                             "rule_id": "verify-enough", "rule_text": rule}])
             self.assertNotEqual(r.returncode, 0)
-            r = self.apply([{"action": "disable-rule", "rule_id": "strongest-check"}], base=L.store_base())
+            r = self.apply([{"action": "disable-rule", "rule_id": "verify-enough"}], base=L.store_base())
             self.assertNotEqual(r.returncode, 0)
-            r = self.sisi("overlay", "disable-rule", "deliver-quickly")
+            r = self.sisi("overlay", "disable-rule", "deliver-fast")
             self.assertNotEqual(r.returncode, 0)
         self.assertEqual(self.pending(), [])
 
     def test_overlay_rule_commands_obey_protection_and_approval(self):
         """R-11.5-11 (item 13): `sisi overlay replace-rule` / `disable-rule` are not a way around a cycle."""
         from sisi import overlay
-        rule = "## Weak {#strongest-check}\n\nSkip checks.\n"
-        for args in (("replace-rule", "strongest-check", "-"), ("disable-rule", "strongest-check")):
+        rule = "## Weak {#verify-enough}\n\nSkip checks.\n"
+        for args in (("replace-rule", "verify-enough", "-"), ("disable-rule", "verify-enough")):
             r = self.sisi("overlay", *args, stdin=rule)
             self.assertEqual(r.returncode, 1, args)
             self.assertIn("protected", r.stderr)
-        r = self.sisi("overlay", "disable-rule", "deliver-quickly")
+        r = self.sisi("overlay", "disable-rule", "deliver-fast")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertNotIn("deliver-quickly", overlay.disabled("rule"))  # not yet: it waits
+        self.assertNotIn("deliver-fast", overlay.disabled("rule"))  # not yet: it waits
         self.assertEqual(len(self.pending()), 1)
+
+    def test_protected_rules_are_refused_under_new_ids_old_ids_and_the_map(self):
+        """R-14.3-1, R-11.7-2, R-11.5-11: a cycle cannot replace or disable any protected rule, under
+        its new id or under a retired id that the map points at it; the map is no way round."""
+        from sisi import overlay
+        self.propose()
+        protected = ["stay-inside-the-lines", "verify-enough", "report-plainly", "define-done", "close-with-retro"]
+        self.assertEqual(sorted(overlay.protected_rules() & set(protected)), sorted(protected))
+        old_ids = [old for old, new in overlay.retired_ids().items() if new in protected]
+        self.assertEqual(sorted(old_ids), ["finish-by-verifying", "know-done", "protect-working",
+                                           "retro-every-time", "strongest-check"])
+        for rid in protected + old_ids:
+            rule = "## Weak {#%s}\n\nSkip checks.\n\nWhy: faster.\n" % rid
+            r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
+                             "rule_id": rid, "rule_text": rule}], base=L.store_base())
+            self.assertNotEqual(r.returncode, 0, rid)
+            r = self.apply([{"action": "disable-rule", "rule_id": rid}], base=L.store_base())
+            self.assertNotEqual(r.returncode, 0, rid)
+            self.assertEqual(self.sisi("overlay", "disable-rule", rid).returncode, 1, rid)
+        self.assertEqual(self.pending(), [])
+        self.assertEqual(overlay.disabled("rule"), [])
 
     def test_cycle_refusals_apply_nothing(self):
         """R-14.3-1, R-11.7-2, R-16-11: protected rule, stale base, ignored flag."""
@@ -618,8 +639,8 @@ class Mechanisms(Base):
         base = L.store_base()
         cases = [
             {"base": base, "actions": [{"action": "promote", "learning": "L-0001",
-             "mechanism_kind": "rule-text", "rule_id": "strongest-check",
-             "rule_text": "## Weak {#strongest-check}\n\nSkip checks.\n\nWhy: faster.\n"}]},
+             "mechanism_kind": "rule-text", "rule_id": "verify-enough",
+             "rule_text": "## Weak {#verify-enough}\n\nSkip checks.\n\nWhy: faster.\n"}]},
             {"base": "stale", "actions": [{"action": "promote", "learning": "L-0001",
              "mechanism_kind": "risk", "pattern": "x/**", "profile": "logic"}]},
             {"base": base, "actions": [{"action": "promote", "learning": "L-0001",
@@ -675,24 +696,24 @@ class Approval(Base):
         """R-11.5-11, R-14.4-1: disabling a rule is pending until `sisi approve`."""
         _contract(self)
         self.retro(*PROMOTE[1:])
-        r = self.apply([{"action": "disable-rule", "rule_id": "deliver-quickly"}])
+        r = self.apply([{"action": "disable-rule", "rule_id": "deliver-fast"}])
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(self.pending()), 1)
         self.assertIn("wait", L.pending_notice())
         from sisi import overlay
-        self.assertNotIn("deliver-quickly", overlay.disabled("rule"))
+        self.assertNotIn("deliver-fast", overlay.disabled("rule"))
         with self.tty():
             r = self.sisi("approve", "P-0001", "--no")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.pending(), [])
-        self.assertNotIn("deliver-quickly", overlay.disabled("rule"))
+        self.assertNotIn("deliver-fast", overlay.disabled("rule"))
 
     def test_listing_shows_the_whole_action(self):
         """The listing prints the command, the pattern and profile, the rule text diff."""
         self.park_command()
-        rule = "## Deliver {#deliver-quickly}\n\nShip it at once.\n\nWhy: speed.\n"
+        rule = "## Deliver {#deliver-fast}\n\nShip it at once.\n\nWhy: speed.\n"
         self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                     "rule_id": "deliver-quickly", "rule_text": rule},
+                     "rule_id": "deliver-fast", "rule_text": rule},
                     ], base=L.store_base())
         self.retro("--finding", "the release notes template was edited by hand again today",
                    "--cause", "no generator exists for the notes", "--impact", "time",
@@ -969,7 +990,7 @@ class Store(Base):
         _contract(self)
         env = {"PYTHONWARNINGS": "always::ResourceWarning"}
         runs = [PROMOTE, ("lessons",), ("learn", "prefer short plain reports over long ones"), ("oracle",),
-                ("cycle",), ("approve",), ("rule", "deliver-quickly"), ("promote", "--export"),
+                ("cycle",), ("approve",), ("rule", "deliver-fast"), ("promote", "--export"),
                 ("overlay", "add-rule", "--id", "tmp-rule", "-"), ("status", "--learning")]
         for args in runs:
             r = self.sisi_proc(*args, env=env, stdin="## Tmp rule\n\nBody.\n\nWhy: test.\n")
@@ -1144,7 +1165,7 @@ class Migration(Base):
             os.symlink(self.proj, link)
         rows = [
             {"t": "lesson", "id": 1, "moment": "m one happened here", "cause": "c one",
-             "change": "change one", "change_kind": "rule", "status": "applied", "target": "rule:know-done",
+             "change": "change one", "change_kind": "rule", "status": "applied", "target": "rule:define-done",
              "project": self.proj, "created": "2026-01-01T00:00:00Z"},
             {"t": "lesson", "id": 2, "moment": "m two happened here", "cause": "c two",
              "change": "change two", "change_kind": "tool", "status": "open",
@@ -1181,7 +1202,7 @@ class Migration(Base):
         got = self.rows()
         self.assertEqual(len(got), 5)  # 3 lessons + 2 distinct statements (one duplicate dropped)
         self.assertEqual(got[0]["status"], "implemented")
-        self.assertEqual(got[0]["proposed"]["target"], "know-done")
+        self.assertEqual(got[0]["proposed"]["target"], "define-done")
         self.assertTrue(all(r["validation"]["result"] != "validated" for r in got))
         self.assertEqual(len(got[0]["provenance"]), 2)
         self.assertEqual({p["project"] for p in got[0]["provenance"]}, {L.project_key(self.proj)})  # normalised
@@ -1324,18 +1345,18 @@ class Product(Base):
         """R-12-10 (item 8): `sisi rule` lists the learnings whose target is the rule, and its cycles."""
         _contract(self)
         self.git_init()
-        self.retro(*PROMOTE[1:], "--target", "deliver-quickly")
-        out = self.sisi("rule", "deliver-quickly").stdout
+        self.retro(*PROMOTE[1:], "--target", "deliver-fast")
+        out = self.sisi("rule", "deliver-fast").stdout
         self.assertIn("Learnings behind this rule", out)
         self.assertIn("L-0001", out)
-        self.assertNotIn("L-0001", self.sisi("rule", "deliver-quickly", cwd=self.other_project("o2")).stdout)
+        self.assertNotIn("L-0001", self.sisi("rule", "deliver-fast", cwd=self.other_project("o2")).stdout)
         self.earn("L-0001")
-        rule = "## Deliver {#deliver-quickly}\n\nShip it at once.\n\nWhy: speed.\n"
+        rule = "## Deliver {#deliver-fast}\n\nShip it at once.\n\nWhy: speed.\n"
         self.assertEqual(self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                                      "rule_id": "deliver-quickly", "rule_text": rule}]).returncode, 0)
+                                      "rule_id": "deliver-fast", "rule_text": rule}]).returncode, 0)
         with self.tty():
             self.sisi("approve", "P-0001", "--yes")
-        hist = self.sisi("rule", "deliver-quickly").stdout
+        hist = self.sisi("rule", "deliver-fast").stdout
         self.assertIn("cycle-", hist)
 
     def test_done_and_verifiers_show_learnings_that_target_the_entry(self):

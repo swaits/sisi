@@ -16,7 +16,7 @@ Note: no tool; the map is a small file and a script. The script was not run
 here as written, only the traceability idea behind it (`spec-traceability`).
 
 ## Use when
-- You start non-trivial work from a request in prose and are drafting `.sisi/contract.json` (core rule 1).
+- You start non-trivial work from a request in prose and are drafting `.sisi/contract.json` (rule 3, define-done).
 - The request is long, or has "and also" clauses that are easy to drop.
 - You are about to say "done" and need to show nothing asked for was left out.
 
@@ -58,5 +58,5 @@ check, exit 1. Report every `unchecked` entry in the final answer as not verifie
 That the check is strong; a Q mapped to a weak check passes. Read the map for
 the sentences where the check is only "the command runs". Implicit asks (the
 human did not write "do not break the old import") are missing: Q4 above must
-be added by you, from the invariants in core rule 3. An `unchecked` list is
+be added by you, from the invariants in rule 3 (define-done). An `unchecked` list is
 honest only if it is reported.

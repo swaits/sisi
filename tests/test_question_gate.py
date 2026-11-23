@@ -1,4 +1,4 @@
-"""Rule 5 enforcement: ending a turn by asking the human a question in reply text sends the agent back
+"""Rule 1 (own-the-outcome) enforcement: ending a turn by asking the human a question in reply text sends the agent back
 once, where a question dialog exists and was not used in that turn (Claude Code)."""
 import json, os, unittest
 from support import *

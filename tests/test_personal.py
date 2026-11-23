@@ -361,15 +361,15 @@ class UpdateTests(PersonalCase):
         self.assertTrue(open(core).read().endswith("local edit\n"))
         open(core, "w").write(orig)
         # a person's replacement, then the origin changes that rule
-        rid = "deliver-quickly"  # a protected rule (know-done) cannot be replaced at all
+        rid = "deliver-fast"  # a protected rule (define-done) cannot be replaced at all
         self.ok_owner("overlay", "replace-rule", rid, "-", stdin=rule_file("Know it, my way", "My text."))
         text = open(os.path.join(origin, "canon", "core.md")).read()
-        open(os.path.join(origin, "canon", "core.md"), "w").write(text.replace("never repeating work whose", "never redoing work whose"))
+        open(os.path.join(origin, "canon", "core.md"), "w").write(text.replace("unchanged inputs, and a useful", "unchanged inputs, and one useful"))
         g(origin, "commit", "-q", "-am", "two")
         r = self.ok("update")
         self.assertIn("->", r.stdout)
-        self.assertIn("redoing work whose", open(core).read())
-        self.assertIn("kept your version of rule deliver-quickly", r.stdout)
+        self.assertIn("unchanged inputs, and one useful", open(core).read())
+        self.assertIn("kept your version of rule deliver-fast", r.stdout)
         self.assertIn("Know it, my way", self.generated())
         self.assertIn("rulebook rebuilt", r.stdout)
         self.assertIn("rulebook", r.stdout.split("doctor:")[1])

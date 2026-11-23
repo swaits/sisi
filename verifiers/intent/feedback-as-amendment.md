@@ -13,7 +13,7 @@ verified: ran
 ---
 
 ## Use when
-- The human reacts to your work ("the button is too big", "round down not up", "the second paragraph is wrong"). Core rule 4: this is an amendment, not licence to rework.
+- The human reacts to your work ("the button is too big", "round down not up", "the second paragraph is wrong"). Rule 1 (own-the-outcome): this is an amendment, not licence to rework.
 - A previous change reached further than the request; you want to make that impossible.
 - You are fixing a review comment and the diff must show only that fix.
 
@@ -23,7 +23,7 @@ verified: ran
 ## Set up
 Record the amendment in one line in `.sisi/contract.json` (as a new check or a
 note) and name the paths it may touch. Note the commit you start from:
-`git rev-parse HEAD`. Re-run the invariants from rule 3.
+`git rev-parse HEAD`. Re-run the invariants from rule 3 (define-done).
 
 ## Minimal example
 Amendment: "Round fees down to the cent, only in `src/fees.py`." Scope script

@@ -145,7 +145,34 @@ def disabled(kind):
     return _lines(paths.overlay_dir({"rule": "rules", "verifier": "verifiers", "recipe": "done"}[kind], "disabled.txt"))
 
 
-def overlay_rules():
+def retired_ids():
+    """{old rule id: the rule that now carries its subject, or None} from canon/rule-ids.json.
+    An unreadable file reads as empty here; the protection check uses retired_strict()."""
+    try:
+        return retired_strict()
+    except OverlayError:
+        return {}
+
+
+def retired_strict():
+    try:
+        with open(paths.canon("rule-ids.json"), encoding="utf-8") as f:
+            d = json.load(f)["retired"]
+        if not isinstance(d, dict) or not all(isinstance(k, str) and (v is None or isinstance(v, str)) for k, v in d.items()):
+            raise ValueError("retired must map ids to an id or null")
+        return d
+    except FileNotFoundError:
+        return {}  # a product without the map has retired nothing
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise OverlayError("canon/rule-ids.json cannot be read (%s)" % e)
+
+
+def _is_retired(rid):
+    """A retired id that no base rule uses: an overlay entry under it is stale, never applied."""
+    return rid in retired_ids() and rid not in {r["id"] for r in base_rules()[1]}
+
+
+def overlay_rules(include_stale=False):
     d = paths.overlay_dir("rules")
     out = {}
     try:
@@ -160,6 +187,22 @@ def overlay_rules():
             except (OverlayError, OSError):
                 continue  # a broken file is ignored here; `overlay list` reports it
             out[stem] = r
+    if not include_stale:
+        out = {k: v for k, v in out.items() if not _is_retired(k)}
+    return out
+
+
+def stale_entries():
+    """Overlay rule entries keyed by a retired id: [(id, 'replacement'|'disabling', new id or None)].
+    They stay in the store and are not applied."""
+    out = []
+    ret = retired_ids()
+    for rid in sorted(overlay_rules(include_stale=True)):
+        if _is_retired(rid):
+            out.append((rid, "replacement", ret[rid]))
+    for rid in disabled("rule"):
+        if _is_retired(rid):
+            out.append((rid, "disabling", ret[rid]))
     return out
 
 
@@ -228,6 +271,7 @@ def _render(pre, rules):
     if pre.strip():
         parts.append(pre)
     for n, r in enumerate(rules, 1):
+        # the pointer rides on the body's last line: it costs no line of the always-loaded budget
         parts.append("## %d. %s {#%s}\n\n%s\n%s" % (n, r["title"], r["id"], r["body"], more_line(n)))
     return "\n\n".join(parts) + "\n"
 
@@ -262,7 +306,9 @@ def protected_rules():
         rules = d["rules"]
         if not isinstance(rules, list) or not all(isinstance(x, str) for x in rules):
             raise ValueError("rules must be a list of ids")
-        return set(rules)
+        prot = set(rules)
+        # a retired id whose subject is now a protected rule stays untouchable: the map is no way round
+        return prot | {old for old, new in retired_strict().items() if new in prot}
     except (OSError, ValueError, KeyError, TypeError) as e:
         raise OverlayError("canon/protected.json cannot be read (%s): changes to rules are refused until it can" % e)
 
@@ -462,6 +508,8 @@ def add_rule(text, rid=None):
     r = parse_rule_file(text, rid)
     if r["id"] in {x["id"] for x in base_rules()[1]}:
         raise OverlayError("%r is a base rule id; use replace-rule to change it" % r["id"])
+    if r["id"] in retired_ids():
+        raise OverlayError("%r is a retired rule id (now %s); choose another id" % (r["id"], retired_ids()[r["id"]] or "split across several rules"))
     if r["id"] in overlay_rules():
         raise OverlayError("an added rule %r already exists; use replace-rule to change it" % r["id"])
     with _txn("overlay: add rule %s" % r["id"]):
@@ -596,6 +644,9 @@ def cmd_list():
             for i in o[kind][how]:
                 print("%-8s %-9s %s" % (kind, how, i))
                 n += 1
+    for rid, how, repl in stale_entries():
+        print("%-8s %-9s %s (retired id, %s; not applied, kept in your store)" % ("rule", "stale", rid, "now " + repl if repl else "split across several rules"))
+        n += 1
     if not n:
         print("the overlay is empty: base rules, verifiers and recipes are used as they are")
     q = retest_queue()
@@ -672,6 +723,8 @@ def scan_retests():
         kind, _, id = key.partition(":")
         if kind not in KINDS:
             continue
+        if kind == "rule" and _is_retired(id):
+            continue  # reported below as stale, not as a kept personal version
         old, cur = b[key], base_hash(kind, id)
         if old == cur:
             continue
@@ -681,6 +734,16 @@ def scan_retests():
                     "old_base_hash": old, "new_base_hash": cur, "action": "kept the personal version"})
         b[key] = cur
         changed = True
+    seen = {(r.get("kind"), r.get("id")) for r in retest_queue() if str(r.get("action", "")).startswith("stale")}
+    for rid, how, repl in stale_entries():
+        if ("rule", rid) in seen:
+            continue  # reported once
+        # not the 'kept your version' route: this text was written against a rule that no longer exists
+        new.append({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "kind": "rule", "id": rid,
+                    "old_base_hash": b.get("rule:" + rid), "new_base_hash": None,
+                    "action": "stale: your %s of the retired rule %s was written against the old wording; "
+                              "not applied to %s, kept in your store" % (how, rid, repl or "the rules that replaced it")})
+        changed = True
     if changed:
         with pdata.lock():
             p = paths.data_file("retest.jsonl")
@@ -688,7 +751,7 @@ def scan_retests():
                 for r in new:
                     f.write(json.dumps(r, sort_keys=True) + "\n")
             _write("bases.json", json.dumps(b, indent=1, sort_keys=True) + "\n")
-        pdata.commit("update: %d replaced item(s) changed in the product, personal versions kept, queued for retest" % len(new),
+        pdata.commit("update: %d overlay item(s) queued (base changed, personal versions kept; or stale under a retired rule id)" % len(new),
                      ["overlay", "retest.jsonl"])
     return new
 

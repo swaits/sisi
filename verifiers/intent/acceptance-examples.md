@@ -26,7 +26,7 @@ is standard specification by example.
 - The behaviour is visual or tasteful; see `pairwise-comparison`.
 
 ## Set up
-Write `acceptance/examples.json` and show it to the human once (core rule 5: one
+Write `acceptance/examples.json` and show it to the human once (rule 1, own-the-outcome: one
 round of confirmation, with your default stated). Edge cases first: zero,
 empty, the largest, a tie, a negative, an invalid input and what it must do.
 
