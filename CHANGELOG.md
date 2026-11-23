@@ -17,6 +17,8 @@ All notable changes to this project are recorded here. The format follows
 - Telemetry with a class on every value, the eight-dimension scorecard, and `sisi status` as the
   one report (recent units, then trends by project, risk profile, model and policy version).
 - Scratch pruning of old session state, on a counter at session start.
+- `sisi workers note` and `sisi workers only`; `sisi learn --withdraw`; failure evidence stored
+  with failed checks; `sisi help` grouped by reader with full text under `sisi help COMMAND`.
 - The end-of-turn gate is rebuilt on risk profiles (docs/records.md, "The end-of-turn gate"): it
   enforces exactly the `requirements` row of `canon/risk.json` for the profile (a contract, checks
   with `covers`, invariants, a requirement list, a risk note, an `approach`, independent evidence),
@@ -51,6 +53,9 @@ All notable changes to this project are recorded here. The format follows
 ### Changed
 
 - The package version is read from the VERSION file, the one source of truth.
+- A contract must declare `risk.profile`; a mandatory check that is not-applicable and has
+  never passed counts as never run; a pause also ends when `sisi verify` runs; `sisi status`
+  shows the last five units; `sisi update` on an installed copy runs the migration step.
 - The README is rewritten and shortened; contributions are judged against SPEC.md by
   requirement id.
 
