@@ -13,9 +13,13 @@ or learned from judged results. The strategy is [canon/orchestration.md](../cano
   record as three tables: by task type and difficulty (attempts, accepted, checked well, later
   wrong, median minutes; thin rows marked), what fixed each rejection, and difficulty-guess
   calibration.
-- `sisi workers fact WORKER --price N|--score N --source S [--date D] [--plan flat|per-use]
-  [--maker M]` — record a price (per million tokens) or a benchmark standing (0–100), each with
-  its source and date, in the user store. A fact without a source is refused.
+- `sisi workers fact WORKER --price-in N --price-out N | --price N | --standing N --source S
+  [--date D] [--plan flat|per-use] [--maker M]` — record a price as published (input and output,
+  per million tokens), one blended price for a source that publishes only that, or a benchmark
+  standing (0–100; `--score` is the old name), each with its source and date, in the user store.
+  A fact without a source is refused. Ranking uses one blend of the two prices, by default three
+  parts input to one part output (`route.price_blend_input_parts`); `sisi workers` shows both
+  prices and the blend, and lists each benchmark standing apart from the accepted rates it prints.
 - `sisi workers avoid|prefer PATTERN --why TEXT` — the user's own routing constraints.
 - `sisi workers only PROVIDER PATTERN... --why TEXT` — only the matching models of that provider are
   routable; anything else from it (a newly discovered model, say) is passed over with the reason.
@@ -47,7 +51,7 @@ or learned from judged results. The strategy is [canon/orchestration.md](../cano
 
 ## How the choice is made
 
-Candidates are only workers with a judged record, a known price or a benchmark prior; discovered
+Candidates are only workers with a judged record, a known price or a benchmark standing; discovered
 catalogue models with none of those are listed but never routed to. On a cold start nobody
 qualifies: the pick is then a trial among usable workers, `--explain` says so, and asks for the
 result to be judged and facts recorded.
@@ -55,12 +59,28 @@ result to be judged and facts recorded.
 In order: a tier that trains on prompts is never chosen; unavailable and allowance-spent workers
 are skipped and named; `avoid` patterns remove a worker unless that leaves nobody; a reviewer
 comes from a different maker than the author (a stored `maker` fact, else derived from the model
-id). Proven workers (enough attempts at or above the accepted-rate bar, not later found wrong)
-come first above difficulty 1; proven-bad workers are passed over. Cheapest first within that:
-flat-rate allowance before per-use prices, unknown prices last, the benchmark prior ordering a
-thin record at equal price, `prefer` patterns first, then load balancing across allowances.
-About one difficulty-1 task in ten goes to a cheaper thin-record worker instead, so cheaper
-options gather evidence. The choice is deterministic for one fixed record.
+id). Then the cheapest worker that is capable enough for the kind and difficulty, judged by the
+best evidence about each worker, in this order: (a) its judged record for that kind and
+difficulty (enough attempts at or above the accepted-rate bar, not later found wrong); (b) the
+nearest judged evidence: the same kind at a harder difficulty proves an easier one, then all
+kinds at that difficulty or a harder one (the same kind at an easier difficulty is weak evidence,
+used only when no usable worker is capable otherwise); (c) benchmark standing as a prior, compared
+only with other workers' standing: at least 85 percent of the best usable standing for difficulty
+3, 60 percent for difficulty 2, no floor for difficulty 1 (`route.standing_floor` in the config);
+(d) nothing known: difficulty 1 only, as an exploration. Above difficulty 1 a benchmark is a reason
+to try a worker, not to prefer it to proof: when any usable worker is capable by a judged record for
+the kind (a, or b from a harder difficulty of the kind), only those compete; the record across all
+kinds counts as proof only when nobody has evidence from the kind; standing decides only when nobody
+has a judged record for the request. A thick bad record at this or an easier
+difficulty, or a thin one with repeated rejections, keeps a worker off its benchmark. The two
+scales never meet: a standing is never compared with an accepted rate. Cheapest first among the
+competing workers: flat-rate allowance before per-use prices (blended input and output), unknown prices
+last, then standing, `prefer` patterns first, then load balancing across allowances. When no
+worker is capable by the evidence, the strongest known usable worker is recommended and `--explain`
+says that none is proven. About one difficulty-1 task in ten goes to a cheaper thin-record worker
+instead, so cheaper options gather evidence. The choice is deterministic for one fixed record.
+`--explain` prints one line for the evidence behind the choice (which of a to d, with the numbers),
+one per group of workers passed over as not capable enough, and names an exploration or a fallback.
 
 ## Costs and failures
 

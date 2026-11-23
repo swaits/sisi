@@ -10,5 +10,13 @@
   },
   "retro": {
     "required": true
+  },
+  "route": {
+    "standing_floor": {
+      "1": 0,
+      "2": 60,
+      "3": 85
+    },
+    "price_blend_input_parts": 3
   }
 }

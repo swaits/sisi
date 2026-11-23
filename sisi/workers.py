@@ -13,11 +13,14 @@ Personal files (all in the personal data folder):
                            `sisi delegate judge` is the only way a result enters it.
   worker-availability.json unavailability (limit, login, missing, error) with retry times
   worker-prices.json       worker facts (prices): {"models": {"<model or worker>":
-                           {"plan": "flat"|"per-use", "cost_per_million_tokens": number,
+                           {"plan": "flat"|"per-use", "price_in": number, "price_out": number (as
+                           published; ranked by a blend, `route.price_blend_input_parts` input to one
+                           output) or "cost_per_million_tokens": one blended figure,
                            "maker": name, "source": text, "date": "YYYY-MM-DD"}},
                            "tools": {"<tool>": same shape}}, written by `sisi workers fact`
-  model-strength.json      worker facts (benchmark standing): {"models": {"<model or worker>":
-                           {"score": 0..100, "source": text, "date": "YYYY-MM-DD"}}}
+  model-strength.json      worker facts (benchmark standing, a published figure; never the measured
+                           accepted rate): {"models": {"<model or worker>":
+                           {"standing": 0..100, "source": text, "date": "YYYY-MM-DD"}}}
   worker-prefs.json        the user's own routing constraints: {"avoid": [{"pattern", "why"}],
                            "prefer": [...], "only": [{"provider", "patterns", "why"}]}, written by
                            `sisi workers avoid|prefer|only`
@@ -501,10 +504,73 @@ def load_prices():
     return read_json(prices_path())
 
 
+def standing_of(entry):
+    """The benchmark standing in a stored fact, or None. Facts recorded before standing had its own
+    name carry it as "score": read the same way, with their source and date."""
+    if not isinstance(entry, dict):
+        return None
+    for field in ("standing", "score"):
+        v = entry.get(field)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+    return None
+
+
 def load_strength_prior():
     d = read_json(strength_path())
     models = d.get("models")
     return models if isinstance(models, dict) else {}
+
+
+def migrate_standing_facts():
+    """Facts recorded before standing had its own name store it as "score". Rename each to "standing",
+    keeping its source, date and maker. Returns how many moved; repeating it moves none."""
+    path = strength_path()
+    data = read_json(path)
+    models = data.get("models")
+    if not isinstance(models, dict):
+        return 0
+    moved = 0
+    for key, entry in list(models.items()):
+        if isinstance(entry, dict) and "score" in entry:
+            rest = {k: v for k, v in entry.items() if k not in ("score", "standing")}
+            models[key] = dict({"standing": entry["standing"] if "standing" in entry else entry["score"]}, **rest)
+            moved += 1
+    if moved:
+        try:
+            write_json(path, data)
+        except OSError:
+            return 0
+    return moved
+
+
+def route_cfg():
+    cfg = store.config().get("route")
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def price_blend():
+    """Parts of input price to one part of output price in the blended price used for ranking and
+    cost estimates: `route.price_blend_input_parts`, default 3."""
+    v = route_cfg().get("price_blend_input_parts")
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 else routing.DEFAULT_PRICE_BLEND
+
+
+def entry_cost(entry):
+    """One per-million-token price from a stored price fact, or None: an input and output price pair is
+    blended at the configured ratio, a single figure is taken as the blended figure it was recorded as."""
+    if not isinstance(entry, dict):
+        return None
+    blended = routing.blended_price(entry.get("price_in"), entry.get("price_out"), price_blend())
+    if blended is not None:
+        return blended
+    single = entry.get("cost_per_million_tokens", entry.get("cost"))
+    return float(single) if isinstance(single, (int, float)) and not isinstance(single, bool) else None
+
+
+def route_floors():
+    """{difficulty: percent of the best usable standing needed} from `route.standing_floor`."""
+    return routing.standing_floors(route_cfg().get("standing_floor"))
 
 
 def _price_for(prices, tool, model, worker):
@@ -558,18 +624,18 @@ def build_candidates(disc=None, records=None):
             return None
         seen.add(worker.lower())
         price = _price_for(prices, tool, model, worker)
-        cost = price.get("cost_per_million_tokens", price.get("cost"))
+        cost = entry_cost(price)
         prior_entry = next((prior[k] for k in (worker, model)
                             if k and isinstance(prior.get(k), dict)), {})
-        score = prior_entry.get("score")
+        standing = standing_of(prior_entry)
         c = {"worker": worker, "tool": tool, "model": model,
              "maker": price.get("maker") or prior_entry.get("maker") or routing.maker_of(model or worker),
              "plan": price.get("plan") or tool_plan,
-             "cost": float(cost) if isinstance(cost, (int, float)) else None,
+             "cost": cost,
              "allowance_pct_left": allowance, "usable": usable, "reason": reason,
              "price_source": price.get("source"), "price_date": price.get("date"),
-             "prior_score": float(score) if isinstance(score, (int, float)) else None,
-             "prior_source": prior_entry.get("source"), "prior_date": prior_entry.get("date"),
+             "standing": standing,
+             "standing_source": prior_entry.get("source"), "standing_date": prior_entry.get("date"),
              "aliases": [worker, model, ("%s/%s" % (tool, model)) if tool and model else None,
                          tool if model is None else None]}
         c["aliases"] = [a for a in c["aliases"] if a]
@@ -801,7 +867,7 @@ def facts_line(now=None):
     return ("sisi: %s: ask a fast, cheap worker to research current prices and "
             "software-engineering benchmark standing for the workers found here (`sisi workers`) "
             "and record each with its source: `sisi workers fact WORKER --price N --source S` "
-            "and `sisi workers fact WORKER --score N --source S`. Until then routing "
+            "and `sisi workers fact WORKER --standing N --source S`. Until then routing "
             "goes by the judged record alone." % what)
 
 
@@ -809,10 +875,10 @@ def estimate_cost(tokens, price_entry):
     """Estimated cost from a known per-million-token price, or None. The caller labels it estimated."""
     if not isinstance(tokens, (int, float)) or not isinstance(price_entry, dict):
         return None
-    per_million = price_entry.get("cost_per_million_tokens", price_entry.get("cost"))
-    if not isinstance(per_million, (int, float)):
+    per_million = entry_cost(price_entry)
+    if per_million is None:
         return None
-    return float(tokens) / 1000000.0 * float(per_million)
+    return float(tokens) / 1000000.0 * per_million
 
 
 def routable_candidates(candidates, records):
@@ -825,7 +891,7 @@ def routable_candidates(candidates, records):
     keep = []
     for c in candidates:
         judged = sum(cell["n"] for cell in stats.get(c["worker"], {}).get("by_cell", {}).values())
-        if judged or c.get("price_source") or c.get("prior_score") is not None:
+        if judged or c.get("price_source") or c.get("standing") is not None:
             keep.append(c)
     if not keep:
         return list(candidates), True, 0
@@ -883,7 +949,7 @@ def digest_lines(records=None, days=None, now=None):
              % (days, len(attempts), routing.MIN_ATTEMPTS)]
     if not attempts:
         lines.append("  No judged delegations yet. Judge each result with `sisi delegate judge`; "
-                     "until then routing goes on price and benchmark prior alone.")
+                     "until then routing goes on price and benchmark standing alone.")
         return lines
     cells = {}
     for a in attempts:
@@ -901,10 +967,10 @@ def digest_lines(records=None, days=None, now=None):
     rows = rows[:MAX_DIGEST_ROWS]
     rows.sort(key=lambda r: (str(r["type"]), r["diff"] or 0, -(r["ok"] / r["n"] if r["n"] else 0), -r["n"]))
     lines += ["", "Workers by task", "",
-              "Accepted counts results that passed the check and were not reported wrong later. "
+              "Accepted rate counts results that passed the check and were not reported wrong later. "
               "Checked well is the share of those verified by tests, a read, or a second reviewer; "
               "the rest were accepted on a lighter check.", "",
-              "| Type | Diff | Worker | Attempts | Accepted | Checked well | Later wrong | Median min |",
+              "| Type | Diff | Worker | Attempts | Accepted rate | Checked well | Later wrong | Median min |",
               "|---|---|---|---|---|---|---|---|"]
     for r in rows:
         thin = " (thin)" if r["n"] < routing.MIN_ATTEMPTS else ""
@@ -1104,7 +1170,7 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
             prefs = effective_prefs(kind, difficulty, cwd)
             result = routing.choose(candidates, read_records(), read_availability(), kind, difficulty,
                                     review_of=review_of, now=time.time(), exclude=tried,
-                                    avoid=prefs["avoid"], prefer=prefs["prefer"])
+                                    avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors())
             cand = result["choice"]
             if cand is None:
                 notes.append("sisi: no usable worker remains for kind %s at difficulty %s" % (kind, difficulty))
@@ -1171,29 +1237,21 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
 # ---------------------------------------------------------------- strength and session lines
 
 
-def strength_scores(candidates, records):
-    """{worker: (score, how)} from the judged record where it is thick enough, else from the
-    stored prior (model-strength.json, each figure with its source and date). No shipped ranking:
-    a model with neither is simply absent here, and its strength is unknown."""
+def strength_scores(candidates):
+    """{worker: (standing, how)} from the stored benchmark standing (model-strength.json, each figure with
+    its source and date). Only standings are here: the accepted rate measured from judged delegations is a
+    different scale and is never mixed in. No shipped ranking: a model with no stored standing is simply
+    absent, and its strength is unknown."""
     prior = load_strength_prior()
-    stats = routing.candidate_stats(candidates, records)
     out = {}
     for c in candidates:
-        cells = stats.get(c["worker"], {}).get("by_cell", {})
-        n = sum(v["n"] for v in cells.values())
-        good = sum(v["good"] for v in cells.values())
-        if n >= routing.MIN_ATTEMPTS:
-            out[c["worker"]] = (100.0 * good / n, "measured from %d judged delegations" % n)
-            continue
-        entry = None
         for key in [c["worker"], c.get("model")] + list(c.get("aliases") or []):
-            if key and isinstance(prior.get(key), dict):
+            standing = standing_of(prior.get(key)) if key else None
+            if standing is not None:
                 entry = prior[key]
+                out[c["worker"]] = (standing, "benchmark standing (%s, %s)" % (entry.get("source") or "no source stated",
+                                                                            entry.get("date") or "no date stated"))
                 break
-        if entry and isinstance(entry.get("score"), (int, float)):
-            how = "stored prior (%s, %s)" % (entry.get("source") or "no source stated",
-                                             entry.get("date") or "no date stated")
-            out[c["worker"]] = (float(entry["score"]), how)
     return out
 
 
@@ -1235,14 +1293,14 @@ def session_lines(model, payload=None):
         suffix = " One delegation is waiting for a judgement: run `sisi workers`, then `sisi delegate judge`."
     elif waiting:
         suffix = " %d delegations are waiting for a judgement: run `sisi workers` to see, then `sisi delegate judge`." % waiting
-    scores = strength_scores(candidates, records) if candidates else {}
+    scores = strength_scores(candidates) if candidates else {}
     cand = resolve_worker(model, candidates) if candidates else None
     own = scores.get(cand["worker"]) if cand else None
     if own is None:
         prior = load_strength_prior().get(model)
-        if isinstance(prior, dict) and isinstance(prior.get("score"), (int, float)):
-            own = (float(prior["score"]), "stored prior (%s, %s)" % (prior.get("source") or "no source stated",
-                                                                     prior.get("date") or "no date stated"))
+        if standing_of(prior) is not None:
+            own = (standing_of(prior), "benchmark standing (%s, %s)" % (prior.get("source") or "no source stated",
+                                                                       prior.get("date") or "no date stated"))
     lines = []
     if own is not None:
         best_score = max([s for s, _h in scores.values()] + [own[0]])
@@ -1284,7 +1342,21 @@ def _when(ts):
         return "unknown time"
 
 
-def _price_lines(tool_name, models, prices):
+def _price_bits(p):
+    bits = []
+    if p.get("plan"):
+        bits.append("%s plan" % ("flat-rate" if p["plan"] == "flat" else "per-use"))
+    if isinstance(p.get("price_in"), (int, float)) and isinstance(p.get("price_out"), (int, float)):
+        bits.append("%g in / %g out per million tokens (blended %g at %g:1 input to output)"
+                    % (p["price_in"], p["price_out"], entry_cost(p), price_blend()))
+    elif entry_cost(p) is not None:
+        bits.append("%g per million tokens (one blended figure)" % entry_cost(p))
+    if p.get("source"):
+        bits.append("from %s, %s" % (p["source"], p.get("date") or "no date stated"))
+    return bits
+
+
+def _price_lines(tool_name, models, prices, shown_keys=None):
     lines = []
     tool_price = _price_for(prices, tool_name, None, None)
     shown = set()
@@ -1292,18 +1364,13 @@ def _price_lines(tool_name, models, prices):
         p = _price_for(prices, tool_name, m, _canonical(tool_name, m)) or tool_price
         if not p:
             continue
+        if shown_keys is not None:
+            shown_keys.update(k for k in (m, _canonical(tool_name, m)) if k)
         key = json.dumps(p, sort_keys=True)
         if key in shown:
             continue
         shown.add(key)
-        bits = []
-        if p.get("plan"):
-            bits.append("%s plan" % ("flat-rate" if p["plan"] == "flat" else "per-use"))
-        cost = p.get("cost_per_million_tokens", p.get("cost"))
-        if isinstance(cost, (int, float)):
-            bits.append("%g per million tokens" % cost)
-        if p.get("source"):
-            bits.append("from %s, %s" % (p["source"], p.get("date") or "no date stated"))
+        bits = _price_bits(p)
         if bits:
             lines.append("  price%s: %s" % ((" for %s" % m) if m and len(models) > 1 else "", "; ".join(bits)))
     return lines
@@ -1325,10 +1392,12 @@ def cmd_workers(args=()):
         return _cmd_up(args[1:])
     if args[:1] == ["import"]:
         return _cmd_import(args[1:])
+    migrate_standing_facts()
     disc = discover(force="--refresh" in args)
     records = read_records()
     avail = read_availability()
     prices = load_prices()
+    shown_keys = set()
     print("Workers found on this machine (checked %s):" % _when(disc.get("checked")))
     missing = []
     for t in disc.get("tools") or []:
@@ -1356,12 +1425,25 @@ def cmd_workers(args=()):
             print("  allowance left: %s" % t["allowance_text"])
         elif t.get("allowance_pct_left") is not None:
             print("  allowance left: %g%%" % t["allowance_pct_left"])
-        for line in _price_lines(t["name"], models, prices):
+        for line in _price_lines(t["name"], models, prices, shown_keys):
             print(line)
         if t.get("plan") == "flat" and not _price_lines(t["name"], models, prices):
             print("  price: flat-rate plan (the tool reports an allowance, so one more task costs nothing extra)")
     if missing:
         print("Not found on PATH: %s" % ", ".join(missing))
+    own_prices = prices.get("models") if isinstance(prices.get("models"), dict) else {}
+    for worker, entry in sorted(own_prices.items()):
+        bits = _price_bits(entry) if isinstance(entry, dict) and worker not in shown_keys else []
+        if bits:
+            print("price for %s: %s" % (worker, "; ".join(bits)))
+    standings = sorted(((standing_of(e), k, e) for k, e in load_strength_prior().items() if standing_of(e) is not None),
+                       key=lambda t: (-t[0], t[1]))
+    if standings:
+        print("Benchmark standing (a published figure; routing compares it only with other workers' standing, "
+              "never with the accepted rate measured below):")
+        for standing, worker, entry in standings:
+            print("  benchmark standing %g - %s: %s (%s)" % (standing, worker, entry.get("source") or "no source stated",
+                                                          entry.get("date") or "no date stated"))
     down_now = [(k, v) for k, v in sorted(avail.items()) if isinstance(v, dict)]
     for k, v in down_now:
         if k in {t["name"] for t in disc.get("tools") or []}:
@@ -1434,7 +1516,7 @@ def cmd_route(args=()):
     candidates, limited = apply_limits(candidates, prefs)
     result = routing.choose(candidates, records, read_availability(), kind, difficulty,
                             review_of=_opt(args, "--review-of"), now=time.time(),
-                            avoid=prefs["avoid"], prefer=prefs["prefer"])
+                            avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors())
     result["passed_over"] = list(result["passed_over"]) + limited
     by_worker = {c["worker"]: c for c in everyone}
     down = _down_now(read_availability(), time.time())
@@ -1796,8 +1878,9 @@ def _cmd_import(args):
 
 
 def _cmd_fact(args):
-    usage = ("usage: sisi workers fact WORKER --price N [--plan flat|per-use] [--maker M] --source S [--date YYYY-MM-DD]\n"
-             "       sisi workers fact WORKER --score 0..100 --source S [--date YYYY-MM-DD]")
+    usage = ("usage: sisi workers fact WORKER --price-in N --price-out N [--plan flat|per-use] [--maker M] --source S [--date YYYY-MM-DD]\n"
+             "       sisi workers fact WORKER --price N (one blended figure) [--plan ...] [--maker M] --source S\n"
+             "       sisi workers fact WORKER --standing 0..100 --source S [--date YYYY-MM-DD]   (--score is the old name)")
     if not args:
         print(usage)
         return 1
@@ -1805,14 +1888,31 @@ def _cmd_fact(args):
     source = _opt(args, "--source")
     date = _opt(args, "--date") or time.strftime("%Y-%m-%d", time.localtime())
     price, price_ok = _number_opt(args, "--price")
-    score, score_ok = _number_opt(args, "--score")
-    if not price_ok or not score_ok or (price is None and score is None):
+    price_in, in_ok = _number_opt(args, "--price-in")
+    price_out, out_ok = _number_opt(args, "--price-out")
+    standing, standing_ok = _number_opt(args, "--standing")
+    old_name, old_ok = _number_opt(args, "--score")
+    if standing is None:
+        standing = old_name
+    if not (price_ok and in_ok and out_ok and standing_ok and old_ok):
         print(usage)
+        return 1
+    if (price_in is None) != (price_out is None) or (price is not None and price_in is not None):
+        print("sisi: record either --price-in with --price-out, or one blended --price, not a mix", file=sys.stderr)
+        return 1
+    if price is None and price_in is None and standing is None:
+        print(usage)
+        return 1
+    if min([v for v in (price, price_in, price_out) if v is not None] or [0]) < 0:
+        print("sisi: a price cannot be negative", file=sys.stderr)
         return 1
     if not source:
         print("sisi: a fact needs its --source (where the figure came from); nothing recorded", file=sys.stderr)
         return 1
-    if price is not None:
+    if standing is not None and not (0 <= standing <= 100):
+        print("sisi: --standing wants a number from 0 to 100", file=sys.stderr)
+        return 1
+    if price is not None or price_in is not None:
         plan = _opt(args, "--plan")
         if plan is not None and plan not in ("flat", "per-use"):
             print("sisi: --plan wants flat or per-use", file=sys.stderr)
@@ -1820,7 +1920,14 @@ def _cmd_fact(args):
         prices = load_prices()
         models = prices.get("models") if isinstance(prices.get("models"), dict) else {}
         entry = dict(models.get(worker) or {})
-        entry.update({"cost_per_million_tokens": price, "source": source, "date": date})
+        entry.pop("cost", None)
+        if price_in is not None:
+            entry.pop("cost_per_million_tokens", None)
+            entry.update({"price_in": price_in, "price_out": price_out, "source": source, "date": date})
+        else:
+            entry.pop("price_in", None)
+            entry.pop("price_out", None)
+            entry.update({"cost_per_million_tokens": price, "source": source, "date": date})
         if plan:
             entry["plan"] = plan
         maker = _opt(args, "--maker")
@@ -1829,22 +1936,25 @@ def _cmd_fact(args):
         models[worker] = entry
         prices["models"] = models
         write_json(prices_path(), prices)
-        print("recorded price for %s: %g per million tokens (from %s, %s)" % (worker, price, source, date))
-    if score is not None:
-        if not (0 <= score <= 100):
-            print("sisi: --score wants a number from 0 to 100", file=sys.stderr)
-            return 1
+        if price_in is not None:
+            print("recorded price for %s: %g in / %g out per million tokens, blended %g for ranking (from %s, %s)"
+                  % (worker, price_in, price_out, entry_cost(entry), source, date))
+        else:
+            print("recorded price for %s: %g per million tokens (from %s, %s)" % (worker, price, source, date))
+    if standing is not None:
+        migrate_standing_facts()
         data = read_json(strength_path())
         models = data.get("models") if isinstance(data.get("models"), dict) else {}
         entry = dict(models.get(worker) or {})
-        entry.update({"score": score, "source": source, "date": date})
+        entry.pop("score", None)
+        entry.update({"standing": standing, "source": source, "date": date})
         maker = _opt(args, "--maker")
         if maker:
             entry["maker"] = maker
         models[worker] = entry
         data["models"] = models
         write_json(strength_path(), data)
-        print("recorded benchmark standing for %s: %g (from %s, %s)" % (worker, score, source, date))
+        print("recorded benchmark standing for %s: %g (from %s, %s)" % (worker, standing, source, date))
     return 0
 
 

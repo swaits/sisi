@@ -284,9 +284,10 @@ worker).
   restricts routing to matching models of one provider; both are honoured by `sisi route`.
   `sisi workers down --until` accepts a date or a time, after which the worker is usable again.
 - `sisi route --kind K --difficulty N [--explain]`: the recommendation. Candidates are only
-  workers with a judged record, a known price or a benchmark prior. With a thin record it
-  ranks by price and prior instead of arbitrarily, and about one low-stakes task in ten goes
-  to a cheaper worker with a thin record. `sisi workers avoid|prefer PATTERN --why` holds the
+  workers with a judged record, a known price or a benchmark standing. It picks the cheapest
+  worker that is capable enough for the kind and difficulty (judged record, then the nearest
+  judged evidence, then benchmark standing against other standings, see docs/workers.md), and
+  about one low-stakes task in ten goes to a cheaper worker with a thin record. `sisi workers avoid|prefer PATTERN --why` holds the
   user's own constraints.
 - `sisi delegate judge …` is the only way a result enters the ledger (type, difficulty, worker,
   outcome, strongest check applied, minutes, tokens, retry-of). `amend` marks one that later

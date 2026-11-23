@@ -27,9 +27,12 @@ present; nothing here names one. Read on demand: `sisi delegate guide`.
 
 - Give each task to the least expensive worker that is sufficiently capable,
   counting rework as cost: cheap work that must be redone is expensive.
-- Evidence decides, in this order: the judged record for that kind of task and
-  difficulty; then price; then benchmark standing. A thin record is a reason
-  for care, not a verdict.
+- Evidence decides which workers are capable enough, in this order: the judged
+  record for that kind and difficulty, the nearest judged record, then benchmark
+  standing against other workers' standing (never against an accepted rate). Above
+  routine work measured proof outranks a benchmark: the cheapest worker with a judged
+  record wins, and standing decides only when nobody has one. A thin record is a
+  reason for care, not a verdict.
 - Ask `sisi route --kind K --difficulty N` before delegating; `--explain` says
   why. Difficulty is 1 routine, 2 ordinary, 3 hard. Say the guess out loud;
   the record shows how good the guesses were.
