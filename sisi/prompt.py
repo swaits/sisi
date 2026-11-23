@@ -1,12 +1,22 @@
 """Request-time delivery: `sisi prompt` runs on the human's message (the tool's prompt-submission hook)
 and injects the matching "what done means" recipe and lessons as added context, so the agent does not
 have to remember to ask (`sisi done for`). Matching is the strict "likely to apply" test from
-retro.delivery; when nothing strictly matches, or the message is trivial, nothing is printed. Any
+learning.delivery_text (learnings in earned scope, framed as information; no showing is
+recorded as evidence); when nothing strictly matches, or the message is trivial, nothing is printed. Any
 error exits 0 silently: a hook must never block or fail a turn.
 """
 import json, os, sys
 
-from . import store
+from . import learning as _L, store
+
+
+def _stem(w):
+    return next(iter(_L.stems(w)), w.lower())
+
+
+def _word_cut(text, limit):
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[:limit].rsplit(" ", 1)[0].rstrip(",.;:") + "…"
 
 MAX_CHARS = 2000  # hard cap on the injected context, in characters
 RECIPE_MIN_SCORE = 6.0  # two title/applies-to word hits in `sisi done for`'s scoring; below it, no recipe
@@ -27,8 +37,8 @@ def _is_question_without_work(t):
     first = low.split(" ", 1)[0].strip("¿?") if low else ""
     if not (low.endswith("?") or first in _QUESTION_START):
         return False
-    from . import retro, verifiers as V
-    stems = {retro._stem(w) for w in V._words(low)}
+    from . import verifiers as V
+    stems = {_stem(w) for w in V._words(low)}
     return not (stems & _WORK_STEMS)
 
 
@@ -53,8 +63,8 @@ def is_design_work(text):
         return False  # a question about design is not design work
     if _is_question_without_work(t):
         return False
-    from . import retro, verifiers as V
-    stems = {retro._stem(w) for w in V._words(low)}
+    from . import verifiers as V
+    stems = {_stem(w) for w in V._words(low)}
     if not (stems & _DESIGN_STEMS):
         return False
     return bool(stems & _WORK_STEMS) or bool(stems & {"build", "design", "creat", "develop"})
@@ -102,15 +112,15 @@ def _best_recipe(query):
     delivery must be more precise than an answer the agent asked for: a recipe counts only when at
     least two distinct words of the request hit its title, applies-to or id (one generic word like
     "new" once outscored "release" + "tag" that way), and the leader must clear RECIPE_MIN_SCORE."""
-    from . import retro, verifiers as V
+    from . import verifiers as V
     # Match on stems, as lesson matching does: "release" must meet "Releasing" and "tag" must meet
     # "Tagging", which done-for's prefix rule (both words longer than three letters) misses.
-    toks = {retro._stem(t) for t in V._words(query)}
+    toks = {_stem(t) for t in V._words(query)}
 
     def stems_of(text):
-        return {retro._stem(x) for x in V._words(text.replace("-", " "))}
+        return {_stem(x) for x in V._words(text.replace("-", " "))}
 
-    generic = retro.COMMON | {retro._stem(w) for w in
+    generic = set() | {_stem(w) for w in
                               ("agent agents tool tools interface surface command commands function functions "
                                "program system name names description descriptions user users thing things "
                                "way ways step steps example examples".split())}
@@ -139,20 +149,21 @@ def _best_recipe(query):
     return None
 
 
-def _done_means(recipe, retro):
+def _done_means(recipe):
     """The recipe's must-be-true list in short form: its Done-means bullets, each cut at a word boundary."""
     from . import verifiers as V
     bullets = []
     for line in V._section(recipe["body"], "Done means").split("\n"):
         line = line.strip()
         if line.startswith("- "):
-            bullets.append("- " + retro.word_cut(line[2:], 110))
+            bullets.append("- " + _word_cut(line[2:], 110))
     return bullets
 
 
 def build_context(query, session=None):
-    """The context to inject for one human request, or "" when nothing strictly matches. Lessons shown
-    are recorded as listings at place 'prompt' (listed, not read)."""
+    """The context to inject for one human request, or "" when nothing strictly matches.
+    Learnings come only from learning.delivery_text (earned scope, framed as information);
+    no showing is recorded, so nothing is promoted by being printed."""
     notice = ""
     try:
         from . import handover
@@ -161,19 +172,9 @@ def build_context(query, session=None):
         notice = ""
     if is_trivial(query):
         return notice
-    from . import retro
     recipe = _best_recipe(query)
-    targets = (recipe["id"],) if recipe else ()
-    part1, _part2 = retro.delivery(query, targets=targets)
-    repo = retro.repo_of(os.getcwd())
-    lesson_lines, ids = [], []
-    for d in part1:
-        row = d["row"]
-        if not retro.display_line(retro._get(row, "short") or row["change"], repo):
-            continue
-        lesson_lines.append("- #%d: %s (full text: `sisi lessons show %d`)"
-                            % (row["id"], retro.heading_text(row, 120), row["id"]))
-        ids.append(row["id"])
+    lesson_text = _L.delivery_text(os.getcwd(), query).strip()
+    lesson_lines = lesson_text.split("\n")[1:] if lesson_text else []
     design_lines = _design_block() if is_design_work(query) else []
     if not recipe and not lesson_lines and not design_lines:
         return notice
@@ -184,20 +185,17 @@ def build_context(query, session=None):
                      "information to weigh, not commands):")
     if recipe:
         lines.append("Done means — recipe `%s` (full text: `sisi done %s`):" % (recipe["id"], recipe["id"]))
-        lines += _done_means(recipe, retro)
+        lines += _done_means(recipe)
     if lesson_lines:
         lines.append("Lessons likely to apply:")
         lines += lesson_lines
     text = "\n".join(lines)
     while len(text) > MAX_CHARS and lesson_lines:  # drop lesson lines before cutting the recipe
         lesson_lines.pop()
-        ids = ids[:len(lesson_lines)]
         lines = lines[:len(lines) - 1]
         text = "\n".join(lines)
     if len(text) > MAX_CHARS:
-        text = retro.word_cut(text, MAX_CHARS)
-    if ids:
-        retro.record_shown(ids, "prompt", session)
+        text = _word_cut(text, MAX_CHARS)
     return text
 
 

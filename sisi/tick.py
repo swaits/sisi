@@ -38,29 +38,8 @@ def _export_session(sid):
 
 
 def _backlog_line(cwd):
-    """Developer mode, inside the sisi source folder: name the top tool backlog item. One short line."""
-    try:
-        from . import paths, retro
-        src = (paths.personal_config().get("developer") or {}).get("source")
-        if not src:
-            return ""
-        src = os.path.realpath(src)
-        here = os.path.realpath(cwd)
-        if here != src and not here.startswith(src + os.sep):
-            return ""
-        if not os.path.exists(retro.db_path()):
-            return ""
-        rows = retro.backlog_rows()
-        if not rows:
-            return ""
-        src = retro._get(rows[0], "short") or rows[0]["change"]
-        t = retro.safe_line(src, here)
-        if not t:
-            return ""
-        text = " ".join(t.split()) if retro._get(rows[0], "short") else retro.word_cut(t, 110)
-        return "top sisi backlog #%d (x%d): %s" % (rows[0]["id"], rows[0]["count"], text)
-    except Exception:
-        return ""
+    """Session start prints no backlog (target section 11); tool learnings live in the learning report."""
+    return ""
 
 
 def _deep_line(cwd, fp):
@@ -155,13 +134,8 @@ def main(args=()):
                 sys.stdout.write(note + "\n")
         except Exception as e:
             store.log_error("tick-cycle", e)
-        try:
-            from . import retro
-            block = retro.tick_block(cwd, session=sid if isinstance(sid, str) else None)
-            if block:
-                sys.stdout.write(block + "\n")
-        except Exception as e:
-            store.log_error("tick-lessons", e)
+        # No lesson list at session start: only what this session can act on (cycle due,
+        # a decision waiting) is printed, by cycle.due_notice above.
     except Exception as e:
         store.log_error("tick", e)
     return 0

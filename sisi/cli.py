@@ -37,37 +37,22 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
   sisi overlay list|diff|add-rule|replace-rule|disable-rule|enable-rule|add-verifier|...|revert COMMIT
                                      learned changes to rules, verifiers and recipes; each one a commit in your personal repo
   sisi audit                         inventory of standing instructions per tool
-  sisi retro --scope core|user|project --aim A --moment M --cause C --change-kind K --change X --when "csv, tsv, spreadsheet, tabular data, import, parse, delimited file" --pattern "the general failure of thinking, one line" [--pattern-id N] [--target ID] [--same-as ID | --new] [--short "one plain sentence"] [--topic "1-3 lower-case words"]
-             (or --json - with the same keys on stdin)
-                                     end of every piece of work: HOW it could have gone better; --when (at least
-                                     5 terms, synonyms included) is how a later agent with different words finds it;
-                                     --pattern is required (one line that would apply to unrelated
-                                     work; `sisi retro patterns` lists existing ones to reuse);
-                                     --short (at most 140 characters) and --topic (at most 30) are optional: when
-                                     omitted, the next learning round writes them
-             aims: level (the human could have worked at a higher level), verified (a stronger check was
-             possible), hands-off (the human was interrupted more than needed), intent (the result was not
-             what they meant), speed (it took longer than it had to)
-  sisi lessons [filters] | show ID | digest [--all] | set ID --status S | apply ID | export [FILE] | import FILE
-                                     the shared lessons from retros (--aim --kind --status --repo --top --json);
-                                     digest prints a short plain-language summary grouped by topic, for the human
-  sisi backlog                       tool lessons: changes to sisi itself, most seen first
-  sisi cycle [due|apply FILE|check FILE|--dry-run FILE|revert [ID]|status|help|--now]
-                                     consolidate lessons into rules, entries and enforced checks (no
-                                     scheduler: due-ness is a counter checked during normal use);
-                                     with no argument, or with --now, it prints the brief on demand even
-                                     when none is due; check/--dry-run prints what would change, changing
-                                     nothing; help prints the full cycle file format
-  sisi improve                       is it getting better? lessons, recurrence, send-backs, time, rulebook size
+  sisi retro                         print the unit's record and what stands out in it
+  sisi retro --finding F --cause C --impact value|correctness|time|cost|attention --disposition promote|record|drop [--same-as ID]
+                                     record one finding; promote also needs --change, --mechanism,
+                                     --expect and --validate; record needs --limits; drop needs --why-not
+  sisi lessons [--json] | show ID    the learning records and their statuses
+  sisi cycle [due|apply FILE|check FILE|revert [ID]|help]
+                                     turn proposed learnings into mechanisms (no scheduler:
+                                     due-ness is a counter); apply validates and replays before
+                                     promoting; help prints the cycle file format
+  sisi approve [ID --yes|--no]       decide a consequential learning change a cycle parked
   sisi note TEXT                     (older; prefer retro) record something that went wrong
   sisi propose TEXT                  (older; prefer retro) suggest a rule change
-  sisi learn --scope core|user|project TEXT
-                                     record a human-stated preference; it takes effect at once.
-                                     --scope is required, by two questions: (a) does it apply to
-                                     all projects where sisi may be used? (b) would it be useful
-                                     to every user who installs sisi? Both yes: core (in force
-                                     for you, queued for the product). (a) only: user (your
-                                     standing principles). Neither: project (handed over to it)
+  sisi learn [--scope user|project] TEXT
+                                     record an owner statement; it takes effect at once and
+                                     `sisi oracle` prints it. Scope for other learnings is
+                                     earned by evidence, never claimed
   sisi design                        the owner's standing principles and the design questions to
                                      answer in a contract's design section before sizeable work
                                      (implies, provided, alternatives, chosen, objections, challenge)
@@ -146,8 +131,8 @@ def cmd_contract(args):
         except Exception:
             pass
         try:
-            from . import retro
-            block = retro.delivery_block(goal or "", "contract-init", extra="contract checks verified")
+            from . import learning as _L
+            block = _L.delivery_text(os.getcwd(), goal or "")
             if block:
                 print(block)
         except Exception:
@@ -232,18 +217,13 @@ def cmd_oracle():
 
 def _status_retro():
     try:
-        from . import retro
-        st = retro.stats()
+        from . import learning as _L
+        rows = _L.load_learnings()
+        print("learnings          : %d total, %d proposed, %d promoted (`sisi status --learning` for the report)"
+              % (len(rows), sum(1 for r in rows if r.get("status") == "proposed"),
+                 sum(1 for r in rows if r.get("status") in ("promoted", "monitored"))))
     except Exception:
         return
-    print("lessons            : %d total, %d open, %d applied; %d occurrences in the last 7 days"
-          % (st["total"], st["open"], st["applied"], st["occ7"]))
-    w = st["sessions_with_work"]
-    print("retros             : %s of sessions with real work recorded one (%d of %d)"
-          % ("%.0f%%" % (100 * st["sessions_with_retro"] / w) if w else "n/a", st["sessions_with_retro"], w))
-    for t in st["top"]:
-        from . import retro as _R
-        print("  active #%-4d x%-3d %s" % (t["id"], t["count"], _R.heading_text(t, 90)))
 
 
 def _status_contracts(res):
@@ -309,11 +289,6 @@ def cmd_status():
     except Exception:
         pass
     _status_retro()
-    try:
-        from . import cycle
-        print(cycle.improve_line())
-    except Exception:
-        pass
     _status_contracts(res)
     from . import verifiers
     vs = [e for e in verifiers.load_verifiers() if e["header"]]
@@ -474,15 +449,12 @@ def main(argv):
     if cmd == "lessons":
         from . import retro
         return retro.cmd_lessons(args)
-    if cmd == "backlog":
-        from . import retro
-        return retro.cmd_backlog(args)
     if cmd == "cycle":
         from . import cycle
         return cycle.cmd_cycle(args)
-    if cmd == "improve":
+    if cmd == "approve":
         from . import cycle
-        return cycle.cmd_improve(args)
+        return cycle.cmd_approve(args)
     if cmd == "oracle":
         return cmd_oracle()
     if cmd == "design":
