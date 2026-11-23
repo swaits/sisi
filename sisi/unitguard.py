@@ -599,7 +599,8 @@ def is_building_delegation(sess, payload):
     text = _brief_text(payload)
     if any(ph in text for ph in _list("read_only_phrases")):
         return False
-    return any(re.search(r"\b" + re.escape(w), text) for w in _list("build_words"))
+    return any(re.search(r"\b(?:" + re.escape(w) + r"(?:s|es|ed|d|ing)?|" + re.escape(w[:-1] if w.endswith("e") else w) + r"ing)\b", text)
+               for w in _list("build_words"))
 
 
 # ---------------------------------------------------------------- the hooks

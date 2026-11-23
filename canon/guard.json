@@ -1,17 +1,90 @@
 {
   "note": "Word lists for the before-tool guard (sisi/unitguard.py). Data, so a host or a project can be adapted without code.",
-  "edit_tools": ["Edit", "Write", "MultiEdit", "NotebookEdit"],
-  "edit_name_words": ["edit", "write", "create", "delete", "move", "rename", "patch", "apply", "insert"],
-  "delegation_tools": ["Agent", "Task"],
-  "build_kinds": ["impl", "impl-multi", "edit", "tests", "debug"],
-  "build_words": ["change", "changing", "fix", "fixing", "implement", "implementing", "write", "writing", "edit", "editing",
-                  "modify", "modifying", "refactor", "rewrite", "patch", "add a", "add the", "build", "create", "update",
-                  "rename", "remove", "delete", "code"],
-  "read_only_phrases": ["read-only", "read only", "do not modify", "do not change", "do not edit", "do not write",
-                        "don't modify", "don't change", "don't edit", "without changing", "without modifying",
-                        "no changes", "report only", "only report", "do not create"],
-  "self_refs": ["me", "myself", "i", "my", "own", "self", "yourself", "the author", "author", "this session", "same session",
-                "the agent", "the implementer"],
-  "ignore_changed": ["**/__pycache__/**", "**/*.pyc", "**/.pytest_cache/**", "**/.mypy_cache/**", "**/.ruff_cache/**",
-                     "**/node_modules/**", ".git/**"]
+  "edit_tools": [
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit"
+  ],
+  "edit_name_words": [
+    "edit",
+    "write",
+    "create",
+    "delete",
+    "move",
+    "rename",
+    "patch",
+    "apply",
+    "insert"
+  ],
+  "delegation_tools": [
+    "Agent",
+    "Task"
+  ],
+  "build_kinds": [
+    "impl",
+    "impl-multi",
+    "edit",
+    "tests",
+    "debug"
+  ],
+  "build_words": [
+    "change",
+    "fix",
+    "implement",
+    "write",
+    "edit",
+    "modify",
+    "refactor",
+    "rewrite",
+    "patch",
+    "create",
+    "update",
+    "rename",
+    "remove",
+    "delete",
+    "add"
+  ],
+  "read_only_phrases": [
+    "read-only",
+    "read only",
+    "do not modify",
+    "do not change",
+    "do not edit",
+    "do not write",
+    "don't modify",
+    "don't change",
+    "don't edit",
+    "without changing",
+    "without modifying",
+    "no changes",
+    "report only",
+    "only report",
+    "do not create"
+  ],
+  "self_refs": [
+    "me",
+    "myself",
+    "i",
+    "my",
+    "own",
+    "self",
+    "yourself",
+    "the author",
+    "author",
+    "this session",
+    "same session",
+    "the agent",
+    "the implementer"
+  ],
+  "ignore_changed": [
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/.pytest_cache/**",
+    "**/.mypy_cache/**",
+    "**/.ruff_cache/**",
+    "**/node_modules/**",
+    ".git/**"
+  ],
+  "build_words_note": "Whole words; an inflection (s, es, ed, d, ing) counts. A read-only phrase below cancels them."
 }

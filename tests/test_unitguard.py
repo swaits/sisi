@@ -470,5 +470,57 @@ class RefusalTests(GuardCase):
             self.assertLessEqual(len((self.edit("auth/login.py") or "").splitlines()), 12)
 
 
+class DelegationTests(GuardCase):
+    """Item 3: delegating a build needs the unit too (R-9-1; the contract is where a brief's acceptance comes from)."""
+
+    def spawn(self, prompt, tool="Agent", **kw):
+        return self.before(tool, {"description": "worker", "prompt": prompt, "subagent_type": "general-purpose"}, **kw)
+
+    def route(self, kind):
+        s = store.load_session(self.sid)
+        s["route"] = {"kind": kind}
+        store.save_session(self.sid, s)
+
+    def test_delegating_a_build_with_no_unit_is_refused_and_says_where_the_acceptance_comes_from(self):
+        for tool in ("Agent", "Task"):
+            msg = self.spawn("Implement the new greeting in src/app.py and fix the tests", tool=tool)
+            self.assertIsNotNone(msg)
+            self.assertIn("sisi contract init", msg)
+            self.assertIn("acceptance", msg)
+            self.assertLessEqual(len(msg.splitlines()), 12)
+        self.assertEqual(len(self.refusals()), 2)
+
+    def test_a_read_only_search_is_allowed(self):
+        self.assertIsNone(self.spawn("Search the codebase for every caller of greet and list them"))
+        self.assertIsNone(self.spawn("Find where the config is read. Do not modify any file."))
+        self.assertEqual(self.refusals(), [])
+
+    def test_the_routing_kind_decides_when_one_is_recorded(self):
+        for kind in ("impl", "impl-multi", "edit", "tests", "debug"):
+            self.route(kind)
+            self.assertIsNotNone(self.spawn("look into the greeting"), kind)
+        for kind in ("review", "search", "research"):
+            self.route(kind)
+            self.assertIsNone(self.spawn("fix and implement everything"), kind)
+
+    def test_with_a_valid_bound_unit_the_delegation_goes_through(self):
+        self.open_unit()
+        self.assertIsNone(self.spawn("Implement the new greeting in src/app.py"))
+
+    def test_with_another_sessions_unit_it_is_refused_with_the_three_ways_on(self):
+        self.write_contract(good_contract(goal="old work"))
+        G.bind("someone", self.proj, C.load(self.contract_path), "init")
+        msg = self.spawn("Implement the new greeting")
+        self.assertIn("sisi unit park", msg)
+        self.assertIn("old work", msg)
+
+    def test_a_worker_session_delegating_is_not_refused(self):
+        self.assertIsNone(self.spawn("Implement the new greeting", agent_id="w1"))
+
+    def test_a_guard_error_lets_the_delegation_through(self):
+        with mock.patch.object(G, "is_building_delegation", side_effect=RuntimeError("x")):
+            self.assertIsNone(self.spawn("Implement the new greeting"))
+
+
 if __name__ == "__main__":
     unittest.main()
