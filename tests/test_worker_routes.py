@@ -148,6 +148,35 @@ class NotesAndLimitsTests(RouteCase):
         self.assertEqual(back.stdout.splitlines()[0], "muse/beta-2")
 
 
+class StoreHistoryTests(RouteCase):
+    def test_worker_files_are_committed_and_unrelated_files_are_not(self):
+        """R-7.2-3, R-3.2-4: ledger, facts, notes, limits and availability written by a command are
+        committed in the data folder's history, one small commit each, and a user's own uncommitted
+        file is neither committed nor touched."""
+        from sisi import pdata
+        pdata.ensure()
+        mine = os.path.join(self.data, "oracle.md")
+        open(mine, "w").write("mine\n")
+        pdata.commit("test: tracked file", ["oracle.md"], strict=True)
+        open(mine, "a").write("edited, not committed\n")
+        for args in (("delegate", "judge", "--worker", "wk-fast", "--type", "read", "--difficulty", "1",
+                      "--outcome", "accepted", "--check", "read", "--project", "proj"),
+                     ("workers", "note", "wk-fast", "a standing fact", "--why", "fixture"),
+                     ("workers", "only", "muse", "beta-1", "--why", "fixture"),
+                     ("workers", "down", "muse", "--reason", "limit", "--until", "2099-01-02"),
+                     ("workers", "fact", "wk-fast", "--price", "1", "--source", "fixture")):
+            r = self.sisi(*args)
+            self.assertEqual(r.returncode, 0, r.stderr)
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=self.data, capture_output=True,
+                                text=True).stdout.splitlines()
+        self.assertEqual([l.strip() for l in status], ["M oracle.md"], status)
+        log = subprocess.run(["git", "log", "--format=%s"], cwd=self.data, capture_output=True, text=True).stdout
+        self.assertGreaterEqual(log.count("worker data changed"), 5, log)
+        shown = subprocess.run(["git", "show", "--stat", "--format=", "HEAD~1"], cwd=self.data,
+                               capture_output=True, text=True).stdout
+        self.assertNotIn("oracle.md", shown)
+
+
 class SessionStartTests(RouteCase):
     def tick(self, sid, model="mystery-9", source="startup"):
         return self.sisi("tick", stdin=json.dumps({"session_id": sid, "cwd": self.proj, "source": source,
