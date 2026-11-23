@@ -69,6 +69,20 @@ def maker_of(name):
     return re.split(r"[-_:. ]", model)[0] or model
 
 
+def blended_price(price_in, price_out, ratio=DEFAULT_PRICE_BLEND):
+    """One comparable per-million-token price from a published input and output price: `ratio` parts
+    of input to one part of output. None when either is missing."""
+    if not isinstance(price_in, (int, float)) or not isinstance(price_out, (int, float)):
+        return None
+    try:
+        ratio = float(ratio)
+    except (TypeError, ValueError):
+        ratio = DEFAULT_PRICE_BLEND
+    if ratio < 0:
+        ratio = DEFAULT_PRICE_BLEND
+    return (float(price_in) * ratio + float(price_out)) / (ratio + 1.0)
+
+
 def standing_floors(configured=None):
     """{difficulty: percent of the best usable standing needed}, the defaults overridden by whatever
     valid entries the configured mapping has (keys 1..3, values 0..100)."""

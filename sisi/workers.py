@@ -13,7 +13,9 @@ Personal files (all in the personal data folder):
                            `sisi delegate judge` is the only way a result enters it.
   worker-availability.json unavailability (limit, login, missing, error) with retry times
   worker-prices.json       worker facts (prices): {"models": {"<model or worker>":
-                           {"plan": "flat"|"per-use", "cost_per_million_tokens": number,
+                           {"plan": "flat"|"per-use", "price_in": number, "price_out": number (as
+                           published; ranked by a blend, `route.price_blend_input_parts` input to one
+                           output) or "cost_per_million_tokens": one blended figure,
                            "maker": name, "source": text, "date": "YYYY-MM-DD"}},
                            "tools": {"<tool>": same shape}}, written by `sisi workers fact`
   model-strength.json      worker facts (benchmark standing, a published figure; never the measured
@@ -547,6 +549,25 @@ def route_cfg():
     return cfg if isinstance(cfg, dict) else {}
 
 
+def price_blend():
+    """Parts of input price to one part of output price in the blended price used for ranking and
+    cost estimates: `route.price_blend_input_parts`, default 3."""
+    v = route_cfg().get("price_blend_input_parts")
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 else routing.DEFAULT_PRICE_BLEND
+
+
+def entry_cost(entry):
+    """One per-million-token price from a stored price fact, or None: an input and output price pair is
+    blended at the configured ratio, a single figure is taken as the blended figure it was recorded as."""
+    if not isinstance(entry, dict):
+        return None
+    blended = routing.blended_price(entry.get("price_in"), entry.get("price_out"), price_blend())
+    if blended is not None:
+        return blended
+    single = entry.get("cost_per_million_tokens", entry.get("cost"))
+    return float(single) if isinstance(single, (int, float)) and not isinstance(single, bool) else None
+
+
 def route_floors():
     """{difficulty: percent of the best usable standing needed} from `route.standing_floor`."""
     return routing.standing_floors(route_cfg().get("standing_floor"))
@@ -603,14 +624,14 @@ def build_candidates(disc=None, records=None):
             return None
         seen.add(worker.lower())
         price = _price_for(prices, tool, model, worker)
-        cost = price.get("cost_per_million_tokens", price.get("cost"))
+        cost = entry_cost(price)
         prior_entry = next((prior[k] for k in (worker, model)
                             if k and isinstance(prior.get(k), dict)), {})
         standing = standing_of(prior_entry)
         c = {"worker": worker, "tool": tool, "model": model,
              "maker": price.get("maker") or prior_entry.get("maker") or routing.maker_of(model or worker),
              "plan": price.get("plan") or tool_plan,
-             "cost": float(cost) if isinstance(cost, (int, float)) else None,
+             "cost": cost,
              "allowance_pct_left": allowance, "usable": usable, "reason": reason,
              "price_source": price.get("source"), "price_date": price.get("date"),
              "standing": standing,
@@ -854,10 +875,10 @@ def estimate_cost(tokens, price_entry):
     """Estimated cost from a known per-million-token price, or None. The caller labels it estimated."""
     if not isinstance(tokens, (int, float)) or not isinstance(price_entry, dict):
         return None
-    per_million = price_entry.get("cost_per_million_tokens", price_entry.get("cost"))
-    if not isinstance(per_million, (int, float)):
+    per_million = entry_cost(price_entry)
+    if per_million is None:
         return None
-    return float(tokens) / 1000000.0 * float(per_million)
+    return float(tokens) / 1000000.0 * per_million
 
 
 def routable_candidates(candidates, records):
@@ -1321,7 +1342,21 @@ def _when(ts):
         return "unknown time"
 
 
-def _price_lines(tool_name, models, prices):
+def _price_bits(p):
+    bits = []
+    if p.get("plan"):
+        bits.append("%s plan" % ("flat-rate" if p["plan"] == "flat" else "per-use"))
+    if isinstance(p.get("price_in"), (int, float)) and isinstance(p.get("price_out"), (int, float)):
+        bits.append("%g in / %g out per million tokens (blended %g at %g:1 input to output)"
+                    % (p["price_in"], p["price_out"], entry_cost(p), price_blend()))
+    elif entry_cost(p) is not None:
+        bits.append("%g per million tokens (one blended figure)" % entry_cost(p))
+    if p.get("source"):
+        bits.append("from %s, %s" % (p["source"], p.get("date") or "no date stated"))
+    return bits
+
+
+def _price_lines(tool_name, models, prices, shown_keys=None):
     lines = []
     tool_price = _price_for(prices, tool_name, None, None)
     shown = set()
@@ -1329,18 +1364,13 @@ def _price_lines(tool_name, models, prices):
         p = _price_for(prices, tool_name, m, _canonical(tool_name, m)) or tool_price
         if not p:
             continue
+        if shown_keys is not None:
+            shown_keys.update(k for k in (m, _canonical(tool_name, m)) if k)
         key = json.dumps(p, sort_keys=True)
         if key in shown:
             continue
         shown.add(key)
-        bits = []
-        if p.get("plan"):
-            bits.append("%s plan" % ("flat-rate" if p["plan"] == "flat" else "per-use"))
-        cost = p.get("cost_per_million_tokens", p.get("cost"))
-        if isinstance(cost, (int, float)):
-            bits.append("%g per million tokens" % cost)
-        if p.get("source"):
-            bits.append("from %s, %s" % (p["source"], p.get("date") or "no date stated"))
+        bits = _price_bits(p)
         if bits:
             lines.append("  price%s: %s" % ((" for %s" % m) if m and len(models) > 1 else "", "; ".join(bits)))
     return lines
@@ -1367,6 +1397,7 @@ def cmd_workers(args=()):
     records = read_records()
     avail = read_availability()
     prices = load_prices()
+    shown_keys = set()
     print("Workers found on this machine (checked %s):" % _when(disc.get("checked")))
     missing = []
     for t in disc.get("tools") or []:
@@ -1394,12 +1425,17 @@ def cmd_workers(args=()):
             print("  allowance left: %s" % t["allowance_text"])
         elif t.get("allowance_pct_left") is not None:
             print("  allowance left: %g%%" % t["allowance_pct_left"])
-        for line in _price_lines(t["name"], models, prices):
+        for line in _price_lines(t["name"], models, prices, shown_keys):
             print(line)
         if t.get("plan") == "flat" and not _price_lines(t["name"], models, prices):
             print("  price: flat-rate plan (the tool reports an allowance, so one more task costs nothing extra)")
     if missing:
         print("Not found on PATH: %s" % ", ".join(missing))
+    own_prices = prices.get("models") if isinstance(prices.get("models"), dict) else {}
+    for worker, entry in sorted(own_prices.items()):
+        bits = _price_bits(entry) if isinstance(entry, dict) and worker not in shown_keys else []
+        if bits:
+            print("price for %s: %s" % (worker, "; ".join(bits)))
     standings = sorted(((standing_of(e), k, e) for k, e in load_strength_prior().items() if standing_of(e) is not None),
                        key=lambda t: (-t[0], t[1]))
     if standings:
@@ -1842,7 +1878,8 @@ def _cmd_import(args):
 
 
 def _cmd_fact(args):
-    usage = ("usage: sisi workers fact WORKER --price N [--plan flat|per-use] [--maker M] --source S [--date YYYY-MM-DD]\n"
+    usage = ("usage: sisi workers fact WORKER --price-in N --price-out N [--plan flat|per-use] [--maker M] --source S [--date YYYY-MM-DD]\n"
+             "       sisi workers fact WORKER --price N (one blended figure) [--plan ...] [--maker M] --source S\n"
              "       sisi workers fact WORKER --standing 0..100 --source S [--date YYYY-MM-DD]   (--score is the old name)")
     if not args:
         print(usage)
@@ -1851,12 +1888,23 @@ def _cmd_fact(args):
     source = _opt(args, "--source")
     date = _opt(args, "--date") or time.strftime("%Y-%m-%d", time.localtime())
     price, price_ok = _number_opt(args, "--price")
+    price_in, in_ok = _number_opt(args, "--price-in")
+    price_out, out_ok = _number_opt(args, "--price-out")
     standing, standing_ok = _number_opt(args, "--standing")
     old_name, old_ok = _number_opt(args, "--score")
     if standing is None:
         standing = old_name
-    if not price_ok or not standing_ok or not old_ok or (price is None and standing is None):
+    if not (price_ok and in_ok and out_ok and standing_ok and old_ok):
         print(usage)
+        return 1
+    if (price_in is None) != (price_out is None) or (price is not None and price_in is not None):
+        print("sisi: record either --price-in with --price-out, or one blended --price, not a mix", file=sys.stderr)
+        return 1
+    if price is None and price_in is None and standing is None:
+        print(usage)
+        return 1
+    if min([v for v in (price, price_in, price_out) if v is not None] or [0]) < 0:
+        print("sisi: a price cannot be negative", file=sys.stderr)
         return 1
     if not source:
         print("sisi: a fact needs its --source (where the figure came from); nothing recorded", file=sys.stderr)
@@ -1864,7 +1912,7 @@ def _cmd_fact(args):
     if standing is not None and not (0 <= standing <= 100):
         print("sisi: --standing wants a number from 0 to 100", file=sys.stderr)
         return 1
-    if price is not None:
+    if price is not None or price_in is not None:
         plan = _opt(args, "--plan")
         if plan is not None and plan not in ("flat", "per-use"):
             print("sisi: --plan wants flat or per-use", file=sys.stderr)
@@ -1872,7 +1920,14 @@ def _cmd_fact(args):
         prices = load_prices()
         models = prices.get("models") if isinstance(prices.get("models"), dict) else {}
         entry = dict(models.get(worker) or {})
-        entry.update({"cost_per_million_tokens": price, "source": source, "date": date})
+        entry.pop("cost", None)
+        if price_in is not None:
+            entry.pop("cost_per_million_tokens", None)
+            entry.update({"price_in": price_in, "price_out": price_out, "source": source, "date": date})
+        else:
+            entry.pop("price_in", None)
+            entry.pop("price_out", None)
+            entry.update({"cost_per_million_tokens": price, "source": source, "date": date})
         if plan:
             entry["plan"] = plan
         maker = _opt(args, "--maker")
@@ -1881,7 +1936,11 @@ def _cmd_fact(args):
         models[worker] = entry
         prices["models"] = models
         write_json(prices_path(), prices)
-        print("recorded price for %s: %g per million tokens (from %s, %s)" % (worker, price, source, date))
+        if price_in is not None:
+            print("recorded price for %s: %g in / %g out per million tokens, blended %g for ranking (from %s, %s)"
+                  % (worker, price_in, price_out, entry_cost(entry), source, date))
+        else:
+            print("recorded price for %s: %g per million tokens (from %s, %s)" % (worker, price, source, date))
     if standing is not None:
         migrate_standing_facts()
         data = read_json(strength_path())
