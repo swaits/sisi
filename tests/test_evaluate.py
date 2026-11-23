@@ -148,7 +148,7 @@ class TaskReplayTests(EvalCase):
         c = fixture_case(self, "task-case.json")
         saved = os.environ.pop("SISI_EVAL_WORKER_CMD", None)
         try:
-            r = self.ev.run_case(c, store_dir=self.store, worker_runner=lambda **kw: None)
+            r = self.ev.run_case(c, store_dir=self.store, worker_runner=lambda *a, **kw: None)
         finally:
             if saved:
                 os.environ["SISI_EVAL_WORKER_CMD"] = saved

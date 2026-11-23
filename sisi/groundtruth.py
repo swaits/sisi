@@ -91,6 +91,15 @@ def estimate_start(root, t0):
     return out if rc == 0 and out else None
 
 
+def fix_commit_of(commits):
+    """The fix commit of a harvested task: the last following commit recorded for the
+    session (commits are [{"sha": ...}] in chronological record order). None when there
+    were no following commits, so such a task can seed a task case but not a check case."""
+    shas = [(c.get("sha") if isinstance(c, dict) else c) for c in (commits or [])]
+    shas = [s for s in shas if s]
+    return shas[-1] if shas else None
+
+
 def commit_exists(root, sha):
     rc, _ = _git(root, "cat-file", "-e", str(sha) + "^{commit}")
     return rc == 0

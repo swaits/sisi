@@ -91,6 +91,10 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
   sisi delegate judge ID --outcome accepted|rejected --check none|diffstat|tests|read|review [--minutes N]
                                      record your judgement of a delegation run, so the next choice learns from it; judge work run any other way with --worker W --type K --difficulty N instead of ID
   sisi delegate amend ID | recent [-n N] [--project P]  mark a judged delegation that later proved wrong; list recent judgements to find an id
+  sisi eval list|add|run|compare|shadow|judge|status|import
+                                     the evaluation harness: benchmark cases from real work, isolated
+                                     replay, policy comparison and independent judging (see docs/evaluation.md);
+                                     `sisi eval` alone prints status; run without --tasks replays check cases only
   sisi version | --version           print the product version (the VERSION file in the product folder)
   sisi help                          this text
 
@@ -460,6 +464,12 @@ def main(argv):
     if cmd == "delegate":
         from . import workers
         return workers.cmd_delegate(args)
+    if cmd == "eval":
+        from . import evaluate
+        return evaluate.cmd_eval(args)
+    if cmd in ("tasks", "checks"):
+        from . import evaluate
+        return evaluate.cmd_folded(cmd, args)
     rc = _learn_cli(cmd, args)
     if rc is not None:
         return rc
