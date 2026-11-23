@@ -1,7 +1,7 @@
 # Target design
 
-How sisi meets `SPEC.md`. This is the build reference for the reconciliation that started on
-2026-11-23; `docs/reconciliation/critique.md` says what was wrong, this says what replaces it.
+How sisi meets `SPEC.md`. This is the build reference for the reconciliation:
+`docs/reconciliation/critique.md` says what was wrong, this says what replaces it.
 Section numbers in brackets are sections of `SPEC.md`. Where this document and the
 specification disagree, the specification wins.
 
@@ -40,7 +40,7 @@ Standing constraints from the owner, which bind every part:
 | Scratch | `~/.local/state/sisi` | session state, caches, logs | May be deleted. Pruned by age during normal use. |
 
 The specification's "organization-wide" scope is the product. A user's learning reaches the
-product only through `sisi promote` / `--export`, scrubbed, as today.
+product only through `sisi promote` / `--export`, scrubbed.
 
 ## 3. Risk profiles [5.3, 9, Appendix A]
 
