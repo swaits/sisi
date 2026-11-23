@@ -5,13 +5,19 @@ HELP = """sisi is still improving
 
 A shared rulebook and enforced definitions of done for every AI coding CLI.
 
-  sisi contract init [--goal TEXT]   create .sisi/contract.json here
-  sisi contract check                validate the contract
-  sisi contract waive "<reason>"     record that this change needs no checks
+  sisi contract init [--goal TEXT]   start a work unit: create .sisi/contract.json here (refuses while one is open)
+  sisi contract check                validate the contract (vacuous checks are refused)
+  sisi contract waive [--check ID] "<reason>"
+                                     record a deviation: a waived check does not pass; the unit closes as a deviation and the report must say so
   sisi contract trust | untrust      allow / stop allowing this project's contract to run commands
-  sisi verify [--json]               run the fast checks; exit 0 ok, 1 failure, 2 no contract, 3 untrusted
+  sisi unit close [--abandon "<reason>"]
+                                     archive the unit to .sisi/units/<id>.json with its scorecard; --abandon records why it stopped
+  sisi unit pause "<what it waits for>"
+                                     record a wait; the turn may end with no demands
+  sisi unit show [ID] | list         print the open unit or an archived record; list this project's units
+  sisi verify [--json]               run the selected fast checks (five statuses; nothing unrun passes); exit 0 ok, 1 failure, 2 no contract, 3 untrusted
   sisi verify --deep [--background]  run the deep (long) checks; --background detaches and returns at once
-  sisi verify --all | --state        run both tiers; print only the deep-check state (with --json)
+  sisi verify --all | --state        run every check in both tiers; print only the deep-check state (with --json)
   sisi gate [--tool NAME]            end-of-turn hook (reads hook JSON on stdin; NAME selects the tool's hook shape)
   sisi tick [--tool NAME]            session-start hook
   sisi prompt [--tool NAME]          prompt-submission hook: prints the matching recipe and lessons for the human's request as added context (silent when nothing strictly matches); `sisi prompt "<request>"` tries it by hand
@@ -54,8 +60,7 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
                                      its key text) and removes it from the pile
   sisi oracle                        print what the human wants: the standing principles from
                                      `sisi learn`, live at once (oracle.md in the personal folder)
-  sisi status                        verification statistics from the store
-  sisi time [--json]                 time from request to verified result: 7 days against the 7 before, slowest checks
+  sisi status [--json] [--learning]  recent units with their scorecards, then trends by project, risk profile, model and policy version (median and p95; no single score)
   sisi verifiers [WORDS] [--lang L] [--kind K] [--rung N] [--section S] [--installed] [--json]
                                      list ways to know work is correct, by section
   sisi verifiers show ID [--trace]   one entry in full, and whether its tool is installed here; --trace also prints where each folded lesson lives in it
@@ -107,12 +112,36 @@ def cmd_contract(args):
     if sub == "init":
         goal = _pop_opt(args, "--goal")
         p = os.path.join(os.getcwd(), C.REL)
+        project = os.getcwd()
         if os.path.exists(p):
-            print("sisi: %s already exists" % p)
-            return 1
+            try:
+                old = C.load(p)
+            except (OSError, ValueError):
+                old = None
+            from . import unit as _U
+            if not _U.is_closed(old):
+                print("sisi: %s already exists and the unit %s is still open. Close it first with "
+                      "`sisi unit close`, or record why it stopped with "
+                      "`sisi unit close --abandon \"<reason>\"`." % (p, (old or {}).get("id", "?")))
+                return 1
+            # A closed unit is replaced. Its archive should already exist; if a hand-edited
+            # contract claims closed with none, archive it now so nothing is ever lost.
+            if old is not None and old.get("id") and not os.path.exists(_U.archive_path(project, old["id"])):
+                try:
+                    import time as _t
+                    rec = _U.build_record(old, project, old.get("delivery_status") or "abandoned", _t.time())
+                    _U.archive_record(rec, project)
+                    if not _U._summary_exists(project, rec["id"]):
+                        store.append("units", _U.summary_line(rec))
+                except Exception as e:
+                    store.log_error("contract-init-archive", e)
         os.makedirs(os.path.dirname(p), exist_ok=True)
+        skel = C.skeleton(goal)
+        from . import unit as _U
+        skel["id"] = _U.fresh_id(skel["id"], project)
+        skel["base_head"] = gitutil.head(project)
         with open(p, "w", encoding="utf-8") as f:
-            json.dump(C.skeleton(goal), f, indent=2)
+            json.dump(skel, f, indent=2)
             f.write("\n")
         trust.add(os.getcwd())
         print("created %s as a SKELETON, not a contract yet: replace the placeholder check with a real command "
@@ -149,9 +178,11 @@ def cmd_contract(args):
         print("contract invalid" if errs else "contract ok: %s" % p)
         return 1 if errs else 0
     if sub == "waive":
-        reason = " ".join(args[1:]).strip()
+        rest = list(args[1:])
+        waived_check = _pop_opt(rest, "--check")
+        reason = " ".join(rest).strip()
         if not reason:
-            print('usage: sisi contract waive "<reason>"')
+            print('usage: sisi contract waive [--check ID] "<reason>"')
             return 1
         import time
         project = gitutil.root(os.getcwd()) or os.getcwd()
@@ -159,8 +190,20 @@ def cmd_contract(args):
         if gitutil.root(os.getcwd()):
             m = gitutil.measure(os.getcwd())
             extra = {"head": gitutil.head(os.getcwd()), "lines": m["lines"], "files": m["files"]}
-        store.append("waivers", store.stamp(dict({"project": project, "reason": reason, "ns": time.time_ns()}, **extra)))
-        print("waiver recorded for %s" % project)
+        store.append("waivers", store.stamp(dict({"project": project, "reason": reason, "check": waived_check,
+                                                  "ns": time.time_ns()}, **extra)))
+        cp = C.find(os.getcwd())
+        if cp:
+            try:
+                c = C.load(cp)
+                if isinstance(c, dict):
+                    c.setdefault("deviations", []).append(
+                        {"reason": reason, "check": waived_check, "ts": store.now()})
+                    C.save(cp, c)
+            except (OSError, ValueError):
+                pass
+        print("deviation recorded for %s%s: the unit does not pass; it closes as a deviation "
+              "and the completion report must say so" % (project, (" (check %s)" % waived_check) if waived_check else ""))
         return 0
     if sub in ("trust", "untrust"):
         p = C.find(os.getcwd())
@@ -185,94 +228,6 @@ def _commit_personal(path, msg):
 def cmd_oracle():
     from . import principles
     sys.stdout.write(principles.oracle_text())
-    return 0
-
-
-def _status_retro():
-    try:
-        from . import learning as _L
-        rows = _L.load_learnings()
-        print("learnings          : %d total, %d proposed, %d promoted (`sisi status --learning` for the report)"
-              % (len(rows), sum(1 for r in rows if r.get("status") == "proposed"),
-                 sum(1 for r in rows if r.get("status") in ("promoted", "monitored"))))
-    except Exception:
-        return
-
-
-def _status_contracts(res):
-    """Per recent contract: latest fast run result and the deep state."""
-    from . import contract as C, deep, verify as V
-    last = {}
-    for r in res:
-        if r.get("run") and r.get("item") in ("check", "invariant", "floor"):
-            k = (r.get("project"), r.get("contract"))
-            e = last.setdefault(k, {"ts": "", "fast": {}})
-            e["ts"] = max(e["ts"], r.get("ts", ""))
-            if r.get("tier", "fast") == "fast":
-                e["fast"].setdefault(r["run"], []).append(r["status"])
-    if not last:
-        return
-    print("recent contracts:")
-    for (project, cid), e in sorted(last.items(), key=lambda kv: kv[1]["ts"], reverse=True)[:5]:
-        runs = e["fast"]
-        fast = "-"
-        if runs:
-            # runs are keyed by hex timestamp-pid ids: the largest key is the newest
-            latest = runs[max(runs, key=lambda k: int(k.split("-")[0], 16))]
-            fast = "pass" if all(x in ("passed", "awaiting-human") for x in latest) else "fail"
-        dstate = "n/a"
-        try:
-            cp = os.path.join(project, C.REL)
-            c = C.load(cp)
-            ds = deep.deep_state(c, project, V.tree_fp(project, cp))
-            dstate = ds["state"] if ds else "none"
-        except Exception:
-            dstate = "unknown"
-        print("  %-24s fast: %-5s deep: %s" % (cid, fast, dstate))
-
-
-def cmd_status():
-    from . import store
-    res = store.read("results")
-    runs = {}
-    rungs = {}
-    for r in res:
-        if r.get("item") in ("check", "invariant", "floor") and r.get("run"):
-            runs.setdefault((r.get("project"), r.get("contract"), r["run"]), []).append(r)
-        if r.get("item") == "check" and r.get("rung"):
-            rungs[r["rung"]] = rungs.get(r["rung"], 0) + 1
-    passed = [k for k, v in runs.items() if all(x["status"] in ("passed", "awaiting-human") for x in v)]
-    verified = {(k[0], k[1]) for k in passed}
-    unver = sum(1 for r in res if r.get("status") == "unverified")
-    waivers = len(store.read("waivers"))
-    print("contracts verified : %d (of %d seen)" % (len(verified), len({(k[0], k[1]) for k in runs})))
-    print("verify runs        : %d, pass rate %s" % (len(runs), "%.0f%%" % (100 * len(passed) / len(runs)) if runs else "n/a"))
-    tot = sum(rungs.values())
-    print("checks by rung     : " + (", ".join("%d: %.0f%%" % (k, 100 * v / tot) for k, v in sorted(rungs.items())) if tot else "none"))
-    print("unverified passes  : %d" % unver)
-    print("waivers            : %d" % waivers)
-    try:
-        from . import overlay
-        print("always loaded      : " + overlay.cost_line())
-    except Exception:
-        pass
-    try:
-        from . import delivery
-        print(delivery.median_line())
-    except Exception:
-        pass
-    _status_retro()
-    _status_contracts(res)
-    from . import verifiers
-    vs = [e for e in verifiers.load_verifiers() if e["header"]]
-    by = {}
-    for e in vs:
-        k = e["header"].get("verified", "unset")
-        by[k] = by.get(k, 0) + 1
-    print("library            : %d verifiers (verified ran %d, docs %d, memory %d%s), %d recipes"
-          % (len(vs), by.get("ran", 0), by.get("docs", 0), by.get("memory", 0),
-             "".join(", %s %d" % (k, v) for k, v in sorted(by.items()) if k not in ("ran", "docs", "memory")),
-             len(verifiers.load_recipes())))
     return 0
 
 
@@ -417,10 +372,11 @@ def main(argv):
         from . import risk
         return risk.main(args)
     if cmd == "status":
-        return cmd_status()
-    if cmd == "time":
-        from . import delivery
-        return delivery.cmd_time(args)
+        from . import scorecard
+        return scorecard.cmd_status(args)
+    if cmd == "unit":
+        from . import unit
+        return unit.cmd_unit(args)
     if cmd == "verifiers":
         from . import verifiers
         return verifiers.main(args)

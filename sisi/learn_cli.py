@@ -1,4 +1,4 @@
-"""Commands for the data layer of the learning loop: harvest, tasks, escapes, checks, scoreboard.
+"""Commands for the data layer of the learning loop: harvest, tasks, escapes, checks.
 
 Usable now as `python3 -m sisi.learn_cli <cmd>`. The main CLI hooks them in with
 `learn_cli.register(subparsers)`; each command sets `func(args) -> exit code` on its parser.
@@ -99,22 +99,6 @@ def cmd_checks(args):
     return 0
 
 
-def cmd_scoreboard(args):
-    from . import scoreboard
-    sb = scoreboard.scoreboard(_con())
-    if args.json:
-        print(json.dumps(sb))
-        return 0
-    cols = ("sessions", "turns_per_session", "corrections_per_100", "questions_per_100", "contract_share", "premature_done_share")
-    for title, key in (("week", "weeks"), ("repo", "repos")):
-        print("%-18s %s" % (title, " ".join("%-12s" % c[:12] for c in cols)))
-        for k, v in sb[key].items():
-            print("%-18s %s" % (k[:18], " ".join("%-12s" % ("-" if v[c] is None else v[c]) for c in cols)))
-        print()
-    print("tasks:", json.dumps(sb["tasks"]))
-    return 0
-
-
 def register(subparsers):
     p = subparsers.add_parser("harvest", help="read agent transcripts into the harvest database (incremental)")
     p.add_argument("--workers", type=int, default=None)
@@ -145,11 +129,6 @@ def register(subparsers):
     p = subparsers.add_parser("checks", help="per-check and per-verifier run statistics")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_checks)
-
-    p = subparsers.add_parser("scoreboard", help="weekly and per-repo trends from harvested sessions")
-    p.add_argument("--json", action="store_true")
-    p.set_defaults(func=cmd_scoreboard)
-
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sisi")

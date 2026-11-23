@@ -36,11 +36,22 @@ def is_unedited_skeleton(c):
         return False
 
 
+REQ_KINDS = ("explicit", "implied", "contextual", "anticipated", "experiential")
+REQ_DECISIONS = ("now", "architect", "defer", "ignore")
+RISK_PROFILES = ("trivial", "isolated", "logic", "integration", "data", "critical", "release")
+UNIT_STATUSES = ("open", "paused", "closed")
+
+
 def skeleton(goal=None, cwd=None):
     name = re.sub(r"[^a-z0-9]+", "-", os.path.basename(os.path.abspath(cwd or os.getcwd())).lower()).strip("-")
+    from . import store as _store
     return {
         "id": name or "work",
+        "parent": None,
         "goal": goal or "TODO: one sentence describing the outcome",
+        "scope": {"in": [], "out": []},
+        "requirements": [],
+        "risk": {},
         "checks": [{
             "id": "c1",
             "claim": "PLACEHOLDER (fast tier, runs at the end of every turn, 60 s at most): replace with what this check shows to be true",
@@ -62,12 +73,38 @@ def skeleton(goal=None, cwd=None):
         "invariants": [],
         "assumptions": [],
         "questions": [],
+        "deferred": [],
+        "limitations": [],
+        "plan": [],
+        "status": "open",
+        "started": _store.now(),
+        "pauses": [],
+        "deviations": [],
     }
 
 
 def load(path):
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def save(path, c):
+    tmp = path + ".tmp%d" % os.getpid()
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(c, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
+def deferred_checks(c):
+    """{check_id: deferred entry} for deferred entries naming a check, by `check` or exactly by `what`."""
+    out = {}
+    for d in c.get("deferred", []) if isinstance(c, dict) else []:
+        if isinstance(d, dict):
+            cid = d.get("check") or d.get("what")
+            if isinstance(cid, str) and cid:
+                out[cid] = d
+    return out
 
 
 def floors():
@@ -132,6 +169,124 @@ def _expect(e, where, errs):
             errs.append("%s: unknown expect key %r" % (where, k))
 
 
+_VACUOUS_RE = re.compile(r"^(?:true|:|exit\s+0|echo(?:\s[^|&;<>]*)?)\s*;?$")
+
+
+def vacuous_reason(ch):
+    """Why this check cannot fail, or None. Only whole-command constant forms count:
+    `true`, `:`, `exit 0`, a bare `echo` (with no stdout expectation). A compound
+    command, a redirection, or an expect the constant does not satisfy can fail."""
+    cmd = ch.get("cmd")
+    if not isinstance(cmd, str):
+        return None
+    s = cmd.strip()
+    if not _VACUOUS_RE.match(s):
+        return None
+    expect = ch.get("expect") if isinstance(ch.get("expect"), dict) else {}
+    if expect.get("exit", 0) != 0:
+        return None
+    if s.startswith("echo") and expect.get("stdout_contains") is not None:
+        return None
+    return "vacuous check: %r cannot fail; write a command that can" % s
+
+
+def _check_new_fields(ch, w, errs):
+    if "covers" in ch and not _str(ch["covers"]):
+        errs.append(w + ": covers must be a non-empty string")
+    if "when_changed" in ch:
+        wc = ch["when_changed"]
+        if not isinstance(wc, list) or not wc or not all(_str(x) for x in wc):
+            errs.append(w + ": when_changed must be a non-empty list of path patterns")
+    for k in ("mandatory", "independent"):
+        if k in ch and not isinstance(ch[k], bool):
+            errs.append("%s: %s must be true or false" % (w, k))
+
+
+def _validate_new_top(c, ids, errs):
+    if "parent" in c and c["parent"] is not None and not _str(c["parent"]):
+        errs.append("parent must be a non-empty string or null")
+    if "status" in c and c["status"] not in UNIT_STATUSES:
+        errs.append("status must be one of %s" % ", ".join(UNIT_STATUSES))
+    if "started" in c and not _str(c["started"]):
+        errs.append("started must be a non-empty string")
+    if "scope" in c:
+        sc = c["scope"]
+        if not isinstance(sc, dict):
+            errs.append("scope must be an object with in/out lists")
+        else:
+            for k in sc:
+                if k not in ("in", "out"):
+                    errs.append("scope: unknown key %r" % k)
+            for k in ("in", "out"):
+                if k in sc and (not isinstance(sc[k], list) or not all(isinstance(x, str) for x in sc[k])):
+                    errs.append("scope.%s must be a list of strings" % k)
+    if "requirements" in c:
+        rq = c["requirements"]
+        if not isinstance(rq, list):
+            errs.append("requirements must be a list")
+        else:
+            seen = set()
+            for i, r in enumerate(rq):
+                w = "requirements[%d]" % i
+                if not isinstance(r, dict):
+                    errs.append(w + " must be an object"); continue
+                if not _str(r.get("id")):
+                    errs.append(w + ".id must be a non-empty string")
+                elif r["id"] in seen:
+                    errs.append("duplicate requirement id %r" % r["id"])
+                else:
+                    seen.add(r["id"]); w = "requirement %r" % r["id"]
+                if r.get("kind") not in REQ_KINDS:
+                    errs.append("%s: kind must be one of %s" % (w, ", ".join(REQ_KINDS)))
+                if not _str(r.get("text")):
+                    errs.append(w + ": text must be a non-empty string")
+                if r.get("decision") not in REQ_DECISIONS:
+                    errs.append("%s: decision must be one of %s" % (w, ", ".join(REQ_DECISIONS)))
+                if "why" in r and not _str(r["why"]):
+                    errs.append(w + ": why must be a non-empty string")
+                if "check" in r and r["check"] is not None:
+                    if not _str(r["check"]):
+                        errs.append(w + ": check must be a check id or null")
+                    elif ids and r["check"] not in ids:
+                        errs.append("%s: check %r is not a check or invariant id" % (w, r["check"]))
+                if "added" in r and not _str(r["added"]):
+                    errs.append(w + ": added must be a non-empty string")
+    if "risk" in c:
+        rk = c["risk"]
+        if not isinstance(rk, dict):
+            errs.append("risk must be an object")
+        else:
+            if "profile" in rk and rk["profile"] not in RISK_PROFILES:
+                errs.append("risk.profile must be one of %s" % ", ".join(RISK_PROFILES))
+            for k in ("why", "blast_radius", "rollback"):
+                if k in rk and not _str(rk[k]):
+                    errs.append("risk.%s must be a non-empty string" % k)
+    if "deferred" in c:
+        df = c["deferred"]
+        if not isinstance(df, list):
+            errs.append("deferred must be a list")
+        else:
+            for i, d in enumerate(df):
+                w = "deferred[%d]" % i
+                if not isinstance(d, dict):
+                    errs.append(w + " must be an object"); continue
+                for k in ("what", "why", "safe_because"):
+                    if not _str(d.get(k)):
+                        errs.append("%s.%s must be a non-empty string" % (w, k))
+                if "check" in d and d["check"] is not None and not _str(d["check"]):
+                    errs.append(w + ": check must be a check id or null")
+    if "limitations" in c:
+        if not isinstance(c["limitations"], list) or not all(isinstance(x, str) for x in c["limitations"]):
+            errs.append("limitations must be a list of strings")
+    if "plan" in c:
+        if not isinstance(c["plan"], list) or not all(isinstance(x, (str, dict)) for x in c["plan"]):
+            errs.append("plan must be a list of steps (strings or objects)")
+    if "pauses" in c and not isinstance(c["pauses"], list):
+        errs.append("pauses must be a list")
+    if "deviations" in c and not isinstance(c["deviations"], list):
+        errs.append("deviations must be a list")
+
+
 def validate(c):
     """Return a list of error strings; empty means valid."""
     errs = []
@@ -179,6 +334,10 @@ def validate(c):
         _tier(ch, w, errs)
         if "serial" in ch and not isinstance(ch["serial"], bool):
             errs.append(w + ": serial must be true or false")
+        _check_new_fields(ch, w, errs)
+        vr = vacuous_reason(ch)
+        if vr:
+            errs.append("%s: %s" % (w, vr))
     inv = c.get("invariants", [])
     if not isinstance(inv, list):
         errs.append("invariants must be a list")
@@ -205,6 +364,10 @@ def validate(c):
         _tier(iv, w, errs)
         if "serial" in iv and not isinstance(iv["serial"], bool):
             errs.append(w + ": serial must be true or false")
+        _check_new_fields(iv, w, errs)
+        vr = vacuous_reason(iv)
+        if vr:
+            errs.append("%s: %s" % (w, vr))
     runnable = any(isinstance(x, dict) and x.get("rung") in (1, 2, 3, 4) and x.get("cmd") for x in checks) or \
         any(isinstance(x, dict) and x.get("cmd") for x in inv)
     if checks and not runnable:
@@ -220,6 +383,7 @@ def validate(c):
         for i, x in enumerate(q):
             if not (isinstance(x, dict) and _str(x.get("q")) and "default" in x):
                 errs.append("questions[%d] needs q and default" % i)
+    _validate_new_top(c, ids, errs)
     return errs
 
 

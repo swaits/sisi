@@ -641,6 +641,12 @@ def _decide(payload):
         if c is not None and C.is_unedited_skeleton(c):
             path = None  # nothing real written yet: behave as if there is no contract
             sess["req_contract"] = False
+        if c is not None and path and c.get("status") == "paused" and \
+                any(isinstance(p, dict) and not p.get("until") for p in (c.get("pauses") or [])):
+            return "allow", None  # a recorded wait: the turn may end with no demands
+        if c is not None and path and c.get("status") == "closed":
+            path = None  # the unit is archived; new work stands or falls on its own
+            sess["req_contract"] = False
     top = gitutil.root(cwd)
     sess["req_project"] = top or (project if path else cwd)
     fp = gitutil.fingerprint(cwd, [path]) if top else None
@@ -765,7 +771,8 @@ def _decide(payload):
                         "claim": "contract is invalid", "duration_s": 0.0, "tail": "\n".join(errs)}]
         else:
             t_run = time.time()
-            results = V.run(c, project, deadline, cfg["verify"]["default_timeout_s"], tiers=("fast",))
+            results = V.run(c, project, deadline, cfg["verify"]["default_timeout_s"], tiers=("fast",),
+                            reuse=False, contract_path=path)
             sess["req_check_s"] = float(sess.get("req_check_s", 0.0)) + (time.time() - t_run)
             V.record(c, project, results, fp)
         if V.ok(results):
@@ -811,7 +818,7 @@ def _decide(payload):
         try:
             from . import retro
             failing = " ".join("%s %s %s" % (r["id"], r.get("kind") or "", r.get("claim") or "")
-                                for r in results if r["status"] in ("failed", "timeout"))
+                                for r in results if r["status"] in ("failed", "not-run"))
             block = retro.lessons_block(failing, "gate", session=sid)
             if block:
                 msg += "\n\n" + block

@@ -11,16 +11,21 @@ class VerifyTests(SisiCase):
         return {r["check"]: r["status"] for r in self.results()}
 
     def test_statuses(self):
+        # R-5.6-2, R-5.6-3: five statuses only. A timeout is not-run (timed out) and a
+        # human check is not-run (needs human): neither is ever reported as passed.
         c = contract([check("ok", "true"), check("bad", "exit 3"), check("slow", "sleep 5", timeout_s=0.3),
                       check("out", "echo hello", stdout_contains="hello"), check("out2", "echo hi", stdout_contains="zzz"),
                       check("code", "exit 3", exit=3), human("h5", 5), human("h6", 6)],
                      [check("inv", "true")])
         r = self.run_verify(c)
         self.assertEqual(r.returncode, 1)
-        self.assertEqual(self.statuses(), {"ok": "passed", "bad": "failed", "slow": "timeout", "out": "passed",
-                                           "out2": "failed", "code": "passed", "h5": "awaiting-human",
-                                           "h6": "awaiting-human", "inv": "passed"})
-        self.assertIn("awaiting-human", r.stdout)
+        self.assertEqual(self.statuses(), {"ok": "passed", "bad": "failed", "slow": "not-run", "out": "passed",
+                                           "out2": "failed", "code": "passed", "h5": "not-run",
+                                           "h6": "not-run", "inv": "passed"})
+        self.assertIn("not-run (needs human)", r.stdout)
+        self.assertIn("not-run (timed out)", r.stdout)
+        reasons = {x["check"]: x.get("reason") for x in self.results()}
+        self.assertEqual((reasons["slow"], reasons["h5"]), ("timed out", "needs human"))
 
     def test_all_good_exit_zero_and_record_fields(self):
         r = self.run_verify(contract([check("ok", "true"), human("h")]))

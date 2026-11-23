@@ -1,4 +1,5 @@
-"""Time to delivery: how long from the human's request to a verified stop, recorded by the gate and read by `sisi time`.
+"""Time to delivery: how long from the human's request to a verified stop, recorded by the gate
+and read back as unit telemetry (`sisi status` reports it; the old `sisi time` command is gone).
 
 Delivery row (deliveries.jsonl in the state dir): session, project, start, end (ISO UTC), seconds, send_backs (times the
 gate sent the agent back during this request), check_s (seconds spent running checks during this request), contract
@@ -95,7 +96,7 @@ def record(payload, sess, sid, cwd, now=None):
         return None
 
 
-# ---------------------------------------------------------------- reading: `sisi time`
+# ---------------------------------------------------------------- reading (telemetry helpers)
 
 DAY = 86400.0
 
@@ -151,10 +152,10 @@ def windows(rows, now):
 
 def slow_checks(results, now, top=5):
     """The slowest checks by mean duration over the last 7 days, each with a suggestion."""
-    from . import scoreboard
+    from . import scorecard
     recent = [r for r in results if isinstance(r, dict) and (_epoch(r.get("ts")) or 0) >= now - 7 * DAY]
     out = []
-    for s in scoreboard.check_stats(recent)["checks"]:
+    for s in scorecard.check_stats(recent)["checks"]:
         if s.get("timed_runs"):
             out.append({"id": s["id"], "mean_s": s["total_s"] / s["timed_runs"], "runs": s["runs"], "tier": s.get("tier", "fast")})
     out.sort(key=lambda x: -x["mean_s"])
@@ -193,43 +194,3 @@ def fmt_s(s):
     return "%dh%02dm" % (s // 3600, (s % 3600) // 60)
 
 
-def _cell(s):
-    return "median %s, p90 %s (%d)" % (fmt_s(s["median_s"]), fmt_s(s["p90_s"]), s["n"]) if s["n"] else "none"
-
-
-def median_line(now=None):
-    """One line for `sisi status`."""
-    cur = report(now)["all"]["last7"]
-    if not cur["n"]:
-        return "time to delivery  : no deliveries recorded in the last 7 days"
-    return "time to delivery  : median %s over the last 7 days (%d deliveries)" % (fmt_s(cur["median_s"]), cur["n"])
-
-
-def cmd_time(args, out=print):
-    r = report()
-    if "--json" in args:
-        out(json.dumps(r, indent=2))
-        return 0
-    a = r["all"]
-    if not a["last7"]["n"] and not a["prev7"]["n"]:
-        out("sisi time: no deliveries recorded in the last 14 days. The end-of-turn gate records one each time it lets "
-            "a turn end; check that the gate is installed (`sisi doctor`).")
-    else:
-        out("time from the human's request to a verified stop")
-        out("%-28s %-34s %s" % ("", "last 7 days", "the 7 days before"))
-        out("%-28s %-34s %s" % ("all projects", _cell(a["last7"]), _cell(a["prev7"])))
-        for p, v in r["projects"].items():
-            out("%-28s %-34s %s" % (os.path.basename(p.rstrip("/"))[:28] or p, _cell(v["last7"]), _cell(v["prev7"])))
-        c = a["last7"]
-        if c["n"]:
-            out("")
-            out("share of that time spent running checks: %s" % ("%.0f%%" % (100 * c["check_share"]) if c["check_share"] is not None else "-"))
-            out("deliveries that needed a send-back: %d of %d" % (c["send_back_deliveries"], c["n"]))
-    out("")
-    if r["slowest_checks"]:
-        out("slowest checks (mean run time, last 7 days)")
-        for x in r["slowest_checks"]:
-            out("  %-30s %8s over %d runs [%s]\n    -> %s" % (x["id"][:30], fmt_s(x["mean_s"]), x["runs"], x["tier"], x["suggestion"]))
-    else:
-        out("slowest checks: no check runs recorded in the last 7 days")
-    return 0

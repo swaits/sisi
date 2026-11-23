@@ -7,21 +7,9 @@ from . import store
 MAX_AGE_S = 30 * 86400
 
 
-def _prune(now=None):
-    """Delete per-session state files untouched for 30 days."""
-    from . import paths
-    d = os.path.join(paths.state(), "sessions")
-    cutoff = (now or time.time()) - MAX_AGE_S
-    try:
-        with os.scandir(d) as it:
-            for e in it:
-                if e.name.endswith(".json") and e.is_file(follow_symlinks=False) and e.stat().st_mtime < cutoff:
-                    try:
-                        os.unlink(e.path)
-                    except OSError:
-                        pass
-    except OSError:
-        pass
+def _prune(now=None, sid=None):
+    """Delete old per-session state files, bounded and on a counter (see store.prune_sessions)."""
+    return store.prune_sessions(now=now, active_ids=(sid,) if sid else ())
 
 
 def _export_session(sid):
@@ -95,7 +83,7 @@ def main(args=()):
                 rec["baseline"] = gitutil.measure(cwd)
                 rec["baseline_fp"] = gitutil.fingerprint(cwd, [C.find(cwd)])
             store.save_session(sid, rec)
-        _prune()
+        _prune(sid=sid)
         from . import wiring
         problem = wiring.quick_problem()
         if problem:
