@@ -204,7 +204,9 @@ def start_background(project, fp=None):
         return False, info
     try:
         with open(log, "ab") as lf:
-            child = subprocess.Popen([sys.executable, paths.launcher(), "verify", "--deep", "--worker"], cwd=project,
+            # -B: the detached worker outlives its caller; writing fresh bytecode into the shared
+            # state dir after the caller has finished races whatever cleans that dir up.
+            child = subprocess.Popen([sys.executable, "-B", paths.launcher(), "verify", "--deep", "--worker"], cwd=project,
                                      stdin=subprocess.DEVNULL, stdout=lf, stderr=subprocess.STDOUT,
                                      start_new_session=True, close_fds=True)
         _rewrite_lock(project, child.pid)

@@ -37,6 +37,14 @@ class _Ctx:
         store.save_session(self.sid, self.sess)
 
     def allow(self, msg=None):
+        if msg is None:  # a clean stop is one of the places the cycle-due counter is checked (no scheduler)
+            try:
+                from . import cycle
+                note = cycle.due_notice(session=self.sid)
+                if note:
+                    msg = note + " (This turn may end; the cycle is background work, not a send-back.)"
+            except Exception as e:
+                store.log_error("gate-cycle-notice", e)
         self.sess.update(blocks=0, last_fp=self.fp, last_decision="allow")
         self.save()
         return "allow", msg
@@ -173,9 +181,19 @@ def decide(payload):
                 return ctx.allow({"message": "sisi: deep checks %s; the work is not yet fully verified" % ds["state"],
                                   "context": text})
             return ctx.allow()
-        return ctx.block("sisi: the contract at %s is not satisfied (send-back {n}). Fix the work, then run "
-                         "`sisi verify` until it passes. Do not report this work as done.\n\n%s"
-                         % (path, V.failure_report(results)), c["id"] if c else None, project)
+        msg = ("sisi: the contract at %s is not satisfied (send-back {n}). Fix the work, then run "
+               "`sisi verify` until it passes. Do not report this work as done.\n\n%s"
+               % (path, V.failure_report(results)))
+        try:
+            from . import retro
+            failing = " ".join("%s %s %s" % (r["id"], r.get("kind") or "", r.get("claim") or "")
+                                for r in results if r["status"] in ("failed", "timeout"))
+            block = retro.lessons_block(failing, "gate", session=sid)
+            if block:
+                msg += "\n\n" + block
+        except Exception as e:
+            store.log_error("gate-lessons", e)
+        return ctx.block(msg, c["id"] if c else None, project)
 
     if not top:
         return "allow", None

@@ -37,6 +37,28 @@ def _export_session(sid):
             pass
 
 
+def _backlog_line(cwd):
+    """Developer mode, inside the sisi source folder: name the top tool backlog item. One short line."""
+    try:
+        from . import paths, retro
+        src = (paths.personal_config().get("developer") or {}).get("source")
+        if not src:
+            return ""
+        src = os.path.realpath(src)
+        here = os.path.realpath(cwd)
+        if here != src and not here.startswith(src + os.sep):
+            return ""
+        if not os.path.exists(retro.db_path()):
+            return ""
+        rows = retro.backlog_rows()
+        if not rows:
+            return ""
+        t = retro.safe_line(rows[0]["change"], here)
+        return "top sisi backlog #%d (x%d): %s" % (rows[0]["id"], rows[0]["count"], (t or "")[:110])
+    except Exception:
+        return ""
+
+
 def _deep_line(cwd, fp):
     """One short line when the project's trusted contract has deep checks that are not fresh-pass-or-running."""
     from . import contract as C, deep, gitutil, trust, verify as V
@@ -84,12 +106,22 @@ def main(args=()):
         deep_line = _deep_line(cwd, rec.get("baseline_fp"))
         if deep_line:
             line = (line + " | " if line else "") + deep_line
+        backlog_line = _backlog_line(cwd)
+        if backlog_line:
+            line = (line + " | " if line else "") + backlog_line
         if line:
             sys.stdout.write("sisi: %s\n" % line)
         _export_session(sid)
         try:
+            from . import cycle
+            note = cycle.due_notice(session=sid if isinstance(sid, str) else None)
+            if note:
+                sys.stdout.write(note + "\n")
+        except Exception as e:
+            store.log_error("tick-cycle", e)
+        try:
             from . import retro
-            block = retro.tick_block(cwd)
+            block = retro.tick_block(cwd, session=sid if isinstance(sid, str) else None)
             if block:
                 sys.stdout.write(block + "\n")
         except Exception as e:

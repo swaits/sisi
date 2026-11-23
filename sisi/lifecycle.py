@@ -106,8 +106,10 @@ def _merge_retro_db(src, dst):
             if key(r) in have:
                 lid = have[key(r)]
             else:
-                cols = [c for c in retro.LESSON_COLS if c != "id"]
-                cur = b.execute("INSERT INTO lessons(%s) VALUES(%s)" % (",".join(cols), ",".join("?" * len(cols))), [r[c] for c in cols])
+                bcols = [x[1] for x in b.execute("PRAGMA table_info(lessons)")]
+                cols = [c for c in retro.LESSON_COLS if c != "id" and c in bcols]
+                cur = b.execute("INSERT INTO lessons(%s) VALUES(%s)" % (",".join(cols), ",".join("?" * len(cols))),
+                                [r[c] if c in r.keys() else None for c in cols])
                 lid = cur.lastrowid
                 have[key(r)] = lid
                 added += 1

@@ -4,6 +4,7 @@
 |---|---|
 | [../README.md](../README.md) | learn what sisi is, install it and try it |
 | [design.md](design.md) | understand why sisi works the way it does, and what is built versus only designed |
+| [learning.md](learning.md) | how a recorded lesson takes effect, is measured, strengthened, consolidated or withdrawn |
 | [personal-data.md](personal-data.md) | know where sisi keeps what it learns, how the overlay works, and what an update touches |
 | [verifier-format.md](verifier-format.md) | write or review an entry in the verifier library (`verifiers/`) or a recipe (`done/`) |
 | [developing.md](developing.md) | work on sisi while also using it: the source folder, stable releases and rollback |

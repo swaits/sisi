@@ -35,8 +35,9 @@ and 90th percentile for the last 7 days against the 7 days before, the share spe
 slowest checks; `sisi status` shows the 7-day median.
 
 A learned change that speeds things up but fails a check is rejected. A learned change that keeps every check
-passing but makes median delivery slower is flagged for reversal. (The measurement exists; the automatic
-flagging belongs to the learning loop, which is not built.)
+passing but makes median delivery slower is flagged for reversal. (Built: `sisi cycle status` flags a cycle
+whose deliveries got worse, and the next cycle brief puts reverting or repairing it first. There is still no
+replay testing before a learned change ships; it lands in the personal overlay and is judged after.)
 
 ## Why the first design was thrown out
 
@@ -160,7 +161,11 @@ ledger file, to match delegations with sessions when it builds the task set.
 
 ## Part 3: learning that compounds
 
-The data layer of this part is built; the model-driven loop that would act on it is not.
+The agent-run loop over retro lessons is built: lessons take effect at once, are delivered at matching
+moments, are measured per lesson, climb a strength ladder, and are consolidated by `sisi cycle`
+([learning.md](learning.md)). The heavier machinery designed below — background runs, replay experiments on a
+task set before shipping, the taste judge — is not built; the built loop ships to the personal overlay first
+and judges by measured deliveries, with exact revert and withdrawal as the safety net.
 
 **Signals, strongest first.** The loop learns from outcomes that do not depend on a model's opinion:
 
@@ -170,10 +175,13 @@ The data layer of this part is built; the model-driven loop that would act on it
 4. The human's corrections and the agent's questions, read from transcripts by a classifier. Useful for finding
    causes, weakest as proof.
 
-**Trigger.** Each tool's session-start hook runs `sisi tick`, which returns quickly. The design has it start a
-detached background run when there is work and budget, with one lock in the store preventing overlap, so a tick
-from any tool processes sessions from all tools. Today `sisi tick` records the session baseline and checks the
-wiring; it starts no background run.
+**Trigger.** There is no scheduler and no background run. Whether consolidation is due is a counter check made
+during normal use: the session-start hook (`sisi tick`), the end-of-turn gate on an otherwise-clean stop, and
+the output of `sisi retro`, `sisi verify` and `sisi done for` — so tools without hooks are covered by commands
+agents run anyway. A session is told at most once until 20 further checks pass or the counter grows. Two
+sessions consolidating at once are kept apart by the personal-data lock and a base version in the cycle file:
+the second apply is refused and re-reads a fresh brief. (The earlier design of tick starting detached
+background runs on a budget was dropped for this simpler trigger.)
 
 **What the loop would produce.**
 
@@ -189,9 +197,11 @@ wiring; it starts no background run.
   product are saved for the next one.
 - **Brief templates**, from what the ledger shows fixed rejected work.
 
-**Testing a change.** Splitting live sessions between old and new rules proves about one change every three or
-four days, which is too slow. The main test is a task set built from the user's own work, re-run in the
-background:
+**Testing a change.** (Not built; the built loop takes the opposite order by decision — a change lands in the
+personal overlay at once and is judged by measured deliveries, because waiting for replay evidence left every
+lesson inert. What follows is the replay design that may still be added.) Splitting live sessions between old
+and new rules proves about one change every three or four days, which is too slow. The main test is a task set
+built from the user's own work, re-run in the background:
 
 - **Human tasks.** A project as it was when a session began, the request the human typed, and what they ended up
   accepting. In a census of one user's history, only a fraction of sessions were usable as tasks and a smaller
@@ -278,6 +288,10 @@ Built and covered by tests:
 - The rulebook (`canon/core.md`), the minimum-rung floors, the verifier library and the recipes.
 - Retrospectives and lessons (`sisi retro`, `sisi lessons`), `sisi learn` with quarantine, time to delivery
   (`sisi time`), `sisi audit`.
+- The lesson loop: immediate effects in the overlay (field notes, draft recipes, learned notes, `sisi backlog`),
+  moment-of-use delivery with recorded showings, per-lesson measurement, the strength ladder with enforced
+  checks, `sisi cycle` (due counter, brief, validated apply under lock and base version, exact revert, status
+  with worse-cycle flagging) and `sisi improve`.
 - Personal data, the overlay, update, export and import, releases and rollback, promotion of a personal item
   into the product.
 - The data layer for learning: harvest of Claude Code transcripts, task set, ground truth, escape candidates,
@@ -286,8 +300,8 @@ Built and covered by tests:
 Designed, not built:
 
 - The conductor (`sisi build`) and the oracle queue (`sisi inbox`).
-- The model-driven learning loop: background runs started from `sisi tick`, experiments on the task set, shipping
-  and removal of learned changes, brief templates, playbooks.
+- Replay experiments on the task set before a learned change ships, brief templates, playbooks. (Shipping and
+  removal of learned changes exist in the simpler ship-first-measure-after form described in Part 3.)
 - The taste judge and rung 5 judging by a model.
 - Blocking gates for tools other than Claude Code.
 - Harvest sources other than Claude Code.
@@ -299,7 +313,8 @@ Designed, not built:
 2. Signals and scoreboard: transcript adapters, git survival, and a delegation ledger. Partly built (Claude Code
    transcripts, task set, scoreboard; no git survival signal).
 3. The conductor and the oracle queue. Not built.
-4. The loop: coach, replay filter, experiments, shipping and removal. Not built.
+4. The loop: coach, replay filter, experiments, shipping and removal. Partly built (the lesson loop ships,
+   measures and removes; the coach as a separate model run, the replay filter and experiments are not built).
 5. The taste judge and playbooks. Not built.
 
 sisi's own checks: wiring is idempotent and touches no other byte (property tests); the gate cannot be passed

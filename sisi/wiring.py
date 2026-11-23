@@ -1,25 +1,39 @@
 """install / uninstall / doctor. Wiring by reference (import line, symlink, hook entry); never copies canon text.
 The tools load the generated rulebook in the personal data folder (base rules with the overlay applied), not the
 product's canon/core.md. Every modified file is backed up into <personal>/install/ first; uninstall restores it exactly."""
-import copy, hashlib, json, os, re, shlex, shutil
+import copy, hashlib, json, os, re, shlex, shutil, stat as _stat
 
-from . import paths, store
+from . import hookjson, paths, store
 
 BEGIN, BEGIN_NONL, END = b"<!-- sisi:begin -->", b"<!-- sisi:begin nonl -->", b"<!-- sisi:end -->"
 BLOCK_RE = re.compile(rb"^<!-- sisi:begin( nonl)? -->\n(@[^\n]*)\n<!-- sisi:end -->\n", re.M)
 
 
 # ---- locations -------------------------------------------------------------
+def xdg_config():
+    """The XDG config base. A SISI_HOME test override wins, as it does for XDG_DATA_HOME in paths.data()."""
+    if os.environ.get("SISI_HOME"):
+        return os.path.join(paths.home(), ".config")
+    x = os.environ.get("XDG_CONFIG_HOME")
+    return x if x and os.path.isabs(x) else os.path.join(paths.home(), ".config")
+
+
+def _opencode_dir():
+    return os.environ.get("OPENCODE_CONFIG_DIR") or os.path.join(xdg_config(), "opencode")
+
+
 def loc():
     h = paths.home()
+    codex_dir = os.environ.get("CODEX_HOME") or os.path.join(h, ".codex")
+    opencode_dir = _opencode_dir()
     return {
         "claude_dir": os.path.join(h, ".claude"),
         "claude_md": os.path.join(h, ".claude", "CLAUDE.md"),
         "settings": os.path.join(h, ".claude", "settings.json"),
-        "codex_dir": os.path.join(h, ".codex"),
-        "codex": os.path.join(h, ".codex", "AGENTS.md"),
-        "opencode_dir": os.path.join(h, ".config", "opencode"),
-        "opencode": os.path.join(h, ".config", "opencode", "AGENTS.md"),
+        "codex_dir": codex_dir,
+        "codex": os.path.join(codex_dir, "AGENTS.md"),
+        "opencode_dir": opencode_dir,
+        "opencode": os.path.join(opencode_dir, "AGENTS.md"),
         "skills": os.path.join(h, ".agents", "skills"),
         "bin": os.path.join(h, ".local", "bin", "sisi"),
     }
@@ -45,6 +59,28 @@ def _read(p):
             return f.read()
     except OSError:
         return None
+
+
+def _dangling(p):
+    return os.path.islink(p) and not os.path.exists(p)
+
+
+def _read_file(p):
+    """(bytes, None) on success, (None, None) when missing, (None, reason) when present but untouchable.
+
+    Telling these apart matters: a dangling symlink or an unreadable file must be refused and left
+    alone, never treated as an absent file that install may create through."""
+    if _dangling(p):
+        return None, "%s is a dangling symlink (to %s)" % (p, os.readlink(p))
+    if not os.path.lexists(p):
+        return None, None
+    if os.path.isdir(p):
+        return None, "%s is a directory" % p
+    try:
+        with open(p, "rb") as f:
+            return f.read(), None
+    except OSError as e:
+        return None, "%s cannot be read (%s)" % (p, e.strerror or e)
 
 
 def _write(p, data):
@@ -94,18 +130,62 @@ def _msave(m):
         f.write(new)
 
 
+def _source_mode(p):
+    try:
+        return _stat.S_IMODE(os.stat(p).st_mode) & 0o777 or 0o600
+    except OSError:
+        return 0o600
+
+
+def _backups_dir():
+    """Backup folder, owner-only: backups of settings files may hold API keys."""
+    d = os.path.join(_idir(), "backups")
+    os.makedirs(d, exist_ok=True)
+    try:
+        os.chmod(d, 0o700)
+    except OSError:
+        pass
+    return d
+
+
+def _harden_backup(name, p):
+    bp = os.path.join(_idir(), "backups", name)
+    try:
+        os.chmod(bp, _source_mode(p))
+    except OSError:
+        pass
+
+
 def _backup(m, p, data):
-    """Remember the original state of p before first modification."""
-    if p in m["files"]:
+    """Remember the original state of p before first modification in this install round.
+
+    Backup names are content-addressed, so a later round whose original changed gets a fresh backup
+    instead of silently reusing a stale one; within a round the first backup wins. A backup file gets
+    the source file's mode (never wider), in a 0700 folder."""
+    existing = m["files"].get(p)
+    if existing is not None:
+        if existing.get("backup"):
+            _harden_backup(existing["backup"], p)
         return
     name = None
     if data is not None:
-        name = "%s-%s.orig" % (_sha(p.encode())[:8], os.path.basename(p))
-        bp = os.path.join(_idir(), "backups", name)
-        os.makedirs(os.path.dirname(bp), exist_ok=True)
-        if not os.path.exists(bp):
-            with open(bp, "wb") as f:
+        name = "%s-%s-%s.orig" % (_sha(p.encode())[:8], _sha(data)[:12], os.path.basename(p))
+        bp = os.path.join(_backups_dir(), name)
+        mode = _source_mode(p)
+        try:
+            fd = os.open(bp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        except FileExistsError:
+            try:
+                os.chmod(bp, mode)
+            except OSError:
+                pass
+        else:
+            with os.fdopen(fd, "wb") as f:
                 f.write(data)
+            try:
+                os.chmod(bp, mode)
+            except OSError:
+                pass
     m["files"][p] = {"backup": name}
 
 
@@ -150,20 +230,20 @@ def _claude_md_wired(data):
 
 # ---- settings.json ---------------------------------------------------------
 def hook_cmds():
-    b = shlex.quote(paths.launcher())
     gate_to = int(store.config()["gate"].get("budget_s", 120)) + 30
-    return {"SessionStart": (b + " tick --tool claude-code", 10), "Stop": (b + " gate --tool claude-code", gate_to),
-            "SubagentStop": (b + " gate --subagent --tool claude-code", 30)}
+    return {"SessionStart": (hookjson.fail_open_command(paths.launcher(), "tick", "claude-code"), 10),
+            "Stop": (hookjson.fail_open_command(paths.launcher(), "gate", "claude-code"), gate_to),
+            "SubagentStop": (hookjson.fail_open_command(paths.launcher(), "gate", "claude-code", True), 30)}
+
+
+def _claude_spec():
+    return {ev: {"cmd": cmd, "timeout": to,
+                 "sub": hookjson.sisi_invocation(cmd)[1]} for ev, (cmd, to) in hook_cmds().items()}
 
 
 def _is_ours(h, sub):
-    if not (isinstance(h, dict) and h.get("type") == "command" and isinstance(h.get("command"), str)):
-        return False
-    try:
-        parts = shlex.split(h["command"])
-    except ValueError:
-        return False
-    return len(parts) >= 2 and os.path.basename(parts[0]) == "sisi" and parts[1] == sub
+    return (isinstance(h, dict) and h.get("type") == "command"
+            and hookjson.is_ours_command(h.get("command"), sub))
 
 
 def _parse_settings(text):
@@ -192,23 +272,40 @@ def add_hooks(obj):
     if not isinstance(hooks, dict):
         raise ValueError("settings.json 'hooks' is not an object")
     for ev, (cmd, to) in hook_cmds().items():
-        sub = shlex.split(cmd)[1]
+        sub = hookjson.sisi_invocation(cmd)[1]
         groups = hooks.get(ev)
         if groups is None:
             groups = hooks[ev] = []
             changed = True
         if not isinstance(groups, list):
             raise ValueError("settings.json hooks.%s is not a list" % ev)
-        found = False
+        found, kept = False, []
         for g in groups:
-            for h in (g.get("hooks", []) if isinstance(g, dict) and isinstance(g.get("hooks"), list) else []):
+            hs = g.get("hooks") if isinstance(g, dict) else None
+            if not isinstance(hs, list):
+                kept.append(g)
+                continue
+            rest = []
+            for h in hs:
                 if _is_ours(h, sub):
+                    if found:
+                        changed = True  # a second registration would run the hook twice; keep exactly one
+                        continue
                     found = True
                     if h.get("command") != cmd:
                         h["command"] = cmd
                         changed = True
+                    if h.get("timeout") != to:
+                        h["timeout"] = to
+                        changed = True
+                rest.append(h)
+            if rest or not hs:
+                kept.append(dict(g, hooks=rest) if rest != hs else g)
+            else:
+                changed = True
+        hooks[ev] = kept
         if not found:
-            groups.append({"hooks": [{"type": "command", "command": cmd, "timeout": to}]})
+            kept.append({"hooks": [{"type": "command", "command": cmd, "timeout": to}]})
             changed = True
     return changed
 
@@ -251,7 +348,8 @@ def _hooks_wired(obj):
         out[key] = False
         for g in groups if isinstance(groups, list) else []:
             for h in g.get("hooks", []) if isinstance(g, dict) and isinstance(g.get("hooks"), list) else []:
-                if _is_ours(h, sub) and shlex.split(h["command"])[0] == paths.launcher():
+                inv = hookjson.sisi_invocation(h.get("command")) if isinstance(h, dict) else None
+                if _is_ours(h, sub) and inv and inv[0] == paths.launcher():
                     out[key] = True
     return out
 
@@ -295,11 +393,18 @@ def _link(m, p, target, notes, label):
 
 # ---- install / uninstall ---------------------------------------------------
 def _writable(p):
-    """Can we create or replace the file p (following symlinks)? Returns an error string or None."""
-    if os.path.islink(p) and not os.path.exists(p):
-        return "%s is a dangling symlink" % p
+    """Can we read and create-or-replace the file p (following symlinks)? Returns an error string or None.
+
+    An existing file must itself be writable, not just its folder: an atomic replace would otherwise
+    silently overwrite a file the user made read-only."""
+    if _dangling(p):
+        return "%s is a dangling symlink (to %s)" % (p, os.readlink(p))
+    if os.path.isdir(p):
+        return "%s is a directory" % p
     real = os.path.realpath(p)
     if os.path.exists(real):
+        if not os.access(real, os.R_OK):
+            return "%s cannot be read" % p
         ok = os.access(real, os.W_OK) and os.access(os.path.dirname(real), os.W_OK)
     else:
         d = os.path.dirname(real)
@@ -307,6 +412,31 @@ def _writable(p):
             d = os.path.dirname(d)
         ok = os.access(d, os.W_OK)
     return None if ok else "%s is not writable" % p
+
+
+def _link_writable(p, target):
+    """Would creating or replacing the symlink p be possible? None when no write is needed or possible."""
+    if os.path.islink(p) and os.readlink(p) == target:
+        return None
+    if os.path.lexists(p) and not (os.path.islink(p) and _ours(p)):
+        return None  # a user file or foreign symlink: _link leaves it alone
+    d = os.path.dirname(p)
+    while d and not os.path.isdir(d):
+        d = os.path.dirname(d)
+    return None if os.access(d, os.W_OK) else "%s is not writable" % d
+
+
+def _link_plan_lines(p, target, label):
+    if os.path.islink(p):
+        cur = os.readlink(p)
+        if cur == target:
+            return []
+        if not _ours(p):
+            return ["%s: skip %s (symlink to %s; not touched)" % (label, p, cur)]
+        return ["%s: replace link %s -> %s" % (label, p, target)]
+    if os.path.lexists(p):
+        return ["%s: skip %s (exists and is not a symlink; not touched)" % (label, p)]
+    return ["%s: create link %s -> %s" % (label, p, target)]
 
 
 def _plan_claude(L):
@@ -328,11 +458,16 @@ def _plan_claude(L):
     else:
         data = _read(p)
         try:
-            obj, ind, nl = _parse_settings(data if data is not None else b"")
-            if add_hooks(obj):
-                steps.append((p, data, _dump(obj, ind, nl if data is not None else True),
-                              "claude-code: hooks registered in %s" % p))
-        except (ValueError, UnicodeDecodeError) as ex:
+            if data is None or not data.strip():
+                obj, ind, nl = _parse_settings(data if data is not None else b"")
+                if add_hooks(obj):
+                    steps.append((p, data, _dump(obj, ind, nl if data is not None else True),
+                                  "claude-code: hooks registered in %s" % p))
+            else:
+                new = hookjson.add_nested(data.decode("utf-8"), _claude_spec()).encode("utf-8")
+                if new != data:
+                    steps.append((p, data, new, "claude-code: hooks registered in %s" % p))
+        except ValueError as ex:
             errs.append("settings.json is not valid (%s); %s left untouched" % (ex, p))
     return steps, errs
 
@@ -357,6 +492,8 @@ def install():
     except Exception as e:
         return 1, ["install refused, the personal data could not be prepared (%r); nothing was wired" % e]
     m = _mload()
+    from . import adapters
+    prefailed = adapters.preflight_all()  # every adapter target checked before the first one is touched
     try:
         for p, old, new, note in steps:
             _backup(m, p, old)
@@ -367,11 +504,10 @@ def install():
                 _write(p, new)
             notes.append(note)
         for key in ("codex", "opencode"):
-            if os.path.isdir(L[key + "_dir"]):
+            if os.path.isdir(L[key + "_dir"]) and key not in prefailed:
                 _link(m, L[key], core(), notes, key)
-            else:
-                notes.append("%s: %s not found; skipped" % (key, L[key + "_dir"]))
-        notes.append("muse: not wired (global instruction path unconfirmed)")
+            # absence (and any preflight refusal) is reported once, by the tool's adapter below
+        adapters.wire_all(m, notes, prefailed)
         sk = os.path.join(paths.product_root(), "canon", "skills")
         for name in sorted(os.listdir(sk)) if os.path.isdir(sk) else []:
             if os.path.isdir(os.path.join(sk, name)):
@@ -385,46 +521,87 @@ def install():
     return 0, notes
 
 
+def install_dry_run():
+    """Exactly what install would create, edit (with diffs) or skip — changing nothing at all.
+    Nothing is prepared either: no personal folder, no generated rulebook, no manifest."""
+    from . import adapters
+    L = loc()
+    notes = ["dry-run: nothing will be changed"]
+    rc = 0
+    if os.path.isdir(L["claude_dir"]):
+        steps, errs = _plan_claude(L)
+        if errs:
+            rc = 1
+            notes += ["claude-code: install would be refused: " + e for e in errs]
+        else:
+            ops = [{"kind": "create" if old is None else "edit", "path": p, "old": old, "new": new}
+                   for p, old, new, _note in steps]
+            notes += adapters.format_ops("claude-code", ops)
+    else:
+        notes.append("claude-code: %s not found; skipped" % L["claude_dir"])
+    prefailed = adapters.preflight_all()
+    for key in ("codex", "opencode"):
+        if os.path.isdir(L[key + "_dir"]) and key not in prefailed:
+            notes += _link_plan_lines(L[key], core(), key)
+    notes += adapters.dry_run_lines()
+    sk = os.path.join(paths.product_root(), "canon", "skills")
+    for name in sorted(os.listdir(sk)) if os.path.isdir(sk) else []:
+        if os.path.isdir(os.path.join(sk, name)):
+            notes += _link_plan_lines(os.path.join(L["skills"], name), os.path.join(sk, name), "skills")
+    notes += _link_plan_lines(L["bin"], paths.launcher(), "cli")
+    notes.append("dry-run: no files were changed")
+    return rc, notes
+
+
 def uninstall():
     L, notes = loc(), []
     m = _mload()
     # CLAUDE.md
     p = L["claude_md"]
     data = _read(p)
+    if _dangling(p):
+        notes.append("claude-code: %s is a dangling symlink; not touched" % p)
+        data = None
     if data is not None and BLOCK_RE.search(data):
         new = remove_import(data)
-        if not new and m["files"].get(p, {}).get("backup") is None and p in m["files"]:
+        if not new and m["files"].get(p, {}).get("backup") is None and p in m["files"] and not os.path.islink(p):
             os.unlink(p)
         else:
             _write(p, new)
         notes.append("claude-code: import line removed")
     # settings.json
     p = L["settings"]
-    data = _read(p)
+    data, read_err = _read_file(p)
     ent = m["files"].get(p)
-    if data is not None:
+    if read_err:
+        notes.append("claude-code: settings.json not touched (%s)" % read_err)
+    elif data is not None:
         try:
-            obj, ind, nl = _parse_settings(data)
-            before = copy.deepcopy(obj)
-            if remove_hooks(obj):
-                if ent is not None and ent["backup"] is None and not obj:
+            text = data.decode("utf-8")
+            subs = {"SessionStart": "tick", "Stop": "gate", "SubagentStop": "gate"}
+            orig = _read(os.path.join(_idir(), "backups", ent["backup"])) if ent and ent["backup"] else None
+            drop_hooks, _dv = hookjson.backup_drop_flags(
+                orig.decode("utf-8") if orig is not None else None, None) if orig is not None else (True, False)
+            removed = hookjson.remove_nested(text, subs, drop_empty_hooks=drop_hooks)
+            if removed != text:
+                root = hookjson.parse(removed) if removed.strip() else None
+                empty_root = root is not None and root.kind == "obj" and not root.members
+                if ent is not None and ent["backup"] is None and empty_root and not os.path.islink(p):
                     os.unlink(p)
                 else:
-                    orig = _read(os.path.join(_idir(), "backups", ent["backup"])) if ent and ent["backup"] else None
-                    try:
-                        back = _parse_settings(orig)[0] if orig is not None else None
-                    except ValueError:
-                        back = None
-                    if back is not None:
-                        t = copy.deepcopy(back)
-                        add_hooks(t)
-                    if back is not None and t == before:
-                        _write(p, orig)  # current file is original + our entries: restore exact bytes
-                    else:
-                        _write(p, _dump(obj, ind, nl))
+                    restored = False
+                    if orig is not None:
+                        try:
+                            restored = hookjson.add_nested(orig.decode("utf-8"), _claude_spec()) == text
+                        except ValueError:
+                            restored = False
+                    # unedited since install: restore exact bytes; edited: only our spans were removed above
+                    _write(p, orig if restored else removed.encode("utf-8"))
                 notes.append("claude-code: hooks removed")
-        except (ValueError, UnicodeDecodeError) as e:
+        except ValueError as e:
             notes.append("claude-code: settings.json not touched (%s)" % e)
+    from . import adapters
+    adapters.unwire_all(m, notes)
     # symlinks
     cand = [L["codex"], L["opencode"], L["bin"]]
     if os.path.isdir(L["skills"]):
@@ -458,22 +635,36 @@ def doctor():
                                ("gate hook", hw["gate"]), ("subagent hook", hw["subagent"])) if not ok]
     rows.append({"tool": "claude-code", "status": "not wired" if missing else "wired",
                  "detail": ("missing: " + ", ".join(missing)) if missing else "import + tick + gate registered",
-                 "blocking_hook": "yes (Stop)" if hw["gate"] else "no"})
-    for key, name, hook in (("codex", "codex", "no (documented, not built)"),
-                            ("opencode", "opencode", "no (none verified)")):
-        p = L[key]
-        if os.path.islink(p) and os.readlink(p) == core():
-            st_, det = "wired", "%s -> the generated rulebook" % p
-        elif os.path.islink(p) and os.readlink(p) in _old_cores():
-            st_, det = "not wired", "%s -> the product's canon/core.md (old wiring; run `sisi install`)" % p
-        elif os.path.lexists(p):
-            st_, det = "not wired", "%s exists and is not ours (left alone)" % p
-        else:
-            st_, det = "not wired", "no %s" % p
-        rows.append({"tool": name, "status": st_, "detail": det, "blocking_hook": hook})
-    rows.append({"tool": "muse", "status": "not wired",
-                 "detail": "global instruction path unconfirmed (binary mentions ~/.claude/CLAUDE.md and ~/.codex/AGENTS.md as foreign context; unverified)",
-                 "blocking_hook": "unknown"})
+                 "blocking_hook": "yes (Stop)" if hw["gate"] else "no",
+                 "rulebook": not missing and _claude_md_wired(cm), "tick": hw["tick"],
+                 "enforcement": "blocks", "action": None})
+    from . import adapters
+    tool_rows = []
+    for a in adapters.ADAPTERS:
+        st = a.status()
+        if a.name not in ("codex", "opencode", "muse") and not st["detected"]:
+            continue  # a tool this user does not have gets no row; codex/opencode keep their historic rows
+        enf = st["enforcement"]
+        blocking = ("blocks (%s)" % st["via"] if enf == "blocks" else
+                    "sends a follow-up (%s)" % st["via"] if enf == "sends a follow-up" else enf)
+        tool_rows.append({"tool": st["tool"], "status": "wired" if st["wired"] else "not wired",
+                          "detail": st["detail"], "blocking_hook": blocking, "rulebook": st["rulebook"],
+                          "tick": st["tick"], "enforcement": enf, "action": st["action"]})
+    rows += tool_rows
+    anti = adapters.antigravity_status()
+    if anti["detected"]:
+        rows.append({"tool": "antigravity", "status": "not wired", "detail": anti["detail"],
+                     "blocking_hook": "unknown", "rulebook": anti["rulebook"], "tick": False,
+                     "enforcement": "unknown", "action": None})
+    _providers = {"claude-code", "codex", "opencode", "cursor", "pi", "muse", "gemini", "copilot", "qwen", "grok"}
+    wired_names = [n for n in ([r["tool"] for r in tool_rows if r["status"] == "wired"]
+                   + (["claude-code"] if rows[0]["status"] == "wired" else [])) if n in _providers]
+    providers = ", ".join(sorted(set(wired_names))) or "none wired yet"
+    for host in ("t3-code", "orca"):
+        rows.append({"tool": host, "status": "ok",
+                     "detail": "host app with no instructions or hooks of its own; covered through the providers it runs (wired: %s)" % providers,
+                     "blocking_hook": "via provider", "rulebook": bool(wired_names), "tick": False,
+                     "enforcement": "via provider", "action": None})
     sk = paths.canon("skills")
     names = [n for n in sorted(os.listdir(sk)) if os.path.isdir(os.path.join(sk, n))] if os.path.isdir(sk) else []
     bad = [n for n in names if not (_ours(os.path.join(L["skills"], n)))]
@@ -502,7 +693,9 @@ def doctor():
 def quick_problem():
     """Cheap check for tick. Returns a short string or None."""
     L = loc()
-    refs = any(os.path.islink(L[k]) and os.readlink(L[k]) == core() for k in ("codex", "opencode"))
+    from . import adapters
+    links = [(k, L[k]) for k in ("codex", "opencode")] + adapters.rulebook_links()
+    refs = any(os.path.islink(p) and os.readlink(p) == core() for _, p in links)
     refs = refs or _claude_md_wired(_read(L["claude_md"]))  # only complain about a rulebook something points at
     if refs and not os.path.isfile(core()):
         return "the generated rulebook is missing at %s (run `sisi build-canon`)" % core()
@@ -510,8 +703,8 @@ def quick_problem():
         from . import overlay
         if overlay.is_stale():
             return "the generated rulebook is out of date (run `sisi build-canon`)"
-    for k in ("codex", "opencode"):
-        if os.path.islink(L[k]) and os.readlink(L[k]).startswith((paths.REPO, paths.data())) and not os.path.exists(L[k]):
+    for k, p in links:
+        if os.path.islink(p) and os.readlink(p).startswith((paths.REPO, paths.data())) and not os.path.exists(p):
             return "%s link is dangling" % k
     if os.path.isdir(L["claude_dir"]):
         r = doctor_claude()

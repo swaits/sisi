@@ -92,6 +92,12 @@ def run(c, project, deadline=None, default_timeout=60, tiers=("fast",)):
     for f in (C.floor_failures(c) if "fast" in tiers else []):
         res.append({"item": "floor", "tier": "fast", "id": "floor:" + f["kind"], "kind": f["kind"], "rung": None,
                     "claim": f["message"], "status": "failed", "duration_s": 0.0, "tail": f["message"]})
+    if "fast" in tiers:  # enforced lessons ride the same path as floors (personal overlay, trusted commands)
+        try:
+            from . import cycle
+            res += cycle.enforced_results(c, project, deadline, default_timeout)
+        except Exception as e:
+            store.log_error("enforced", e)
     return res
 
 
@@ -213,4 +219,12 @@ def cmd_verify(args, cwd=None, out=print):
             out("warning: " + w)
         if ds:
             out(deep.describe(ds))
+        if "--worker" not in args:  # the detached worker's output is a log; an announcement there reaches nobody
+            try:
+                from . import cycle
+                line = cycle.due_notice()
+                if line:
+                    out(line)
+            except Exception:
+                pass
     return 0 if good else 1

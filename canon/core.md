@@ -99,7 +99,7 @@ higher level, the outcome is verified by the strongest method, the human is inte
 result is what they meant, and it arrives sooner. Name the one thing that would have helped most:
 the moment it went slower, weaker or wider than it should have, why, and the change to sisi (a rule,
 a recipe, a technique, a fact about the human, a tool) that would make the next agent do it right
-without being told. "Nothing" and general advice are refused. Subagents do this too.
+without being told, named (`--when`, at least five terms) in the words a different agent would use for that work, synonyms included, because word overlap alone cannot bridge "CSV" and "spreadsheet". "Nothing" and general advice are refused. Subagents do this too. When session start or a command says a learning cycle is due, run `sisi cycle` in the background of your work and never involve the human.
 
 Also, when the human states a lasting preference, record it at once with `sisi learn "<their
 words>"`. Quote them. Never record your own guess.

@@ -553,6 +553,7 @@ class ExportImportTests(PersonalCase):
         self.ok("learn", "never", "ask", "twice")
         self.ok("retro", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
                 "--cause", "the test was written after the code", "--change-kind", "rule",
+                "--when", "tests, pytest, failing first, regression, test quality, red green",
                 "--change", "write the failing test first and show it fail with `pytest -k new`")
         os.makedirs(os.path.join(self.state, "sessions"))
         open(os.path.join(self.state, "sessions", "s1.json"), "w").write('{"a": 1}')
@@ -588,6 +589,7 @@ class ExportImportTests(PersonalCase):
     def test_import_sets_existing_data_aside_and_rebuilds_db_from_the_dump(self):
         self.ok("retro", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
                 "--cause", "the test was written after the code", "--change-kind", "rule",
+                "--when", "tests, pytest, failing first, regression, test quality, red green",
                 "--change", "write the failing test first and show it fail with `pytest -k new`")
         arc = os.path.join(self.tmp, "out.tar.gz")
         self.ok("export", arc)
@@ -631,6 +633,7 @@ def LessonRows():
 class LessonDumpTests(PersonalCase):
     RETRO = ["--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
              "--cause", "the test was written after the code", "--change-kind", "rule",
+             "--when", "tests, pytest, failing first, regression, test quality, red green",
              "--change", "write the failing test first and show it fail with `pytest -k new`"]
 
     def test_dump_is_committed_sorted_and_the_database_is_not(self):

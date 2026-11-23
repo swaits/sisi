@@ -15,8 +15,9 @@ Under `SISI_HOME` (tests) the personal folder is `$SISI_HOME/.local/share/sisi` 
     VERSION              format version of this folder, a single integer (an update migrates older folders after taking a backup).
                          Not the product's release number: that is the VERSION file in the clone, shown by `sisi --version`
     oracle.md            what the person wants
-    overlay/             learned changes to the product (below)
-    notes/<id>.md        field notes per verifier or recipe id
+    overlay/             learned changes to the product (below); overlay/enforced.json holds enforced lessons
+    notes/<id>.md        field notes per verifier or recipe id (notes/draft-<id>.md: a recipe that does not exist yet)
+    cycles/              one JSON record per learning cycle, including the bytes revert restores
     config.json          settings (over config.default.json)
     trusted.json         projects whose contracts may run commands
     lessons.jsonl        sorted dump of the lessons database, committed whenever lessons change

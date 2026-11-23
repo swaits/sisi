@@ -9,6 +9,7 @@ GOOD = dict(aim="verified",
             cause="the parser-or-codec recipe does not list the fuzz verifier under Checks",
             change_kind="recipe",
             change="Add the fuzz verifier to the Checks of the parser-or-codec recipe so parser work picks it by default",
+            when="parser, fuzzing, codec, hostile input, generated input, parsing",
             target="parser-or-codec")
 
 
@@ -53,20 +54,20 @@ class RefusalTests(RetroCase):
         r = self.retro()
         self.assertEqual(r.returncode, 0, r.stdout)
         l = self.lessons()
-        self.assertEqual((len(l), l[0]["count"], l[0]["status"], l[0]["aim"]), (1, 1, "open", "verified"))
+        # a recipe lesson with a valid target takes effect at once, on its first occurrence
+        self.assertEqual((len(l), l[0]["count"], l[0]["status"], l[0]["aim"]), (1, 1, "applied", "verified"))
         self.assertEqual(self.occurrences(), 1)
 
     def test_each_refusal(self):
+        # Structural checks only: presence, length, enums, moment-is-not-change, exact empty answers.
         bad = {
             "missing aim": {"aim": ""}, "missing moment": {"moment": ""}, "missing cause": {"cause": " "},
             "missing change": {"change": ""}, "bad aim": {"aim": "vibes"}, "bad kind": {"change_kind": "magic"},
-            "nothing moment": {"moment": "Nothing, it went well and nothing could be better"},
             "nothing change": {"change": "None"}, "na cause": {"cause": "n/a"},
-            "nothing could be better": {"cause": "honestly nothing could be better here at all"},
+            "nothing moment exact": {"moment": "nothing"},
+            "be more careful exact": {"change": "be more careful"},
             "short moment": {"moment": "it was slow"}, "short change": {"change": "fix the rule"},
             "short cause": {"cause": "bad"},
-            "generic change": {"change": "be more careful and double-check everything next time around"},
-            "no concrete moment": {"moment": "it took longer than it needed to because things were slower than I expected"},
             "same text": {"moment": GOOD["change"], "change": GOOD["change"]},
         }
         for name, over in bad.items():
@@ -74,14 +75,152 @@ class RefusalTests(RetroCase):
                 r = self.retro(over)
                 self.assertEqual(r.returncode, 2, r.stdout)
                 self.assertIn("refused", r.stdout)
+                self.assertIn("(check:", r.stdout)  # every refusal names the check that failed
         self.assertEqual(self.lessons(), [])
         self.assertEqual(self.occurrences(), 0)
+
+    VALID = [
+        ("Dates in the report were one day early for users in Sydney",
+         "the code formatted UTC timestamps without the user's time zone",
+         "For anything that shows or compares dates, test with a time zone ahead of and behind UTC and across a daylight saving change"),
+        ("Everything looked fine on my machine and then failed for everyone in the beta",
+         "my local data was a week old and far too small",
+         "Anything that reads user data should always be checked against a large recent copy before shipping"),
+        ("Nothing could be imported after the upgrade and nobody noticed for a day",
+         "the importer swallowed every error and reported success",
+         "An import should never report success when everything was skipped; zero imported is a failure"),
+        ("The button did nothing at all when pressed quickly twice in a row",
+         "the handler always waited for the first request to finish",
+         "Buttons that start work should disable themselves until the work settles, always"),
+        ("It was never clear which of the three copies was the newest one",
+         "each tool kept its own copy and none said which was live",
+         "Anything installed in two places should print which copy is running and how old it is"),
+        ("Everything was rebuilt from scratch even for a one-word edit",
+         "the build never reused anything between runs at all",
+         "A build should always say what it reused and what it redid, so waste is visible"),
+        ("The search found nothing for a perfectly ordinary plural word",
+         "matching compared whole words only, with no stemming at all",
+         "Search over user text should stem words so plurals and verb forms meet"),
+        ("Users in Auckland saw tomorrow's date on everything after midnight",
+         "dates were formatted in the server zone, never the viewer's",
+         "For anything dated, format in the viewer's zone and test both sides of UTC"),
+        ("The whole page went blank whenever one record had no title",
+         "rendering assumed every field is always present on every record",
+         "Rendering should survive any single record missing any optional field"),
+        ("Nobody could tell whether the job had finished or was still running",
+         "long work reported nothing between starting and ending",
+         "Anything that takes more than a few seconds should say what stage it is at"),
+        ("The same invoice was sent twice to the same customer in one morning",
+         "a retry after a timeout could not tell the first send had landed",
+         "Anything sent to a customer should carry an id that makes a retry harmless"),
+        ("Accented names vanished from the list after the upgrade finished",
+         "the new code compared names byte for byte across normalisation forms",
+         "Names should be normalised the same way on write and on every later read"),
+        ("The report said twenty thousand users when nothing had been measured",
+         "a file count was presented as a session count without checking",
+         "Any number a decision depends on should come from measuring the thing it names"),
+        ("Saving appeared to work while nothing was actually written anywhere",
+         "the write error was logged once and the indicator stayed green",
+         "A failed save should be visible where the save was asked for, never only in a log"),
+        ("The oldest message in the inbox was never shown to anyone at all",
+         "paging always sorted newest first and the tail fell off the page",
+         "Any list that pages should be checked for items that can never be reached"),
+        ("Everything slowed down only when the office came online at nine",
+         "every client retried at the same second after any failure",
+         "Retries should always spread out with jitter so clients never stampede together"),
+        ("A file that should never change was quietly rewritten by the installer",
+         "the install step wrote everywhere instead of only where asked",
+         "Installers should write nothing outside the places the user was told about"),
+        ("The totals never matched the spreadsheet by exactly one cent",
+         "money travelled as floats and rounded differently in two places",
+         "Money should be integer minor units from end to end, always, no exceptions"),
+        ("Nobody could open the attachment because its name had spaces in it",
+         "the download path was built by joining text with no escaping anywhere",
+         "Anything that turns a name into a path should be tested with spaces and accents"),
+        ("The night run silently did nothing because the clock had moved",
+         "a fixed local time never occurred on the spring-forward night",
+         "Scheduled work should say what happens when its local time never occurs"),
+        ("Search results showed records the signed-in person should never see",
+         "the filter ran after results were already assembled for display",
+         "Visibility should be decided before anything user-shaped is assembled for output"),
+        ("The copy on the laptop and the copy at work disagreed about everything",
+         "sync copied files both ways with nothing recording which won",
+         "Sync should record, for every conflict, which side won and why it won"),
+        ("It always picked the first answer even when the first was clearly stale",
+         "ranking never considered how old a result was at selection time",
+         "Anything cached should carry its age and prefer a fresh answer over a stale one"),
+        ("Nothing was logged when the payment provider answered with an error",
+         "the error path returned early without touching the log at all",
+         "Every early return on an error path should leave exactly one log line behind"),
+        ("The whole import stopped on one row that nobody could identify later",
+         "rows were counted from one in the file and from zero in the message",
+         "Errors about a row should name it the way the person holding the file counts it"),
+        ("Settings changed on one machine never appeared on the other machine",
+         "settings were read once at startup and never watched afterwards",
+         "Anything read at startup that users can edit should say when a restart is needed"),
+        ("The preview and the printed page never agreed about the typeface",
+         "the preview used a font the printer substituted without telling anyone",
+         "Anything printable should be checked in the form it is finally printed in"),
+        ("Undo brought back a version nobody recognised from any point in time",
+         "undo restored whole files while other work had landed in between",
+         "Undo should reverse one change exactly and refuse when later work touches it"),
+        ("The helper kept asking questions that the request had already answered",
+         "it never read the answers already recorded earlier in the session",
+         "Before asking anything, an agent should check what was already settled and say so"),
+        ("Everything passed locally and the first real user hit a crash at once",
+         "tests only ever used the small tidy examples written by hand",
+         "Anything parsing outside files should be tested on generated hostile examples"),
+    ]
+
+    def test_valid_lessons_in_varied_wording_are_all_accepted(self):
+        self.assertGreaterEqual(len(self.VALID), 30)
+        for moment, cause, change in self.VALID:
+            f = dict(GOOD, moment=moment, cause=cause, change=change)
+            self.assertEqual(retro.validate(f), [], moment)
+        # and through the real command, Sydney included (no digit, no path, no ALLCAPS in the moment)
+        m, c, ch = self.VALID[0]
+        r = self.retro({"moment": m, "cause": c, "change": ch})
+        self.assertEqual(r.returncode, 0, r.stdout)
+
+    EMPTY = [
+        {"moment": "nothing"}, {"moment": "None."}, {"cause": "n/a"}, {"cause": "nothing"},
+        {"change": "be more careful"}, {"change": "test more"}, {"change": "none"},
+        {"moment": "ok"}, {"cause": "all good"}, {"change": "short"}, {"moment": "it went well"},
+        {"cause": "fine"}, {"change": "no"},
+    ]
+
+    def test_empty_answers_are_refused_with_the_check_named(self):
+        self.assertGreaterEqual(len(self.EMPTY), 12)
+        for over in self.EMPTY:
+            with self.subTest(over):
+                errs = retro.validate(dict(GOOD, **over))
+                self.assertTrue(errs)
+                self.assertTrue(any("(check:" in e for e in errs), errs)
+        r = self.retro({"change": "be more careful"})
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn('change is an empty answer: "be more careful"', r.stdout)
 
     def test_missing_message_names_the_field(self):
         r = self.sisi("retro", "--aim", "speed")
         self.assertEqual(r.returncode, 2)
-        for w in ("moment", "cause", "change-kind", "change"):
+        for w in ("moment", "cause", "change-kind", "change", "--when"):
             self.assertIn(w, r.stdout)
+        self.assertIn("at least 5 terms", r.stdout)
+
+    def test_when_is_required_with_five_terms_for_new_lessons(self):
+        no_when = dict(GOOD); no_when.pop("when")
+        r = self.sisi("retro", *argv(no_when))
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn("--when needs at least 5 terms", r.stdout)
+        self.assertIn("delimited file", r.stdout)  # the worked example in the refusal
+        few = self.retro({"when": "parser, fuzzing"})
+        self.assertEqual(few.returncode, 2, few.stdout)
+        self.assertIn("--when has 2 term(s)", few.stdout)
+        self.assertEqual(self.lessons(), [])
+        self.assertEqual(self.retro().returncode, 0)  # five-plus terms: accepted and stored
+        self.assertIn("fuzzing", self.lessons()[0]["when_terms"])
+        same = self.sisi("retro", "--same-as", "1", "--moment", "again `cargo test` ran for 5 minutes with no fuzz verifier chosen")
+        self.assertEqual(same.returncode, 0, same.stdout)  # --same-as needs no --when
 
     def test_json_on_stdin(self):
         r = self.sisi("retro", "--json", "-", stdin=json.dumps({k.replace("_", "-"): v for k, v in GOOD.items()}))
@@ -91,8 +230,8 @@ class RefusalTests(RetroCase):
         self.assertEqual(self.sisi("retro", "--json", "-", stdin=json.dumps({"aim": "speed"})).returncode, 2)
 
     def test_property_refused_answers_are_never_stored(self):
-        generic = ["nothing", "n/a", "none", "it went well", "be more careful", "short", "", "   ", "test more next time",
-                   "nothing could have been better", "I will try harder"]
+        # Only structural failures belong here now: exact empty answers, too-short text, bad enums.
+        generic = ["nothing", "n/a", "none", "it went well", "be more careful", "test more", "short", "", "   ", "ok"]
         for seed in [0, 1, random.randrange(2 ** 32)] + [random.randrange(2 ** 32) for _ in range(ITERS - 1)]:
             rng = random.Random(seed)
             for _ in range(8 * ITERS):
@@ -129,6 +268,7 @@ class SimilarityAndSameAsTests(RetroCase):
         other = dict(aim="speed", change_kind="tool", target="",
                      moment="the screenshot comparison in `web-ui` waited 90 seconds on a dev server that never started",
                      cause="no readiness probe before the browser step",
+                     when="browser, screenshot, dev server, port waiting, ui checks, startup",
                      change="Make sisi verify wait for the declared port instead of sleeping a fixed time")
         other.pop("target")
         self.assertEqual(self.sisi("retro", *argv(other)).returncode, 0)
@@ -191,15 +331,18 @@ class AutoApplyAndLessonsTests(RetroCase):
         return self.sisi("retro", "--same-as", str(lid), "--moment", "again `cargo test` ran 5 min, no fuzz verifier chosen (%s)" % sid, env=env)
 
     def test_second_occurrence_from_second_session_applies_to_notes(self):
-        self.assertEqual(self.occ("s1").returncode, 0)
-        self.assertFalse(os.path.exists(os.path.join(self.notes, "parser-or-codec.md")))
-        r = self.occ("s1", 1)  # same session again: not enough
-        self.assertNotIn("applied", r.stdout)
-        self.assertEqual(self.lessons()[0]["status"], "open")
-        r = self.occ("s2", 1)
+        # The learning loop changed this: the field note is written on the FIRST occurrence,
+        # and later occurrences never duplicate the bullet.
+        r = self.occ("s1")
+        self.assertEqual(r.returncode, 0)
         self.assertIn("applied", r.stdout)
+        self.assertTrue(os.path.exists(os.path.join(self.notes, "parser-or-codec.md")))
+        self.assertEqual(self.lessons()[0]["status"], "applied")
+        r = self.occ("s2", 1)
+        self.assertEqual(r.returncode, 0, r.stdout)
         text = open(os.path.join(self.notes, "parser-or-codec.md")).read()
         self.assertIn("Add the fuzz verifier", text)
+        self.assertEqual(text.count("Add the fuzz verifier"), 1)
         self.assertEqual(self.lessons()[0]["status"], "applied")
         # the entry itself is untouched, and show/done print the notes under a heading
         self.assertNotIn("Field notes", open(os.path.join(self.ddir, "parser-or-codec.md")).read())
@@ -264,9 +407,10 @@ class AutoApplyAndLessonsTests(RetroCase):
     def test_status_shows_lessons(self):
         self.retro()
         out = self.sisi("status").stdout
-        self.assertIn("lessons            : 1 total, 1 open, 0 applied; 1 occurrences in the last 7 days", out)
-        self.assertIn("open #1", out)
+        self.assertIn("lessons            : 1 total, 0 open, 1 applied; 1 occurrences in the last 7 days", out)
+        self.assertIn("active #1", out)
         self.assertIn("retros", out)
+        self.assertIn("learning            : 1 lessons taking effect", out)
 
 
 class TickBlockTests(RetroCase):

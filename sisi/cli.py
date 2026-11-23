@@ -10,9 +10,10 @@ HELP = """sisi: shared rulebook and enforced definitions of done for every AI co
   sisi verify [--json]               run the fast checks; exit 0 ok, 1 failure, 2 no contract, 3 untrusted
   sisi verify --deep [--background]  run the deep (long) checks; --background detaches and returns at once
   sisi verify --all | --state        run both tiers; print only the deep-check state (with --json)
-  sisi gate                          end-of-turn hook (reads hook JSON on stdin)
-  sisi tick                          session-start hook
-  sisi install | uninstall | doctor  wire sisi into the tools (by reference), undo, inspect
+  sisi gate [--tool NAME]            end-of-turn hook (reads hook JSON on stdin; NAME selects the tool's hook shape)
+  sisi tick [--tool NAME]            session-start hook
+  sisi install [--dry-run] | uninstall | doctor
+                                     wire sisi into the tools (by reference), undo, inspect; --dry-run only prints what would change
   sisi release [--deep]              run the source's checks, then make the stable copy the tools run (see docs/developing.md)
   sisi rollback                      switch the stable copy back to the previous release
   sisi dev on [PATH] | off | status  developer mode: where the source folder is
@@ -25,14 +26,20 @@ HELP = """sisi: shared rulebook and enforced definitions of done for every AI co
   sisi overlay list|diff|add-rule|replace-rule|disable-rule|enable-rule|add-verifier|...|revert COMMIT
                                      learned changes to rules, verifiers and recipes; each one a commit in your personal repo
   sisi audit                         inventory of standing instructions per tool
-  sisi retro --aim A --moment M --cause C --change-kind K --change X [--target ID] [--same-as ID | --new]
+  sisi retro --aim A --moment M --cause C --change-kind K --change X --when "csv, tsv, spreadsheet, tabular data, import, parse, delimited file" [--target ID] [--same-as ID | --new]
              (or --json - with the same keys on stdin)
-                                     end of every piece of work: HOW it could have gone better
+                                     end of every piece of work: HOW it could have gone better; --when (at least
+                                     5 terms, synonyms included) is how a later agent with different words finds it
              aims: level (the human could have worked at a higher level), verified (a stronger check was
              possible), hands-off (the human was interrupted more than needed), intent (the result was not
              what they meant), speed (it took longer than it had to)
   sisi lessons [filters] | show ID | set ID --status S | apply ID | export [FILE] | import FILE
                                      the shared lessons from retros (--aim --kind --status --repo --top --json)
+  sisi backlog                       tool lessons: changes to sisi itself, most seen first
+  sisi cycle [due|apply FILE|revert [ID]|status]
+                                     consolidate lessons into rules, entries and enforced checks (no
+                                     scheduler: due-ness is a counter checked during normal use)
+  sisi improve                       is it getting better? lessons, recurrence, send-backs, time, rulebook size
   sisi note TEXT                     (older; prefer retro) record something that went wrong
   sisi propose TEXT                  (older; prefer retro) suggest a rule change
   sisi learn TEXT                    record a human-stated preference (quarantined until verified)
@@ -84,6 +91,13 @@ def cmd_contract(args):
         print("created %s as a SKELETON, not a contract yet: replace the placeholder check with a real command "
               "(rung 1-4) and add every check that shows the work is done. Until then `sisi verify` fails and "
               "the end-of-turn gate ignores it." % p)
+        try:
+            from . import retro
+            block = retro.delivery_block(goal or "", "contract-init", extra="contract checks verified")
+            if block:
+                print(block)
+        except Exception:
+            pass
         return 0
     if sub == "check":
         p = C.find(os.getcwd())
@@ -182,7 +196,7 @@ def _status_retro():
     print("retros             : %s of sessions with real work recorded one (%d of %d)"
           % ("%.0f%%" % (100 * st["sessions_with_retro"] / w) if w else "n/a", st["sessions_with_retro"], w))
     for t in st["top"]:
-        print("  open #%-4d x%-3d %s" % (t["id"], t["count"], " ".join(t["change"].split())[:90]))
+        print("  active #%-4d x%-3d %s" % (t["id"], t["count"], " ".join(t["change"].split())[:90]))
 
 
 def _status_contracts(res):
@@ -248,6 +262,11 @@ def cmd_status():
     except Exception:
         pass
     _status_retro()
+    try:
+        from . import cycle
+        print(cycle.improve_line())
+    except Exception:
+        pass
     _status_contracts(res)
     from . import verifiers
     vs = [e for e in verifiers.load_verifiers() if e["header"]]
@@ -262,13 +281,21 @@ def cmd_status():
     return 0
 
 
-def cmd_wiring(name):
+def cmd_wiring(name, args=()):
     from . import wiring
+    if name == "install" and "--dry-run" in args:
+        rc, notes = wiring.install_dry_run()
+        for n in notes:
+            print(n)
+        return rc
     if name == "doctor":
         rows = wiring.doctor()
         w = max(len(r["tool"]) for r in rows)
         for r in rows:
-            print("%-*s  %-9s  blocking hook: %-8s  %s" % (w, r["tool"], r["status"], r["blocking_hook"][:60], r["detail"]))
+            line = "%-*s  %-9s  blocking hook: %-8s  %s" % (w, r["tool"], r["status"], r["blocking_hook"][:60], r["detail"])
+            if r.get("action"):
+                line += " | you need to: " + r["action"]
+            print(line)
         return 0
     rc, notes = getattr(wiring, name)()
     for n in notes:
@@ -324,9 +351,17 @@ def main(argv):
         os.environ["SISI_TOOL"] = t
     cmd = args.pop(0) if args else "help"
     if cmd == "gate":
+        if t and t != "claude-code":
+            from . import hookio
+            if hookio.known(t):
+                return hookio.gate_main(t, args)
         from . import gate
         return gate.main(args)
     if cmd == "tick":
+        if t and t != "claude-code":
+            from . import hookio
+            if hookio.known(t):
+                return hookio.tick_main(t, args)
         from . import tick
         return tick.main(args)
     if cmd in ("version", "--version", "-V"):
@@ -347,7 +382,7 @@ def main(argv):
         from . import verify
         return verify.cmd_verify(args)
     if cmd in ("install", "uninstall", "doctor"):
-        return cmd_wiring(cmd)
+        return cmd_wiring(cmd, args)
     if cmd in ("migrate", "update", "export", "import", "build-canon", "canon", "overlay"):
         return cmd_personal(cmd, args)
     if cmd in ("release", "rollback", "dev", "promote"):
@@ -369,6 +404,15 @@ def main(argv):
     if cmd == "lessons":
         from . import retro
         return retro.cmd_lessons(args)
+    if cmd == "backlog":
+        from . import retro
+        return retro.cmd_backlog(args)
+    if cmd == "cycle":
+        from . import cycle
+        return cycle.cmd_cycle(args)
+    if cmd == "improve":
+        from . import cycle
+        return cycle.cmd_improve(args)
     if cmd == "oracle":
         return cmd_oracle()
     if cmd == "status":

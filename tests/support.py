@@ -44,10 +44,13 @@ class SisiCase(unittest.TestCase):
         self.proj = os.path.join(self.tmp, "proj")
         for d in (self.home, self.proj):
             os.makedirs(d)
-        saved = {k: os.environ.get(k) for k in ("SISI_HOME", "SISI_STATE", "SISI_DATA", "SISI_TOOL", "SISI_SESSION_ID", "SISI_RETRO_REQUIRED", "SISI_NOTES")}
+        tool_env = ("CODEX_HOME", "COPILOT_HOME", "PI_CODING_AGENT_DIR", "OPENCODE_CONFIG_DIR",
+                    "GROK_HOME", "XDG_CONFIG_HOME")
+        saved = {k: os.environ.get(k) for k in ("SISI_HOME", "SISI_STATE", "SISI_DATA", "SISI_TOOL", "SISI_SESSION_ID", "SISI_RETRO_REQUIRED", "SISI_NOTES") + tool_env}
         os.environ.update(SISI_HOME=self.home, SISI_STATE=self.state, SISI_DATA=self.data,
                           SISI_RETRO_REQUIRED="0")  # retro tests turn it on
-        os.environ.pop("SISI_NOTES", None)
+        for k in ("SISI_NOTES",) + tool_env:  # tool config-dir overrides must not leak the real ones in
+            os.environ.pop(k, None)
         _CURRENT.append(self.tmp)
         self.addCleanup(_CURRENT.pop)
         for k in ("SISI_TOOL", "SISI_SESSION_ID"):

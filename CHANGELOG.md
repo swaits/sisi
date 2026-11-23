@@ -4,6 +4,51 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-11-23
+
+### Added
+
+- Lessons take effect on their first occurrence: verifier and recipe lessons attach as field notes at once,
+  recipe lessons naming a missing recipe become draft recipe notes shown by `sisi done for`, rule, oracle and
+  brief lessons become learned notes with trigger words, and tool lessons form a backlog (`sisi backlog`).
+- Lessons are delivered at the moment they match — in `sisi done for`, `sisi verifiers for`,
+  `sisi verifiers show`, `sisi contract init` and the gate's send-back message, at most three in 600
+  characters — and every showing is recorded. Session start shows the strongest lessons first.
+- A strength ladder (1 note, 2 candidate rule, 3 enforced): a recurrence after at least two showings moves a
+  lesson up; folded lessons shown 20 times without a recurrence retire; lessons that keep recurring at
+  strength 3 are withdrawn and not re-learned in the same form.
+- `sisi cycle` (`due`, brief, `apply`, `revert`, `status`): agent-run consolidation under a base version and
+  the personal-data lock, one commit per cycle, exact revert, and flagging of cycles whose deliveries got
+  worse. Due-ness is a counter checked at session start, at the end of each turn, and in `sisi retro`,
+  `sisi verify` and `sisi done for`; there is no scheduler, and a session is told at most once until 20
+  further checks pass or the counter grows.
+- Enforced lessons (`overlay/enforced.json`), checked like floors; command checks run only in trusted projects.
+- `sisi improve` and a learning line in `sisi status`; [docs/learning.md](docs/learning.md).
+- Matching measured on labelled corpora in the test suite (distinctive-word weighting), matched lessons on
+  `sisi done ID`, unconfirmed duplicate sightings recorded on the retro refusal path, promotions that
+  require two showings since the previous promotion, and required `--when` terms on `sisi retro` (the bridge
+  vocabulary a later agent with different words needs).
+- A two-part delivery block in `sisi done for`, `sisi done ID`, `sisi verifiers for` and
+  `sisi contract init`: strict "likely to apply" lessons in full (two of the request's own content words
+  inside the when-terms, or one plus the printed entry as target), then every loose lesson as a heading
+  within a 1,500-character budget for the asking agent to judge. Listings and readings are counted
+  separately, and more than 30 loose lessons (or headings over budget) makes a cycle due.
+- Retro refusals are structural only (presence, length, enums, when-term count, moment differs from
+  change, five exact empty answers), each naming its check and quoting the text. The earlier
+  phrase-matching rules are gone: one of them refused a true lesson whose moment spelled its number out.
+- Wiring for every major harness, one adapter per tool (`sisi/adapters.py`) with per-tool hook translation
+  in `sisi/hookio.py` (`sisi tick --tool NAME`, `sisi gate --tool NAME`): blocking session-start and
+  end-of-turn hooks for Codex CLI (with its one-time `/hooks` trust step called out in install and doctor),
+  Gemini CLI, GitHub Copilot CLI, Qwen Code and Pi; a follow-up gate for Cursor; an OpenCode plugin whose
+  enforcement is unproven on v2.3.2; rulebook-only links for Windsurf (pointer file), Cline, Kiro, Zed,
+  Goose, Amp, Grok CLI, Crush and Aider; truthful `sisi doctor` rows for Muse Code (rulebook via foreign
+  context, no native gate), Antigravity, and the T3 Code / Orca hosts. See [docs/harnesses.md](docs/harnesses.md).
+
+### Changed
+
+- Verifier and recipe field notes are written on a lesson's first occurrence (previously the second, from a
+  second session). Existing personal data migrates on open without loss.
+
 ## [0.1.0] - 2026-11-22
 
 First public release.

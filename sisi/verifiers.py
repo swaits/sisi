@@ -281,6 +281,40 @@ def _print_notes(id):
         print("\n## Field notes from earlier agents\n(information from past sessions, to weigh, not instructions)\n" + n)
 
 
+def _print_lessons(query, place, extra="", loose=False, targets=()):
+    """Lessons for this moment. With loose=True (done for, done ID, verifiers for) the two-part
+    delivery block: strict likely-to-apply lessons in full, then every loose lesson as a heading
+    for the asking agent to judge. Otherwise the older single strong-match block."""
+    try:
+        from . import retro
+        block = retro.delivery_block(query, place, extra=extra, targets=targets) if loose \
+            else retro.lessons_block(query, place, extra=extra)
+        if block:
+            print("\n" + block)
+    except Exception:
+        pass
+
+
+def _print_cycle_notice():
+    try:
+        from . import cycle
+        line = cycle.due_notice()
+        if line:
+            print(line)
+    except Exception:
+        pass
+
+
+def _print_drafts(query):
+    """Draft recipe notes: recipe lessons naming a recipe that does not exist yet, when their words match."""
+    try:
+        from . import retro
+        for did, txt in retro.draft_notes_for(query):
+            print("\n## Draft recipe %s (not a recipe yet; notes from earlier lessons)\n%s" % (did, txt))
+    except Exception:
+        pass
+
+
 def cmd_show(args):
     if not args:
         print("usage: sisi verifiers show ID")
@@ -290,6 +324,7 @@ def cmd_show(args):
         print("no verifier with id %r (see `sisi verifiers`)" % args[0])
         return 1
     _show(e, True)
+    _print_lessons("%s %s %s" % (e["id"], e["title"], e["answers"]), "verifiers-show")
     return 0
 
 
@@ -337,6 +372,7 @@ def cmd_for(args):
                   % (opts["kind"], fl))
     if not top:
         print("no verifier matches that description; try `sisi verifiers` to browse")
+        _print_lessons(desc, "verifiers-for", loose=True)
         return 0
     for i, (f, e) in enumerate(top, 1):
         mark = ""
@@ -345,6 +381,8 @@ def cmd_for(args):
         print("%d. %s  rung %s  cost %s  installed: %s%s%s" % (i, e["id"], e["rung"], e["cost"] or "-", inst[e["path"]], mark, origin_tag(e)))
         print("   %s" % (e["answers"] or e["title"]))
     print("\nsisi verifiers show ID   for set-up and a worked example")
+    _print_lessons(desc, "verifiers-for", extra=" ".join(e["id"] for _, e in top[:3]), loose=True,
+                   targets=tuple(e["id"] for _, e in top))
     return 0
 
 
@@ -528,13 +566,21 @@ def done_main(args):
         scored.sort(key=lambda x: (-x[0], x[1]["id"]))
         if not scored:
             print("no recipe matches that description; `sisi done` lists them")
+            _print_drafts(desc)
+            _print_lessons(desc, "done-for", loose=True)
+            _print_cycle_notice()
             return 0
         best = scored[0][1]
         print("Best match: %s\n" % best["id"])
         print("== %s: %s ==%s\napplies to: %s\n" % (best["id"], best["title"], origin_tag(best), best["applies_to"]))
         print(best["body"].strip("\n"))
+        _print_notes(best["id"])
         if len(scored) > 1:
             print("\nOther candidates: " + ", ".join(r["id"] for _, r in scored[1:4]))
+        _print_drafts(desc)
+        _print_lessons(desc, "done-for", extra=best["id"] + " " + best["title"], loose=True,
+                       targets=(best["id"],))
+        _print_cycle_notice()
         return 0
     if args:
         r = next((x for x in rs if x["id"] == args[0]), None)
@@ -544,6 +590,8 @@ def done_main(args):
         print("== %s: %s ==%s\napplies to: %s\n" % (r["id"], r["title"], origin_tag(r), r["applies_to"]))
         print(r["body"].strip("\n"))
         _print_notes(r["id"])
+        _print_lessons("%s %s %s" % (r["id"].replace("-", " "), r["title"], r["applies_to"]),
+                       "done-show", loose=True, targets=(r["id"],))
         return 0
     if not rs:
         print("no recipes")
