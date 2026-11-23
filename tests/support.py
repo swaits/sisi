@@ -56,6 +56,12 @@ class SisiCase(unittest.TestCase):
         for k in ("SISI_TOOL", "SISI_SESSION_ID"):
             os.environ.pop(k, None)
 
+        # no test may talk to the terminal it is run from: `sisi approve` finds none unless the test says so
+        from unittest import mock as _mock
+        _no_tty = _mock.patch("sisi.cycle._open_terminal", return_value=None)
+        _no_tty.start()
+        self.addCleanup(_no_tty.stop)
+
         def restore():
             for k, v in saved.items():
                 if v is None:
@@ -143,3 +149,42 @@ def skip_timing_if_busy(case):
         return
     if load > cpus:
         case.skipTest("machine overloaded (load %.0f on %d processors): speed not measured" % (load, cpus))
+
+
+class FakeTerminal:
+    """What `sisi approve` reads its decision from. Writes are kept; the line it answers with is the
+    word the prompt asked for (or `typed`, to type something else, or None to type nothing)."""
+
+    def __init__(self, typed="the word"):
+        self.out, self.typed = [], typed
+
+    def write(self, text):
+        self.out.append(text)
+
+    def flush(self):
+        pass
+
+    def readline(self):
+        if self.typed is None:
+            return ""
+        if self.typed != "the word":
+            return self.typed + "\n"
+        import re
+        m = re.search(r"Type the word (\w+)", "".join(self.out))
+        return (m.group(1) if m else "") + "\n"
+
+    def close(self):
+        pass
+
+    @property
+    def text(self):
+        return "".join(self.out)
+
+
+def terminal(typed="the word"):
+    """Patch: the process has a controlling terminal, and the owner types `typed` at it."""
+    from unittest import mock
+    t = FakeTerminal(typed)
+    p = mock.patch("sisi.cycle._open_terminal", return_value=t)
+    p.fake = t
+    return p

@@ -718,11 +718,81 @@ def revert_cycle(cid=None):
 
 # ---- approval -------------------------------------------------------------------------
 
-def _stdin_is_tty():
+TYPED_WAIT_S = 300  # how long a decision waits for the owner to type the word
+
+
+class _Terminal:
+    """The controlling terminal device, opened for reading and for writing (one text file object
+    cannot do both on a terminal)."""
+
+    def __init__(self):
+        self._r = open("/dev/tty", "r", encoding="utf-8")
+        try:
+            self._w = open("/dev/tty", "w", encoding="utf-8")
+        except OSError:
+            self._r.close()
+            raise
+
+    def write(self, text):
+        self._w.write(text)
+
+    def flush(self):
+        self._w.flush()
+
+    def fileno(self):
+        return self._r.fileno()
+
+    def readline(self):
+        return self._r.readline()
+
+    def close(self):
+        for f in (self._r, self._w):
+            try:
+                f.close()
+            except OSError:
+                pass
+
+
+def _open_terminal():
+    """The controlling terminal, or None when the process has none. Never standard input: a pipe,
+    a file or a script's stdin can carry words; a terminal device is what a person sits at."""
     try:
-        return bool(sys.stdin is not None and sys.stdin.isatty())
-    except (ValueError, OSError):
+        return _Terminal()
+    except OSError:
+        return None
+
+
+def _decision_word():
+    import secrets
+    c, v = "bdfgklmnprstvz", "aeiou"
+    return "".join(secrets.choice(c) + secrets.choice(v) for _ in range(3))
+
+
+def _typed_word(tty, word):
+    """True when the owner typed `word` at the terminal (read from the device, with a time limit)."""
+    import select
+    try:
+        tty.write("Type the word %s to decide, anything else cancels: " % word)
+        tty.flush()
+        try:
+            fd = tty.fileno()
+        except (AttributeError, OSError, ValueError):
+            fd = None
+        if fd is not None and not select.select([fd], [], [], TYPED_WAIT_S)[0]:
+            return False
+        return tty.readline().strip() == word
+    except (OSError, ValueError):
         return False
+
+
+def refuse_attempt(pid, why, how="approve", session=None):
+    """Every refused attempt to decide a change is recorded, with the session id it came from."""
+    try:
+        L.record_approval({"id": pid or "", "decision": "refused", "ts": L.now(), "how": how, "why": why,
+                           "session": session or os.environ.get("SISI_SESSION_ID") or None})
+    except Exception as e:  # recording must not turn a refusal into a crash
+        from . import store
+        store.log_error("approve-refused-record", e)
 
 
 def relay_allowed():
@@ -856,27 +926,46 @@ def cmd_approve(argv):
         for i in items:
             print("\n".join(describe_pending(i)))
             print()
-        print("The owner decides, in a terminal: sisi approve ID --yes | --no")
+        print("The owner decides, in a terminal: sisi approve ID --yes | --no (and types the word it shows)")
         return 0
     pid, yes = argv[0], "--yes" in argv
     if not yes and "--no" not in argv:
         print("usage: sisi approve [ID --yes | --no]", file=sys.stderr)
         return 2
-    tty = _stdin_is_tty()
+    item = next((i for i in items if i.get("id") == pid), None)
+    tty = _open_terminal()
     relayed = False
-    if not tty:
+    if tty is None:
         if not relay_allowed():
-            item = next((i for i in items if i.get("id") == pid), None)
             if item:
                 print("\n".join(describe_pending(item)), file=sys.stderr)
-            print("sisi approve: refused. A decision must be made by the owner in a terminal: this was run "
-                  "without one (an agent, a script, a pipe). Show the owner what it does (the listing above) "
-                  "and give the owner the command to type. To allow an agent to relay a decision, set "
+            refuse_attempt(pid, "no controlling terminal")
+            print("sisi approve: refused. A decision is the owner's, typed at a terminal: this process has no "
+                  "controlling terminal (an agent, a script, a pipe). Show the owner what it does (the listing "
+                  "above) and give the owner the command to type. To allow an agent to relay a decision, set "
                   "learning.agent_relayed_approval in the user config (off by default).", file=sys.stderr)
             return 2
         relayed = True
+    else:
+        try:
+            if item is None:
+                print("sisi approve: no pending change %r (`sisi approve` lists them)" % pid, file=sys.stderr)
+                return 2
+            word = _decision_word()
+            tty.write("\n".join(describe_pending(item)) + "\n\nYou are about to %s %s.\n"
+                      % ("APPROVE" if yes else "REFUSE", pid))
+            if not _typed_word(tty, word):
+                refuse_attempt(pid, "the word was not typed at the terminal")
+                print("sisi approve: refused. The word was not typed at the terminal, so nothing was decided.",
+                      file=sys.stderr)
+                return 2
+        finally:
+            try:
+                tty.close()
+            except OSError:
+                pass
     try:
-        print(apply_pending(pid, yes, {"terminal": tty, "relayed": relayed}))
+        print(apply_pending(pid, yes, {"terminal": tty is not None, "relayed": relayed}))
         return 0
     except (CycleError, overlay.OverlayError, documents.DocumentError) as e:
         print("sisi approve: %s" % e, file=sys.stderr)

@@ -7,7 +7,7 @@ one unit, approves from a non-terminal, adds a row to the store by hand).
 """
 import json, os, stat, subprocess, sys, unittest.mock
 
-from support import SisiCase
+from support import SisiCase, terminal
 from sisi import learning as L
 
 
@@ -83,7 +83,7 @@ class Base(SisiCase):
         return self.sisi("cycle", "apply", self.cycle_file(actions, **kw))
 
     def tty(self):
-        return unittest.mock.patch("sisi.cycle._stdin_is_tty", return_value=True)
+        return terminal()
 
     def other_project(self, name="other"):
         d = os.path.join(self.tmp, name)
@@ -789,7 +789,7 @@ class Approval(Base):
             self.assertIn("terminal", r.stderr)
         self.assertEqual(len(self.pending()), 1)
         self.assertFalse(self.exists("overlay/enforced.json"))
-        self.assertEqual(L.load_approvals(), [])
+        self.assertEqual([a["decision"] for a in L.load_approvals()], ["refused", "refused"])  # attempts are recorded
 
     def test_a_terminal_decision_is_recorded_with_when_session_and_terminal(self):
         """The record keeps when, the session if known, and that standard input was a terminal."""
