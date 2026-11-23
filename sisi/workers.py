@@ -345,8 +345,60 @@ def discover(force=False, now=None):
     if not force and cached.get("tools") and now - float(cached.get("checked") or 0) < age:
         return cached
     data = {"checked": now, "tools": [_discover_tool(d) for d in DRIVERS]}
+    if cached.get("tools"):  # models the previous discovery did not have wait for the next session start to be named
+        here = _model_names(data)
+        kept = [w for w in cached.get("new_unannounced") or [] if w in here]
+        data["new_unannounced"] = kept + sorted(w for w in here - _model_names(cached) if w not in kept)
     write_json(discovery_path(), data)
     return data
+
+
+def _model_names(disc):
+    return {_canonical(t["name"], m) for t in disc.get("tools") or [] for m in t.get("models") or []
+            if "contributor" not in str(m).lower()}  # a tier that trains on its prompts is never offered
+
+
+def new_worker_line():
+    """One line naming up to three models discovery found that the previous discovery did not have, once; they
+    are unproven, so low-stakes work first and a closer look at what they return, until their record is no longer
+    thin. None when there is nothing new (or it was said already)."""
+    disc = load_discovery()
+    records = read_records()
+    judged = {}
+    for r in records:
+        if r.get("kind") == "attempt":
+            judged[str(r.get("worker") or "").lower()] = judged.get(str(r.get("worker") or "").lower(), 0) + 1
+    new = [w for w in disc.get("new_unannounced") or []
+           if "contributor" not in w.lower() and judged.get(w.lower(), 0) < routing.MIN_ATTEMPTS]
+    if not disc.get("new_unannounced"):
+        return None
+    disc["new_unannounced"] = []
+    write_json(discovery_path(), disc)
+    if not new:
+        return None
+    more = " (and %d more)" % (len(new) - 3) if len(new) > 3 else ""
+    return ("sisi: new worker model(s) found since the last discovery: %s%s. They are unproven (no judged record): give them "
+            "low-stakes work first and check what they return one level more carefully, until their record is no longer "
+            "thin (%d judged attempts)." % (", ".join(new[:3]), more, routing.MIN_ATTEMPTS))
+
+
+def override_line(records=None):
+    """How often the router's pick was overridden and how the overrides turned out against the recommendations
+    that were followed; None when nothing was routed. Under five judged on either side it says too few."""
+    records = read_records() if records is None else records
+    routed = [r for r in merged_runs(records) if r.get("chosen_against_route") is not None]
+    if not routed:
+        return None
+    attempts = [r for r in records if r.get("kind") == "attempt" and r.get("chosen_against_route") is not None]
+
+    def rate(rows):
+        n = len(rows)
+        return "too few to say (%d judged, need 5)" % n if n < 5 else "%d%% accepted (%d judged)" % (
+            round(100.0 * sum(1 for r in rows if r.get("outcome") == "accepted") / n), n)
+    over = [r for r in attempts if r["chosen_against_route"]]
+    followed = [r for r in attempts if not r["chosen_against_route"]]
+    return ("Router overridden in %d of %d routed delegations. Overrides: %s. Recommendations followed: %s."
+            % (sum(1 for r in routed if r["chosen_against_route"]), len(routed), rate(over), rate(followed)))
 
 
 def mark_discovery_stale():
@@ -1537,6 +1589,9 @@ def cmd_workers(args=()):
         print(line)
     for ln in digest_lines(records):
         print(ln)
+    line = override_line(records)
+    if line:
+        print(line)
     return 0
 
 

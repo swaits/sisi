@@ -135,12 +135,21 @@ def _orchestrate():
                           "an unavailable worker (a limit, quota, login or connection failure arriving as a delegation result or as "
                           "a later notice) is recorded down with the reset time parsed from the message, the router's next worker "
                           "is handed over for the same brief, and a question-dialog call right after it is refused once"
-                          if meter and _has("fallback", "handle", "fallback_text") else None],
+                          if meter and _has("fallback", "handle", "fallback_text") else None,
+                          "a delegation with no `sisi route` decision in the last minutes (`orchestrate.route_window_min`) is refused once; "
+                          "the run keeps the kind and difficulty guess, and a worker other than the router's pick is recorded as an override"
+                          if meter and _has("orchestration", "record_route") else None,
+                          "`sisi route --retry-of ID` keeps the worker with a better brief after a first rejection and moves to a stronger "
+                          "one after a second"
+                          if _has("workers", "retry_context", "stronger_choice") else None],
                 measured=["the delegation ledger and `sisi delegate judge`, `sisi route` recommends the worker from that record"
                           if _has("routing", "choose") and _has("workers", "cmd_delegate") else None,
                           "the unit record and `sisi status` show direct calls and characters, refusals, extensions with their reasons, "
                           "delegations started, judged and unjudged, and the share of tool calls delegated"
-                          if _has("orchestration", "telemetry") else None],
+                          if _has("orchestration", "telemetry") else None,
+                          "`sisi workers` shows how often the router was overridden and how the overrides turned out; a model discovery "
+                          "has not seen before is named once at session start as unproven"
+                          if _has("workers", "override_line", "new_worker_line") else None],
                 judgement=["who gets the task, how much to check what comes back, the quality of a brief"])
 
 

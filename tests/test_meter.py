@@ -666,3 +666,206 @@ class FallbackTests(MeterBase):
                              ("tool not found: opencode", "missing"), ("Subscription quota exhausted", "limit")):
             self.assertEqual(workers.classify_failure(text)[0], reason, text)
         self.assertIsNone(workers.classify_failure("assertion error in parser.py"))
+
+
+class RouteDecisionTests(MeterBase):
+    """Item 10a/10b (R-7.2-2, R-7.2-3, R-7.5-2, R-13.2-1, R-15-4): the router is consulted before a delegation and the
+    guess is recorded; a retry after a rejection is stronger, not the same."""
+
+    def deleg(self, model="alpha-small", use_id="d1"):
+        return self.pre("Agent", {"description": "d", "prompt": "Outcome: x\nAcceptance: y\nFiles you may change: none",
+                                  "model": model}, tool_use_id=use_id)
+
+    def finish(self, use_id, model="alpha-small"):
+        self.post("Agent", {"description": "d", "prompt": "p", "model": model}, response={"status": "completed"}, tool_use_id=use_id)
+        return [r for r in workers.merged_runs()][-1]
+
+    def judge(self, run, outcome, *extra):
+        r = self.sisi("delegate", "judge", run["id"], "--outcome", outcome, "--check", "read", *extra)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r.stdout.splitlines()
+
+    def test_a_delegation_with_no_routing_decision_is_refused_once_and_allowed_after_route(self):
+        self.prompt(route=False)
+        denied, reason, _ = self.deleg()
+        self.assertTrue(denied)
+        self.assertIn("sisi route --kind K --difficulty N", reason)
+        self.assertIn("research", reason)                              # the kinds, in one line
+        self.assertEqual(len(reason.splitlines()), 1)
+        self.assertEqual(workers.merged_runs(), [])                     # nothing was started or recorded
+        self.assertFalse(self.deleg(use_id="d2")[0])                    # once: the next one goes through unrecorded as routed
+        self.assertIsNone(workers.merged_runs()[0]["type"])
+
+    def test_after_sisi_route_the_delegation_is_allowed_and_its_run_carries_the_guess(self):
+        self.prompt(route=False)
+        self.route("implementation", "2")
+        denied, ctx, _ = self.deleg()
+        self.assertFalse(denied)
+        self.assertIn("(implementation, difficulty 2)", ctx)
+        self.assertNotIn("--type", ctx)                                # judge needs only the outcome and the check
+        run = self.finish("d1")
+        self.assertEqual((run["type"], run["difficulty"], run["route_worker"], run["chosen_against_route"]),
+                         ("implementation", 2, "alpha-small", False))
+        self.judge(run, "accepted")
+        att = [r for r in workers.read_records() if r.get("kind") == "attempt" and r.get("run_id") == run["id"]][0]
+        self.assertEqual((att["type"], att["difficulty"]), ("implementation", 2))
+
+    def test_a_stale_decision_is_no_decision(self):
+        self.prompt(route=False)
+        self.route()
+        with orchestration.Meter(self.sid) as m:
+            m["route"]["ts"] -= 16 * 60                                  # older than the 15-minute window
+        self.assertTrue(self.deleg()[0])
+
+    def test_the_window_is_configurable(self):
+        with open(os.path.join(self.data, "config.json"), "w") as f:
+            json.dump({"orchestrate": {"route_window_min": 60}}, f)
+        self.prompt(route=False)
+        self.route()
+        with orchestration.Meter(self.sid) as m:
+            m["route"]["ts"] -= 30 * 60
+        self.assertFalse(self.deleg()[0])
+
+    def test_naming_another_worker_than_the_router_is_allowed_recorded_and_counted(self):
+        self.prompt(route=False)
+        self.route()
+        self.assertFalse(self.deleg("beta-large", "o1")[0])              # the router named alpha-small
+        over = self.finish("o1", "beta-large")
+        self.assertEqual((over["chosen_against_route"], over["route_worker"], over["worker"]), (True, "alpha-small", "beta-large"))
+        self.assertFalse(self.deleg("alpha-small", "f1")[0])
+        followed = self.finish("f1")
+        self.assertFalse(followed["chosen_against_route"])
+        self.judge(over, "accepted")
+        self.judge(followed, "rejected")
+        out = self.sisi("workers").stdout
+        line = next(l for l in out.splitlines() if l.startswith("Router overridden"))
+        self.assertIn("overridden in 1 of 2 routed delegations", line)
+        self.assertIn("too few to say (1 judged, need 5)", line)
+
+    def test_the_override_line_gives_rates_with_five_or_more_judged_on_each_side(self):
+        for i in range(5):
+            for flag, outcome in ((True, "accepted" if i < 3 else "rejected"), (False, "accepted")):
+                workers.append_record({"kind": "run", "id": "r%s%d" % (flag, i), "ts": 1, "worker": "w", "chosen_against_route": flag,
+                                       "status": "waiting"})
+                workers.append_record({"kind": "attempt", "id": "a%s%d" % (flag, i), "run_id": "r%s%d" % (flag, i), "ts": 1,
+                                       "worker": "w", "outcome": outcome, "chosen_against_route": flag})
+        line = workers.override_line()
+        self.assertIn("Overrides: 60% accepted (5 judged)", line)
+        self.assertIn("followed: 100% accepted (5 judged)", line)
+
+    def test_retry_of_keeps_the_worker_with_the_brief_instruction_then_goes_stronger(self):
+        self.prompt(route=False)
+        self.route()
+        self.deleg("alpha-small", "t1")
+        first = self.finish("t1")
+        hint = self.judge(first, "rejected")
+        att1 = hint[0]
+        self.assertIn("sisi route --retry-of %s" % att1, hint[1])        # the judge prints that command
+        r = self.sisi("route", "--retry-of", att1, env={"SISI_SESSION_ID": self.sid})
+        lines = r.stdout.splitlines()
+        self.assertEqual(lines[0], "alpha-small")                       # the first retry: the same worker
+        self.assertIn("mechanism:", lines[1])
+        self.assertIn("improve the brief", r.stdout.lower())
+        self.assertIn("sisi delegate check", r.stdout)
+        self.assertFalse(self.deleg("alpha-small", "t2")[0])             # the routing decision carries the retry link
+        second = self.finish("t2")
+        self.assertEqual(second["retry_of"], att1)
+        att2 = self.judge(second, "rejected")[0]
+        r = self.sisi("route", "--retry-of", att2, env={"SISI_SESSION_ID": self.sid})
+        self.assertEqual(r.stdout.splitlines()[0], "beta-large")        # the second rejection: excluded, the next one up
+        self.assertIn("alpha-small was rejected twice", r.stdout)
+
+    def test_retry_of_uses_the_benchmark_standing_when_the_record_is_thin(self):
+        with open(os.path.join(self.data, "model-strength.json"), "w") as f:
+            json.dump({"models": {"alpha-small": {"score": 50, "source": "s", "date": "2026-01-01"},
+                                  "beta-large": {"score": 70, "source": "s", "date": "2026-01-01"},
+                                  "gamma-mid": {"score": 90, "source": "s", "date": "2026-01-01"}}}, f)
+        workers.append_record({"kind": "attempt", "id": "gm", "run_id": None, "ts": 1, "project": "p", "type": "research",
+                               "difficulty": 1, "worker": "gamma-mid", "outcome": "accepted", "check": "read"})
+        for i, w in enumerate(("alpha-small", "alpha-small")):
+            workers.append_record({"kind": "attempt", "id": "rj%d" % i, "run_id": None, "ts": 2 + i, "project": "p", "type": "research",
+                                   "difficulty": 1, "worker": w, "outcome": "rejected", "check": "read",
+                                   "retry_of": "rj0" if i else None})
+        r = self.sisi("route", "--retry-of", "rj1", env={"SISI_SESSION_ID": self.sid})
+        self.assertEqual(r.stdout.splitlines()[0], "gamma-mid")
+        self.assertIn("stronger", r.stdout)
+
+    def test_retry_of_an_unknown_or_unjudged_run_is_an_error(self):
+        r = self.sisi("route", "--retry-of", "nope")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("judge the run first", r.stderr)
+
+    def test_an_accepted_result_is_not_a_retry(self):
+        workers.append_record({"kind": "attempt", "id": "ok1", "run_id": None, "ts": 1, "type": "research", "difficulty": 1,
+                               "worker": "alpha-small", "outcome": "accepted", "check": "read"})
+        r = self.sisi("route", "--retry-of", "ok1")
+        self.assertEqual(r.returncode, 0)
+        self.assertNotIn("improve the brief", r.stdout)
+
+    def test_a_superseded_run_is_not_asked_for_by_the_gate(self):
+        """Item 10c: a run replaced by a fallback is never listed for judgement."""
+        self.prompt(route=False)
+        self.route()
+        self.deleg("alpha-small", "s1")
+        run = workers.merged_runs()[0]
+        workers.append_record({"kind": "run-end", "run_id": run["id"], "ts": 5, "ended": 5, "status": "superseded"})
+        self.assertEqual(workers.unjudged_runs(), [])
+        r = self.sisi("gate", "--tool", "claude-code", stdin=json.dumps(
+            {"session_id": self.sid, "cwd": self.proj, "hook_event_name": "Stop"}))
+        self.assertEqual(r.stdout.strip(), "")
+        self.assertNotIn(run["id"], self.sisi("workers").stdout)
+
+
+class NewWorkerTests(MeterBase):
+    """Item 10d (R-7.2-3, R-13.2-1): a model discovery has not seen before is named once, as unproven."""
+
+    def fake_tool(self, models):
+        def fake(driver):
+            if driver["name"] == "opencode":
+                return {"name": "opencode", "installed": True, "usable": True, "models": list(models), "learned_by_use": False}
+            return {"name": driver["name"], "installed": False, "models": [], "usable": False, "learned_by_use": False}
+        return fake
+
+    def tick_out(self, sid):
+        d = {"session_id": sid, "cwd": self.proj, "hook_event_name": "SessionStart", "source": "startup"}
+        return self.sisi("tick", "--tool", "claude-code", stdin=json.dumps(d)).stdout
+
+    def test_a_newly_discovered_model_produces_the_session_start_line_exactly_once(self):
+        with open(os.path.join(self.data, "workers.json"), "w") as f:
+            json.dump({"checked": 1, "tools": [{"name": "opencode", "installed": True, "usable": True, "models": ["old/m1"]}]}, f)
+        with mock.patch.object(workers, "_discover_tool", self.fake_tool(["old/m1", "new/m2", "new/m3", "tier-contributor/m4"])):
+            workers.discover(force=True)
+        first = self.tick_out("n1")
+        line = next(l for l in first.splitlines() if "new worker model" in l)
+        self.assertIn("new/m2", line)
+        self.assertIn("new/m3", line)
+        self.assertNotIn("old/m1", line)
+        self.assertNotIn("contributor", line)                           # a tier that trains on prompts is never offered
+        self.assertIn("unproven", line)
+        self.assertIn("low-stakes", line)
+        self.assertIn("one level more carefully", line)
+        self.assertNotIn("new worker model", self.tick_out("n2"))        # said once
+
+    def test_up_to_three_are_named(self):
+        with open(os.path.join(self.data, "workers.json"), "w") as f:
+            json.dump({"checked": 1, "tools": [{"name": "opencode", "installed": True, "usable": True, "models": ["old/m1"]}]}, f)
+        with mock.patch.object(workers, "_discover_tool", self.fake_tool(["old/m1"] + ["new/m%d" % i for i in range(2, 7)])):
+            workers.discover(force=True)
+        line = next(l for l in self.tick_out("n3").splitlines() if "new worker model" in l)
+        self.assertIn("(and 2 more)", line)
+
+    def test_the_first_discovery_and_an_unchanged_one_say_nothing(self):
+        os.unlink(os.path.join(self.data, "workers.json"))
+        with mock.patch.object(workers, "_discover_tool", self.fake_tool(["a/m1"])):
+            workers.discover(force=True)
+            workers.discover(force=True)
+        self.assertNotIn("new worker model", self.tick_out("n4"))
+
+    def test_a_worker_session_is_not_told(self):
+        with open(os.path.join(self.data, "workers.json"), "w") as f:
+            json.dump({"checked": 1, "tools": [{"name": "opencode", "installed": True, "usable": True, "models": ["old/m1"]}]}, f)
+        with mock.patch.object(workers, "_discover_tool", self.fake_tool(["old/m1", "new/m2"])):
+            workers.discover(force=True)
+        d = {"session_id": "w1", "cwd": self.proj, "hook_event_name": "SessionStart", "source": "startup", "agent_id": "a1"}
+        self.assertNotIn("new worker model", self.sisi("tick", "--tool", "claude-code", stdin=json.dumps(d)).stdout)
+        self.assertIn("new worker model", self.tick_out("n5"))
