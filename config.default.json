@@ -1,0 +1,16 @@
+{
+  "gate": {
+    "enabled": true,
+    "budget_s": 120,
+    "max_blocks": 3,
+    "growth_lines": 40,
+    "growth_files": 3
+  },
+  "verify": {
+    "default_timeout_s": 60,
+    "fast_limit_s": 60
+  },
+  "retro": {
+    "required": true
+  }
+}

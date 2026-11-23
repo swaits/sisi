@@ -1,0 +1,44 @@
+{
+  "id": "sisi-phase1",
+  "goal": "sisi phase 1 works: CLI, store, contracts, gate, wiring, audit",
+  "checks": [
+    {
+      "id": "unit-tests",
+      "claim": "the whole test suite passes (wiring and gate property tests included)",
+      "kind": "general",
+      "rung": 3,
+      "cmd": "python3 tests/run_parallel.py",
+      "expect": {
+        "exit": 0
+      },
+      "timeout_s": 60
+    },
+    {
+      "id": "library-lint",
+      "claim": "every verifier and recipe lints clean, and recipes cite only existing verifier ids",
+      "kind": "general",
+      "rung": 3,
+      "cmd": "bin/sisi verifiers lint",
+      "expect": {
+        "exit": 0
+      },
+      "timeout_s": 20
+    }
+  ],
+  "invariants": [
+    {
+      "id": "launcher-help",
+      "claim": "the launcher still prints help",
+      "cmd": "bin/sisi help",
+      "expect": {
+        "exit": 0,
+        "stdout_contains": "sisi verify"
+      },
+      "timeout_s": 20
+    }
+  ],
+  "assumptions": [
+    "Tests never touch the real home: SISI_HOME and SISI_STATE point to temp dirs."
+  ],
+  "questions": []
+}

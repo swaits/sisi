@@ -1,0 +1,23 @@
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# sisi run-time state in a project: only the contract is tracked
+.sisi/*
+!.sisi/contract.json
+
+# scratch for delegated work
+.agent-work/
+
+# editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
