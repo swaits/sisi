@@ -269,14 +269,14 @@ def assess(stats, worker, kind, difficulty, standing=None, best_standing=None, f
         tier, at, cell = proof
         out.update(tier=tier, capable=True, level=3, at=at, n=cell["n"], good=cell["good"], measure=_rate(cell))
         return out
-    if standing is not None and not out["contradicted"]:
+    if standing is not None:
         pct = _floor_pct(floors, d)
         needed = (best_standing or 0.0) * pct / 100.0
-        share = 100.0 * standing / best_standing if best_standing else None
         capable = standing >= needed - 1e-9
-        out.update(tier="standing", capable=capable, level=2 if capable else (1 if out["weak"] else 0),
-                   floor=pct, needed=needed, share=share, best=best_standing)
-        return out
+        out.update(floor=pct, needed=needed, best=best_standing, below=not capable)
+        if not out["contradicted"]:
+            out.update(tier="standing", capable=capable, level=2 if capable else (1 if out["weak"] else 0))
+            return out
     if standing is None and d == 1 and not out["contradicted"]:
         out.update(tier="unknown", capable=True, level=0)
         return out
@@ -499,17 +499,17 @@ def _why_not(a, difficulty, basis, cheaper):
     about its capability. The reason text is the same for every worker it applies to, so reasons group."""
     lead = "cheaper than the choice but " if cheaper else ""
     if a["bad"]:
-        where = "" if a.get("at") == difficulty else " (at an easier difficulty, which a harder one cannot beat)"
+        where = "" if a.get("at") == difficulty else " (at an easier difficulty, which counts against a harder one)"
         return ("%saccepted rate below the bar over %d attempts%s" % ("cheaper but " if cheaper else "", a["n"], where),
                 "%d of %d accepted" % (a["good"], a["n"]))
     if basis == "capable":
-        if a["contradicted"]:
-            return (lead + "not capable enough: its own thin record for this kind repeats rejections, which "
-                    "cancels its benchmark standing", None)
-        if a["tier"] == "standing":
+        if a.get("below"):
             return (lead + "not capable enough for difficulty %d: benchmark standing under the %g needed "
                     "(%g%% of the best usable standing, %g)" % (difficulty, a["needed"], a["floor"], a["best"]),
                     "standing %g" % a["standing"])
+        if a["contradicted"]:
+            return (lead + "not capable enough: its own thin record for this kind repeats rejections, which "
+                    "cancels its benchmark standing", None)
         if a["weak"]:
             return (lead + "not capable enough for difficulty %d: its only judged proof is at an easier "
                     "difficulty, and a worker with better evidence is usable" % difficulty, None)
@@ -573,6 +573,11 @@ def _pct(x):
     return "%d%%" % round(100.0 * x)
 
 
+def _short(text, width=60):
+    text = str(text or "no source stated")
+    return text if len(text) <= width else text[:width - 3].rstrip() + "..."
+
+
 def evidence_line(a, kind, difficulty, choice, basis):
     """One line saying which evidence decided that the chosen worker is capable, with the numbers."""
     if a is None:
@@ -591,7 +596,7 @@ def evidence_line(a, kind, difficulty, choice, basis):
         return ("evidence (b), judged record across all kinds at difficulty %d: %d of %d accepted (%s)"
                 % (a["at"], a["good"], a["n"], _pct(a["measure"])))
     if tier == "standing":
-        src = choice.get("standing_source") or "no source stated"
+        src = _short(choice.get("standing_source"))
         if a["capable"]:
             if a["floor"]:
                 need = "above the %g needed (%g%% of the best usable standing, %g)" % (a["needed"], a["floor"], a["best"])

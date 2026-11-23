@@ -2,7 +2,7 @@
 about each worker: judged record (exact, a harder difficulty, all kinds), then benchmark standing against other
 workers' standing only, then nothing known (difficulty 1 only). Requirement ids: R-7.2-1, R-7.2-2, R-7.2-3,
 R-7.3-3. Property tests are seeded and scale with SISI_TEST_ITERS."""
-import random, unittest
+import json, os, random, unittest
 from support import *
 from sisi import routing
 
@@ -276,6 +276,130 @@ class CapabilityPropertyTests(unittest.TestCase):
             a = chosen(cands, recs, d)
             b = chosen(list(reversed(cands)), recs, d)
             self.assertEqual(a, b)
+
+
+def explain(cands, records, difficulty, **kw):
+    r = pick(cands, records, difficulty, **kw)
+    return r, routing.explain_choice(r, KIND, difficulty)
+
+
+def line_with(lines, start):
+    got = [l for l in lines if l.startswith(start)]
+    return got
+
+
+class ExplainTests(unittest.TestCase):
+    """R-7.2-1, R-7.2-2: --explain says which evidence decided, why cheaper workers were not capable enough, and when
+    the choice is an exploration or a fallback; one line each, 20 lines at most."""
+
+    def test_the_evidence_for_each_tier_is_one_line_with_its_numbers(self):
+        cases = []
+        cands = [cand("w-1", cost=1.0)]
+        _r, lines = explain(cands, attempts("t/w-1", KIND, 3, 9, 1), 3)
+        cases.append((lines, ["evidence (a)", "9 of 10 accepted", "difficulty 3", "90%"]))
+        _r, lines = explain(cands, attempts("t/w-1", KIND, 3, 10, 0), 2)
+        cases.append((lines, ["evidence (b)", "harder difficulty", "10 of 10", "difficulty 3", "proves difficulty 2"]))
+        _r, lines = explain(cands, attempts("t/w-1", "other", 2, 8, 2), 2)
+        cases.append((lines, ["evidence (b)", "all kinds", "8 of 10", "difficulty 2"]))
+        _r, lines = explain([cand("w-1", cost=1.0, standing=64.0), cand("w-2", cost=5.0, standing=66.0)], [], 3)
+        cases.append((lines, ["evidence (c)", "benchmark standing", "64", "fixture benchmark", "2000-01-01", "85%", "66"]))
+        _r, lines = explain(cands, [], 1)
+        cases.append((lines, ["evidence (d)", "nothing is known", "exploration"]))
+        _r, lines = explain(cands, attempts("t/w-1", KIND, 1, 10, 0), 3)
+        cases.append((lines, ["evidence (b, weak)", "10 of 10", "easier difficulty 1"]))
+        for lines, words in cases:
+            ev = line_with(lines, "evidence")
+            self.assertEqual(len(ev), 1, lines)
+            for w in words:
+                self.assertIn(w, ev[0], lines)
+
+    def test_standing_and_accepted_rate_are_named_apart(self):
+        _r, a = explain([cand("w-1", cost=1.0)], attempts("t/w-1", KIND, 3, 9, 1), 3)
+        _r, c = explain([cand("w-1", cost=1.0, standing=64.0)], [], 3)
+        self.assertNotIn("standing", line_with(a, "evidence")[0])
+        self.assertNotIn("accepted", line_with(c, "evidence")[0])
+
+    def test_cheaper_workers_that_were_not_capable_are_one_grouped_line_with_a_count(self):
+        cands = [cand("c%d-1" % i, cost=0.1 + i / 100, standing=10.0 + i) for i in range(5)]
+        cands += [cand("good-1", cost=4.0, standing=64.0), cand("best-1", cost=8.0, standing=66.0)]
+        r, lines = explain(cands, [], 3)
+        self.assertEqual(r["choice"]["worker"], "t/good-1")
+        grp = [l for l in lines if "not capable enough" in l]
+        self.assertEqual(len(grp), 1, lines)
+        self.assertIn("passed over 5 worker(s)", grp[0])
+        self.assertIn("cheaper than the choice", grp[0])
+        self.assertIn("56.1", grp[0])             # the standing needed: 85 percent of 66 = 56.1
+        self.assertIn("and 2 more", grp[0])      # three example names at most
+        self.assertLessEqual(len(lines) + routing.EXPLAIN_TAIL_LINES, routing.MAX_EXPLAIN_LINES)
+
+    def test_a_fallback_says_plainly_that_nothing_is_proven(self):
+        cands = [cand("a-1", cost=1.0, standing=99.0), cand("b-1", cost=3.0, standing=70.0)]
+        r, lines = explain(cands, attempts("t/a-1", KIND, 3, 2, 8), 3)
+        self.assertEqual(r["basis"], "strongest")
+        head = lines[0]
+        self.assertIn("none is proven capable", head)
+        self.assertIn("strongest known", head)
+        self.assertEqual(len(line_with(lines, "evidence")), 1)
+        _r, cold = explain([cand("a-1"), cand("b-1")], [], 3)
+        self.assertIn("none is proven capable", cold[0])
+        self.assertIn("nothing is recorded", cold[0] + cold[1])
+
+    def test_an_exploration_is_called_one(self):
+        cands = [cand("a-1", cost=5.0, standing=90.0), cand("b-1", cost=5.0, standing=10.0)]
+        recs = attempts("t/a-1", "read", 1, 9, 0)
+        r = routing.choose(cands, recs, {}, "read", 1, now=1000.0)
+        self.assertEqual(r["choice"]["worker"], "t/b-1")
+        lines = routing.explain_choice(r, "read", 1)
+        self.assertTrue(line_with(lines, "this is an exploration pick"), lines)
+
+    def test_the_explanation_stays_within_twenty_lines_with_many_workers(self):
+        rng = random.Random(3)
+        for _ in range(80 * ITERS):
+            cands = [cand("w%d-%d" % (i, rng.randint(0, 5)), cost=rng.choice([None, 0.1, 2.0]),
+                          standing=rng.choice([None, rng.uniform(5, 100)])) for i in range(rng.randint(1, 60))]
+            cands = list({c["worker"]: c for c in cands}.values())
+            d = rng.choice([1, 2, 3])
+            _r, lines = explain(cands, [], d)
+            self.assertLessEqual(len(lines) + routing.EXPLAIN_TAIL_LINES, routing.MAX_EXPLAIN_LINES, lines)
+
+
+class ExplainCliTests(SisiCase):
+    def seed_world(self):
+        os.makedirs(self.data, exist_ok=True)
+        rows = []
+        for w, d, good, bad in (("wk-mid", 2, 9, 1), ("wk-weak", 2, 0, 2)):
+            for i in range(good + bad):
+                rows.append({"kind": "attempt", "id": "%s-%d" % (w, i), "ts": 1760000000 + i, "project": "p", "type": "research",
+                             "difficulty": d, "worker": w, "outcome": "accepted" if i < good else "rejected",
+                             "check": "tests", "minutes": 1})
+        open(os.path.join(self.data, "delegations.jsonl"), "w").write("".join(json.dumps(r) + "\n" for r in rows))
+        json.dump({"models": {"wk-weak": {"standing": 40, "source": "fixture board", "date": "2000-01-01"},
+                              "wk-mid": {"standing": 64, "source": "fixture board", "date": "2000-01-01"},
+                              "wk-top": {"standing": 66, "source": "fixture board", "date": "2000-01-01"}}},
+                  open(os.path.join(self.data, "model-strength.json"), "w"))
+        json.dump({"models": {"wk-weak": {"cost_per_million_tokens": 0.2, "source": "fixture", "date": "2000-01-01"},
+                              "wk-mid": {"cost_per_million_tokens": 4, "source": "fixture", "date": "2000-01-01"},
+                              "wk-top": {"cost_per_million_tokens": 8, "source": "fixture", "date": "2000-01-01"}}},
+                  open(os.path.join(self.data, "worker-prices.json"), "w"))
+
+    def test_a_hard_task_is_not_given_to_the_cheapest_weak_worker(self):
+        """The reported fault: with prices and standings recorded, a hard research task went to the cheapest, weakest
+        worker. Now it goes to the cheapest worker near the top, and `--explain` says why."""
+        self.seed_world()
+        env = dict(PATH="")
+        plain = self.sisi("route", "--kind", "research", "--difficulty", "3", env=env)
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        self.assertEqual(plain.stdout.splitlines()[0], "wk-mid")
+        self.assertLessEqual(len(plain.stdout.splitlines()), 6)
+        self.assertNotIn("evidence", plain.stdout)
+        ex = self.sisi("route", "--kind", "research", "--difficulty", "3", "--explain", env=env)
+        lines = ex.stdout.splitlines()
+        self.assertLessEqual(len(lines), 20, ex.stdout)
+        self.assertEqual(len([l for l in lines if l.startswith("evidence")]), 1, ex.stdout)
+        self.assertIn("evidence (c)", ex.stdout)
+        self.assertTrue([l for l in lines if l.startswith("passed over 1 worker(s) (wk-weak") and "not capable enough" in l], ex.stdout)
+        easy = self.sisi("route", "--kind", "research", "--difficulty", "1", env=env)
+        self.assertEqual(easy.stdout.splitlines()[0], "wk-weak")
 
 
 if __name__ == "__main__":
