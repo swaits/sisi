@@ -5,7 +5,7 @@ Missing data is unavailable with value None: never zero, never good. No single s
 ever computed or printed. Check statistics and escape candidates (work declared verified
 that then turned out wrong) live here too: they feed the correctness and intent dimensions.
 """
-import json, os, re
+import json, os, re, time
 
 from . import harvest, store
 
@@ -186,6 +186,7 @@ def build_scorecard(c, results, telemetry, delivery_status):
             "techniques": val(sorted({"rung %s" % x.get("rung") for x in items.values()} |
                                      {str(x.get("kind")) for x in items.values() if x.get("kind")}), "measured"),
             "checks_seen_failing": val(sum(1 for r in latest.values() if r.get("seen_failing")), "measured"),
+            "stronger_than_examples": val(any(x.get("rung") in (1, 2) for x in items.values()), "measured"),
             "independent_evidence": val(any(norm_status((latest.get(cid) or {}).get("status")) == "passed"
                                             for cid, x in items.items() if x.get("independent")), "measured"),
             "deviation": val(delivery_status == "deviation", "measured"),
@@ -345,8 +346,74 @@ def format_dimension(dim, vals):
                            ("; %d unavailable" % n_un) if n_un else "")
 
 
-def format_status(units, learning=False, recent=5):
+def _age(iso, now=None):
+    """'3h', '2d', '15m' since an ISO UTC time; '?' when it cannot be read."""
+    from . import harvest
+    t = harvest.epoch(iso) if isinstance(iso, str) else None
+    if t is None:
+        return "?"
+    s = max(0, (time.time() if now is None else now) - t)
+    return "%dd" % (s // 86400) if s >= 86400 else "%dh" % (s // 3600) if s >= 3600 else "%dm" % (s // 60)
+
+
+def open_units(cwd=None):
+    """The unit that is open or paused in this project, as display rows. A unit that waits (paused)
+    says what for and for how long; one that was declared below its floor says so, with the reason."""
+    from . import contract as C, unit as U, assure
+    out = []
+    try:
+        p = C.find(cwd or os.getcwd())
+        c = C.load(p) if p else None
+    except (OSError, ValueError):
+        return out
+    if not isinstance(c, dict) or not c.get("id") or c.get("status") == "closed" or C.is_unedited_skeleton(c):
+        return out
+    project = C.project_dir(p)
+    row = {"id": c["id"], "status": c.get("status", "open"), "age": _age(c.get("started")), "goal": c.get("goal") or ""}
+    if row["status"] == "paused":
+        pz = next((x for x in reversed(c.get("pauses") or []) if isinstance(x, dict) and not x.get("until")), {})
+        row["waiting_for"], row["paused_for"] = pz.get("what"), _age(pz.get("since"))
+    rk = c.get("risk") or {}
+    floor, _ = U.risk_floor(c, project)
+    floor = floor.get("value") if isinstance(floor, dict) else floor
+    if assure.is_lowered(floor, rk.get("profile"), rk.get("why")):
+        row["lowered"] = "declared %s below the floor %s: %s" % (rk.get("profile"), floor, rk.get("why"))
+    if c.get("unverified"):
+        row["unverified"] = "; ".join(c["unverified"].get("why") or [])
+    out.append(row)
+    return out
+
+
+def _lowered_note(u):
+    rk = u.get("risk") or {}
+    if not rk.get("lowered"):
+        return ""
+    floor = rk.get("floor")
+    floor = floor.get("value") if isinstance(floor, dict) else floor
+    return "  [lowered: declared %s, floor %s%s]" % (rk.get("declared"), floor,
+                                                    (": " + str(rk["why"])) if rk.get("why") else "")
+
+
+def format_open(rows):
     lines = []
+    for r in rows:
+        if r["status"] == "paused":
+            lines.append("paused  %-24s age %s  waiting for: %s (for %s)" % (r["id"], r["age"], r.get("waiting_for") or "?", r.get("paused_for")))
+        else:
+            lines.append("open    %-24s age %s  %s" % (r["id"], r["age"], r["goal"][:80]))
+        if r.get("lowered"):
+            lines.append("          lowered: " + r["lowered"])
+        if r.get("unverified"):
+            lines.append("          released unverified by the gate: " + r["unverified"])
+    return lines
+
+
+def format_status(units, learning=False, recent=5, opened=()):
+    lines = []
+    if opened:
+        lines.append("units in progress:")
+        lines += ["  " + ln for ln in format_open(opened)]
+        lines.append("")
     if not units:
         lines.append("sisi status: no closed work units yet. Close one with `sisi unit close`; "
                      "its scorecard will appear here.")
@@ -354,8 +421,8 @@ def format_status(units, learning=False, recent=5):
         lines.append("recent units (newest first, %d closed in all):" % len(units))
         for u in list(reversed(units))[:recent]:
             lines.append("")
-            lines.append("%s  %s  [%s]  %s" % (u.get("id"), str(u.get("ended") or "")[:10],
-                                              u.get("delivery_status"), u.get("goal") or ""))
+            lines.append("%s  %s  [%s]  %s%s" % (u.get("id"), str(u.get("ended") or "")[:10],
+                                                u.get("delivery_status"), u.get("goal") or "", _lowered_note(u)))
             sc = u.get("scorecard") or {}
             for dim, vals in sc.items():
                 lines.append(format_dimension(dim, vals))
@@ -385,8 +452,9 @@ def format_status(units, learning=False, recent=5):
 
 def cmd_status(args=(), cwd=None, out=print):
     units = load_unit_summaries(cwd)
+    opened = open_units(cwd)
     if "--json" in args:
-        out(json.dumps({"units": units, "trends": trends(units)}, indent=2, default=str))
+        out(json.dumps({"open": opened, "units": units, "trends": trends(units)}, indent=2, default=str))
         return 0
-    out(format_status(units, learning="--learning" in args))
+    out(format_status(units, learning="--learning" in args, opened=opened))
     return 0

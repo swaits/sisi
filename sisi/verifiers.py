@@ -433,21 +433,12 @@ def cmd_for(args):
     ranked = [(s + (1.0 if inst[e["path"]] == "yes" else 0.0), e) for s, e in cands]
     ranked.sort(key=lambda x: (-round(x[0], 1), x[1]["rung"], x[1]["id"]))
     top = ranked[:8]
-    fl = None
-    if "kind" in opts:
-        fl = C.floors().get(opts["kind"].lower())
-        if fl:
-            print("Floor: %s claims need rung %d or stronger (canon/floors.json). Results marked [floor ok] satisfy it.\n"
-                  % (opts["kind"], fl))
     if not top:
         print("no verifier matches that description; try `sisi verifiers` to browse")
         _print_lessons(desc)
         return 0
     for i, (f, e) in enumerate(top, 1):
-        mark = ""
-        if fl:
-            mark = "  [floor ok]" if e["rung"] <= fl else "  [below floor]"
-        print("%d. %s  rung %s  cost %s  installed: %s%s%s" % (i, e["id"], e["rung"], e["cost"] or "-", inst[e["path"]], mark, origin_tag(e)))
+        print("%d. %s  rung %s  cost %s  installed: %s%s" % (i, e["id"], e["rung"], e["cost"] or "-", inst[e["path"]], origin_tag(e)))
         print("   %s" % (e["answers"] or e["title"]))
     print("\nsisi verifiers show ID   for set-up and a worked example")
     _print_lessons(desc, extra=" ".join(e["id"] for _, e in top[:3]), targets=tuple(e["id"] for _, e in top))

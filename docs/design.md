@@ -136,8 +136,10 @@ Claude Code supports a blocking stop hook. The equivalent in OpenCode, Codex and
 does not exist, verification is meant to run at the next session start and failures to be reported then (that
 fallback is a design intention, not built).
 
-**Floors.** Some kinds of claim have a minimum rung. Concurrency, parsing, money, state machines and data
-migration may not rest on example tests alone. The floors are in `canon/floors.json`.
+**What a risk profile requires.** The strength of the evidence follows the risk of the change, not the kind a
+check declares for itself: logic and above need every check to say what it covers, integration and above need
+invariants, a requirement list, a risk note and an approach, and data, critical and release need independent
+evidence. The table is `requirements` in `canon/risk.json`; the gate enforces it and nothing else.
 
 **Formal tooling is provisioned.** sisi keeps a verifier library: for each language and kind of claim, the
 tool, a working template and a worked example (Kani and Verus for Rust, TLA+ or Quint and Alloy for designs,
@@ -311,7 +313,7 @@ Built and covered by tests:
 - The end-of-turn gate (`sisi gate`) and session-start hook (`sisi tick`), wired into Claude Code with a
   blocking hook; wiring (`sisi install`, `uninstall`, `doctor`) also points Codex and OpenCode at the rulebook,
   where nothing blocks.
-- The rulebook (`canon/core.md`), the minimum-rung floors, the verifier library and the recipes.
+- The rulebook (`canon/core.md`), the risk table, the verifier library and the recipes.
 - Retrospectives and lessons (`sisi retro`, `sisi lessons`), `sisi learn` live at once, time to delivery
   (`sisi time`).
 - Choosing the approach as a checked step: the contract design section, `sisi design`, the gate's

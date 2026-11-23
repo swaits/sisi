@@ -1,4 +1,4 @@
-"""Contract file: location, skeleton, validation, floors."""
+"""Contract file: location, skeleton, validation."""
 import json, os, re
 
 from . import paths, gitutil
@@ -108,20 +108,30 @@ def deferred_checks(c):
     return out
 
 
-def floors():
-    try:
-        with open(paths.canon("floors.json"), encoding="utf-8") as f:
-            return {k: int(v) for k, v in json.load(f).items()}
-    except (OSError, ValueError):
-        return {}
-
-
 def _num(x):
     return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
 def _str(x):
     return isinstance(x, str) and x.strip() != ""
+
+
+_PLACEHOLDER_WORDS = {"todo", "tbd", "tba", "fixme", "xxx", "wip", "none", "nothing", "no", "n/a", "na", "nil",
+                      "null", "unknown", "placeholder", "later", "see above", "same", "as above", "not applicable",
+                      "no risk", "no rollback", "none needed", "not needed", "nothing needed", "-", "--", "...",
+                      "?", "yes", "ok", "fine", "tests", "all"}
+
+
+def is_placeholder(x):
+    """True for text that fills a field without saying anything: empty, `TODO`, `n/a`, `none`,
+    `tbd`, a bare punctuation mark, or anything that begins with TODO/TBD/FIXME. The gate asks for
+    a requirement list, a risk note, an approach and a reason; these words do not provide one."""
+    if not isinstance(x, str):
+        return True
+    t = " ".join(x.lower().split()).strip(" .,:;!-_*")
+    if len(re.findall(r"[a-z0-9]", t)) < 3 and t not in ("ui",):
+        return True
+    return t in _PLACEHOLDER_WORDS or bool(re.match(r"^(todo|tbd|fixme|placeholder|xxx)\b", t))
 
 
 TIERS = ("fast", "deep")
@@ -274,6 +284,8 @@ def _check_new_fields(ch, w, errs):
     for k in ("mandatory", "independent"):
         if k in ch and not isinstance(ch[k], bool):
             errs.append("%s: %s must be true or false" % (w, k))
+    if "by" in ch and not _str(ch["by"]):
+        errs.append(w + ": by must name who or what produced the independent evidence")
 
 
 def _validate_new_top(c, ids, errs):
@@ -473,16 +485,3 @@ def validate(c):
                 errs.append("questions[%d] needs q and default" % i)
     _validate_new_top(c, ids, errs)
     return errs
-
-
-def floor_failures(c, floor_map=None):
-    """Kinds with a floor where every check of that kind is weaker than the floor."""
-    fm = floors() if floor_map is None else floor_map
-    out = []
-    for kind, fl in sorted(fm.items()):
-        of_kind = [ch for ch in c.get("checks", []) if ch.get("kind") == kind]
-        if of_kind and not any(ch["rung"] <= fl for ch in of_kind):
-            out.append({"kind": kind, "floor": fl,
-                        "message": "floor: %s claims need a check at rung %d or stronger; best is rung %d"
-                                   % (kind, fl, min(ch["rung"] for ch in of_kind))})
-    return out

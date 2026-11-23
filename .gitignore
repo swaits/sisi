@@ -6,9 +6,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-# sisi run-time state in a project: only the contract is tracked
+# sisi run-time state in a project: only the contract and the project's risk table are tracked
 .sisi/*
 !.sisi/contract.json
+!.sisi/risk.json
 
 # scratch for delegated work
 .agent-work/

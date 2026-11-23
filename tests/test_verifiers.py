@@ -161,17 +161,6 @@ class ShowAndChooseTests(LibCase):
         out = self.sisi("verifiers", "for", "widget").stdout
         self.assertEqual(len([l for l in out.splitlines() if l[:1].isdigit()]), 8)
 
-    def test_for_kind_floor_marking(self):
-        self.seed()
-        out = self.sisi("verifiers", "for", "parsing round trip", "--kind", "parsing").stdout
-        self.assertIn("Floor: parsing claims need rung 2", out)
-        self.assertIn("[floor ok]", out)
-        self.put("prove/weakparse.md", vfile("weakparse", rung=4, kinds="parsing", answers="Does parsing look fine?"))
-        out = self.sisi("verifiers", "for", "parsing looks fine", "--kind", "parsing").stdout
-        self.assertIn("[below floor]", out)
-        out = self.sisi("verifiers", "for", "page looks", "--kind", "ui").stdout
-        self.assertNotIn("Floor:", out)
-
     def test_for_lang_and_kind_filters(self):
         self.seed()
         out = self.sisi("verifiers", "for", "random inputs parsing", "--lang", "rust").stdout

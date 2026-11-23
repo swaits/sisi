@@ -176,10 +176,6 @@ def cmd_contract(args):
         for e in errs:
             print("  - " + e)
         if not errs:
-            for f in C.floor_failures(c):
-                errs.append(f["message"])
-                print("  - " + f["message"])
-        if not errs:
             for w in C.warnings(c):
                 print("warning: " + w)
         print("contract invalid" if errs else "contract ok: %s" % p)

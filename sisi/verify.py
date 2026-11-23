@@ -285,11 +285,6 @@ def run(c, project, deadline=None, default_timeout=60, tiers=("fast",), changed=
                 dirty_cache = True
     if dirty_cache:
         _save_cache(cache)
-    for f in (C.floor_failures(c) if "fast" in tiers else []):
-        res.append({"item": "floor", "tier": "fast", "id": "floor:" + f["kind"], "kind": f["kind"], "rung": None,
-                    "claim": f["message"], "status": "failed", "reason": None, "duration_s": 0.0,
-                    "tail": f["message"], "mandatory": True, "independent": False, "covers": None,
-                    "seen_failing": True, "saved_s": 0.0})
     if "fast" in tiers:  # enforced lessons ride the same path as floors (personal overlay, trusted commands)
         try:
             from . import cycle

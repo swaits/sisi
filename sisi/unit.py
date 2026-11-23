@@ -137,14 +137,14 @@ def _row_epoch(r):
 
 
 def policy_version(project, c):
-    """Hash of the policies in force: the effective rulebook, the floors and risk tables,
+    """Hash of the policies in force: the effective rulebook, the risk tables,
     the enforced checks, and the gate/verify config."""
     h = hashlib.sha256()
     rulebook = paths.generated()
     if not os.path.exists(rulebook):
         rulebook = paths.canon("core.md")
     # named by role, never by path: the same policies hash the same in any clone or project
-    for role, p in (("rulebook", rulebook), ("floors", paths.canon("floors.json")),
+    for role, p in (("rulebook", rulebook),
                     ("risk table", paths.canon("risk.json")),
                     ("project risk table", os.path.join(project, ".sisi", "risk.json"))):
         try:
@@ -458,6 +458,8 @@ def decide_status(c, rows, abandon=None):
         return "abandoned", block, unrun
     if c.get("deviations"):
         return "deviation", block, unrun
+    if c.get("unverified"):  # the gate released the unit after its send-backs and nothing has verified it since
+        return "unverified", block, unrun
     if block:
         released = any(r.get("check") == "gate" and r.get("status") == "unverified" for r in rows)
         return ("unverified" if released else None), block, unrun
@@ -480,6 +482,8 @@ def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None, 
     unrun = never_run(latest)
     floor, floor_reasons = risk_floor(c, project)
     declared = c.get("risk") or {}
+    from . import assure
+    floor_name = floor.get("value") if isinstance(floor, dict) else floor
     rec = {
         "id": c["id"], "parent": c.get("parent"),
         "goal": c.get("goal"), "scope": c.get("scope") or {"in": [], "out": []},
@@ -488,7 +492,10 @@ def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None, 
         "checks": c.get("checks") or [], "invariants": c.get("invariants") or [],
         "risk": {"floor": floor, "floor_reasons": floor_reasons,
                  "declared": declared.get("profile"), "why": declared.get("why"),
+                 "lowered": assure.is_lowered(floor_name, declared.get("profile"), declared.get("why")),
                  "blast_radius": declared.get("blast_radius"), "rollback": declared.get("rollback")},
+        "stronger_technique": assure.stronger_technique(c),
+        "released_unverified": c.get("unverified"),
         "approach": c.get("approach"),
         "plan": c.get("plan") or [],
         "workers": delegation_rows,
@@ -521,7 +528,7 @@ def summary_line(rec):
     floor = (risk.get("floor") or {}).get("value") if isinstance(risk.get("floor"), dict) else risk.get("floor")
     return {"id": rec["id"], "parent": rec.get("parent"), "project": rec.get("project"),
             "goal": rec.get("goal"), "delivery_status": rec.get("delivery_status"),
-            "risk": {"declared": risk.get("declared"), "floor": floor},
+            "risk": {"declared": risk.get("declared"), "floor": floor, "lowered": bool(risk.get("lowered"))},
             "models": rec.get("models") or [], "policy_version": rec.get("policy_version"),
             "started": rec.get("started"), "ended": rec.get("ended"), "closed_at": rec.get("closed_at"),
             "scorecard": rec.get("scorecard")}
@@ -635,6 +642,25 @@ def resume(c, contract_path):
     c.pop("pause_fp", None)
     C.save(contract_path, c)
     return True
+
+
+def verified_for_tree(c, project, contract_path):
+    """True when the unit's fast checks have a run that passed on exactly the tree as it is now
+    (what the commit-time notice asks). A run that was skipped or reused counts only if nothing in
+    it blocks and something passed. False when no run is recorded for this tree."""
+    from . import verify as V
+    fp = V.tree_fp(project, contract_path)
+    if fp is None:
+        return True  # outside git there is no tree to compare: nothing to say
+    runs = {}
+    for r in _unit_results(c, project, c.get("started")):
+        if r.get("fp") == fp and r.get("tier", "fast") == "fast" and r.get("run") and r.get("item") in ("check", "invariant"):
+            runs.setdefault(r["run"], []).append(r)
+    for rows in runs.values():
+        if not V.blocking(rows) and any(r.get("status") == "passed" or str(r.get("reason") or "").startswith("reused: passed")
+                                        for r in rows):
+            return True
+    return False
 
 
 def summary_for_retro(project):

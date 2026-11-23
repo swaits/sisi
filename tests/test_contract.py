@@ -40,17 +40,6 @@ class ContractTests(SisiCase):
     def test_rung_5_6_valid_without_cmd(self):
         self.assertEqual(C.validate(contract([check("a", "true"), human("h", 5), human("i", 6)])), [])
 
-    def test_floors(self):
-        weak = contract([check("m", "true", rung=3, kind="money")])
-        self.assertEqual(len(C.floor_failures(weak)), 1)
-        self.assertEqual(C.floor_failures(contract([check("m", "true", rung=2, kind="money")])), [])
-        # one strong check among weak ones satisfies the floor
-        self.assertEqual(C.floor_failures(contract([check("m", "true", rung=3, kind="money"),
-                                                    check("n", "true", rung=1, kind="money")])), [])
-        self.assertEqual(C.floor_failures(contract([check("u", "true", rung=4, kind="ui")])), [])
-        for k in ("concurrency", "parsing", "money", "state-machine", "migration"):
-            self.assertEqual(C.floors()[k], 2)
-
     def test_find_stops_at_git_root(self):
         self.git_init()
         self.write_contract(contract([check("a", "true")]))

@@ -5,7 +5,7 @@ from . import paths
 
 FILES = {"results": "results.jsonl",
          "learn": "learn.jsonl", "quarantine": "learn.jsonl", "waivers": "waivers.jsonl",
-         "deliveries": "deliveries.jsonl", "units": "units.jsonl"}
+         "deliveries": "deliveries.jsonl", "units": "units.jsonl", "subagents": "subagents.jsonl"}
 
 
 def _migrate_learn():
@@ -154,7 +154,7 @@ def stamp(extra):
     return rec
 
 
-DEFAULTS = {"gate": {"enabled": True, "budget_s": 120, "max_blocks": 3, "growth_lines": 40, "growth_files": 3},
+DEFAULTS = {"gate": {"enabled": True, "budget_s": 120, "max_blocks": 3},
             "verify": {"default_timeout_s": 60, "fast_limit_s": 60},
             "retro": {"required": True},
             "scratch": {"session_max_age_days": 30, "prune_every": 20, "prune_max_delete": 1000,

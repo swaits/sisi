@@ -34,7 +34,12 @@ GENERIC_WORDS = set((
     "improving improvement quality thorough thoroughly review reviewing think thinking plan planning ahead "
     "going forward all any some general generally just really very much many bit little slightly again once "
     "ever also too so can could would will may might worse avoid mistakes mistake fine ok okay well everything "
-    "anything something stuff careless carelessness sloppy rushed hasty lazy diligent diligence").split())
+    "anything something stuff careless carelessness sloppy rushed hasty lazy diligent diligence "
+    # a non-finding says only that nothing stood out ("it went well", "no problems, as expected")
+    "went go goes gone smooth smoothly expected nicely perfect perfectly success successful successfully "
+    "finished complete completed happened happen hitch hitches without notable remarkable report reported "
+    "particular special specific cause causes reason reasons known unknown clear obvious say said "
+    "passed pass green").split())
 
 
 class LearningError(Exception):

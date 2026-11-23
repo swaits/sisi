@@ -169,6 +169,10 @@ class DeliveryRowTests(SisiCase):
 
     def test_send_backs_and_check_time_are_counted_for_the_request(self):
         self.write_contract(contract([check("bad", "sleep 0.3; exit 1")]))
+        with open(self.tp, "a") as f:  # the agent edited a source file this turn
+            f.write(json.dumps({"type": "assistant", "timestamp": "2026-01-01T00:00:00.000Z", "message": {
+                "role": "assistant", "content": [{"type": "tool_use", "name": "Edit",
+                                                  "input": {"file_path": os.path.join(self.proj, "app.py")}}]}}) + "\n")
         r = self.hook(transcript_path=self.tp)
         self.assertEqual(json.loads(r.stdout)["decision"], "block")
         self.assertEqual(self.rows(), [])  # a send-back is not a delivery

@@ -506,15 +506,15 @@
   {
     "id": "R-5.1-1",
     "status": "partial",
-    "how": "The rung ladder, canon/floors.json and contract invariants ask for stronger evidence than a passing test",
-    "evidence": "canon/floors.json",
+    "how": "The rung ladder, the risk table's requirements (canon/risk.json: covers, invariants, independent evidence) and contract invariants ask for stronger evidence than a passing test",
+    "evidence": "canon/risk.json",
     "gap": "A check still proves only that a command exited as expected; rung is agent-asserted and correctness kinds are not distinguished in any record."
   },
   {
     "id": "R-5.1-2",
     "status": "partial",
-    "how": "The rung ladder, canon/floors.json and contract invariants ask for stronger evidence than a passing test",
-    "evidence": "canon/floors.json",
+    "how": "The rung ladder, the risk table's requirements (canon/risk.json: covers, invariants, independent evidence) and contract invariants ask for stronger evidence than a passing test",
+    "evidence": "canon/risk.json",
     "gap": "A check still proves only that a command exited as expected; rung is agent-asserted and correctness kinds are not distinguished in any record."
   },
   {
@@ -527,15 +527,15 @@
   {
     "id": "R-5.1-4",
     "status": "partial",
-    "how": "The rung ladder, canon/floors.json and contract invariants ask for stronger evidence than a passing test",
-    "evidence": "canon/floors.json",
+    "how": "The rung ladder, the risk table's requirements (canon/risk.json: covers, invariants, independent evidence) and contract invariants ask for stronger evidence than a passing test",
+    "evidence": "canon/risk.json",
     "gap": "A check still proves only that a command exited as expected; rung is agent-asserted and correctness kinds are not distinguished in any record."
   },
   {
     "id": "R-5.1-5",
     "status": "partial",
-    "how": "The rung ladder, canon/floors.json and contract invariants ask for stronger evidence than a passing test",
-    "evidence": "canon/floors.json",
+    "how": "The rung ladder, the risk table's requirements (canon/risk.json: covers, invariants, independent evidence) and contract invariants ask for stronger evidence than a passing test",
+    "evidence": "canon/risk.json",
     "gap": "A check still proves only that a command exited as expected; rung is agent-asserted and correctness kinds are not distinguished in any record."
   },
   {
@@ -548,8 +548,8 @@
   {
     "id": "R-5.1-7",
     "status": "partial",
-    "how": "The rung ladder, canon/floors.json and contract invariants ask for stronger evidence than a passing test",
-    "evidence": "canon/floors.json",
+    "how": "The rung ladder, the risk table's requirements (canon/risk.json: covers, invariants, independent evidence) and contract invariants ask for stronger evidence than a passing test",
+    "evidence": "canon/risk.json",
     "gap": "A check still proves only that a command exited as expected; rung is agent-asserted and correctness kinds are not distinguished in any record."
   },
   {
@@ -597,8 +597,8 @@
   {
     "id": "R-5.3-1",
     "status": "partial",
-    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
-    "evidence": "canon/floors.json",
+    "how": "canon/risk.json sets what each risk profile requires of a contract (checks with covers, invariants, an approach, independent evidence) and the contract splits fast and deep tiers",
+    "evidence": "canon/risk.json",
     "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
   },
   {
@@ -611,57 +611,57 @@
   {
     "id": "R-5.3-3",
     "status": "partial",
-    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
-    "evidence": "canon/floors.json",
+    "how": "canon/risk.json sets what each risk profile requires of a contract (checks with covers, invariants, an approach, independent evidence) and the contract splits fast and deep tiers",
+    "evidence": "canon/risk.json",
     "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
   },
   {
     "id": "R-5.3-4",
     "status": "partial",
-    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
-    "evidence": "canon/floors.json",
+    "how": "canon/risk.json sets what each risk profile requires of a contract (checks with covers, invariants, an approach, independent evidence) and the contract splits fast and deep tiers",
+    "evidence": "canon/risk.json",
     "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
   },
   {
     "id": "R-5.3-5",
     "status": "partial",
-    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
-    "evidence": "canon/floors.json",
+    "how": "canon/risk.json sets what each risk profile requires of a contract (checks with covers, invariants, an approach, independent evidence) and the contract splits fast and deep tiers",
+    "evidence": "canon/risk.json",
     "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
   },
   {
     "id": "R-5.3-6",
     "status": "partial",
-    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
-    "evidence": "canon/floors.json",
+    "how": "canon/risk.json sets what each risk profile requires of a contract (checks with covers, invariants, an approach, independent evidence) and the contract splits fast and deep tiers",
+    "evidence": "canon/risk.json",
     "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
   },
   {
     "id": "R-5.3-7",
     "status": "partial",
-    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
-    "evidence": "canon/floors.json",
+    "how": "canon/risk.json sets what each risk profile requires of a contract (checks with covers, invariants, an approach, independent evidence) and the contract splits fast and deep tiers",
+    "evidence": "canon/risk.json",
     "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
   },
   {
     "id": "R-5.3-8",
     "status": "partial",
-    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
-    "evidence": "canon/floors.json",
+    "how": "canon/risk.json sets what each risk profile requires of a contract (checks with covers, invariants, an approach, independent evidence) and the contract splits fast and deep tiers",
+    "evidence": "canon/risk.json",
     "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
   },
   {
     "id": "R-5.3-9",
     "status": "partial",
-    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
-    "evidence": "canon/floors.json",
+    "how": "canon/risk.json sets what each risk profile requires of a contract (checks with covers, invariants, an approach, independent evidence) and the contract splits fast and deep tiers",
+    "evidence": "canon/risk.json",
     "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
   },
   {
     "id": "R-5.3-10",
     "status": "partial",
-    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
-    "evidence": "canon/floors.json",
+    "how": "canon/risk.json sets what each risk profile requires of a contract (checks with covers, invariants, an approach, independent evidence) and the contract splits fast and deep tiers",
+    "evidence": "canon/risk.json",
     "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
   },
   {

@@ -1,7 +1,0 @@
-{
-  "concurrency": 2,
-  "parsing": 2,
-  "money": 2,
-  "state-machine": 2,
-  "migration": 2
-}
