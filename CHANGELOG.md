@@ -6,6 +6,16 @@ All notable changes to this project are recorded here. The format follows
 
 ## Unreleased
 
+### Added
+
+- Lessons gain an optional short line (one plain sentence, at most 140 characters) and topic
+  (between one and three lower-case words, at most 30 characters), written at `sisi retro` with
+  `--short` and `--topic` or by a learning round with a `set-short` note action. The cycle brief
+  lists every active lesson lacking either field and the topics already in use, and
+  `sisi cycle check` refuses a file that omits one. `sisi cycle --now` starts a round on demand
+  when none is due, field-note bullets and agent-facing headings use the short line when present,
+  and `sisi lessons digest` prints a plain-language summary grouped by topic for the human.
+
 ### Changed
 
 - The end-of-turn gate now attributes edits to the session that made them. Edit-tool calls are read

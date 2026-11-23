@@ -27,7 +27,8 @@ is offered to later agents starting matching work. If the problem recurs after a
 shown, it is strengthened: a note, a candidate rule, then an enforced check the gate runs.
 `sisi cycle` consolidates lessons into rules and library entries without growing the rulebook.
 Whether it is due is checked during normal use, so nothing is scheduled; see
-[docs/learning.md](docs/learning.md).
+[docs/learning.md](docs/learning.md). `sisi lessons digest` prints what has been learned in plain
+words, grouped by topic.
 
 Improvement needs a way to tell success from failure:
 

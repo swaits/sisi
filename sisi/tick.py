@@ -53,8 +53,12 @@ def _backlog_line(cwd):
         rows = retro.backlog_rows()
         if not rows:
             return ""
-        t = retro.safe_line(rows[0]["change"], here)
-        return "top sisi backlog #%d (x%d): %s" % (rows[0]["id"], rows[0]["count"], (t or "")[:110])
+        src = retro._get(rows[0], "short") or rows[0]["change"]
+        t = retro.safe_line(src, here)
+        if not t:
+            return ""
+        text = " ".join(t.split()) if retro._get(rows[0], "short") else retro.word_cut(t, 110)
+        return "top sisi backlog #%d (x%d): %s" % (rows[0]["id"], rows[0]["count"], text)
     except Exception:
         return ""
 

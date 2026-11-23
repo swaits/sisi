@@ -20,6 +20,72 @@ AUTO_KINDS = ("verifier", "recipe")
 NOTES_LIMIT_CHARS = 4000  # total text of active strength-1 learned notes before a cycle is due
 RETIRE_SHOWS = 20  # shown this often with no recurrence (and folded somewhere) a lesson leaves the notes
 MIN = {"moment": (30, 5), "cause": (15, 3), "change": (25, 4)}  # (characters, words)
+SHORT_MAX = 140
+TOPIC_MAX = 30
+
+
+def _get(row, key):
+    try:
+        if isinstance(row, dict):
+            return row.get(key)
+        return row[key] if key in row.keys() else None
+    except Exception:
+        return None
+
+
+def word_cut(text, limit):
+    """Cut at a word boundary, ending with an ellipsis, never mid-word."""
+    t = " ".join((text or "").split())
+    if len(t) <= limit:
+        return t
+    if limit <= 1:
+        return "…"
+    cut = t[:limit - 1]
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    else:
+        cut = t.split(" ", 1)[0]
+    return cut.rstrip() + "…"
+
+
+def heading_text(row, limit=90):
+    """The one-line heading for a lesson: its short line when present, else a word-boundary cut."""
+    s = _get(row, "short")
+    if s and str(s).strip():
+        return " ".join(str(s).split())
+    return word_cut(_get(row, "change") or "", limit)
+
+
+def validate_short_topic(short, topic):
+    """Structural checks for the optional short line and topic. Empty list means acceptable."""
+    errs = []
+    if short is not None:
+        s = str(short)
+        if "\n" in s or "\r" in s:
+            errs.append("short must be one line with no newline (check: short newline)")
+        st = s.strip()
+        if not st:
+            errs.append("short must not be empty (check: short present)")
+        elif len(st) > SHORT_MAX:
+            errs.append("short is too long: %d characters, at most %d (check: short length)" % (len(st), SHORT_MAX))
+        elif st.endswith("…") or st.endswith("..."):
+            errs.append("short must not end with an ellipsis (check: short ellipsis)")
+    if topic is not None:
+        tp = str(topic)
+        if "\n" in tp or "\r" in tp:
+            errs.append("topic must be one line with no newline (check: topic newline)")
+        tt = tp.strip()
+        if not tt:
+            errs.append("topic must not be empty (check: topic present)")
+        else:
+            if len(tt) > TOPIC_MAX:
+                errs.append("topic is too long: %d characters, at most %d (check: topic length)" % (len(tt), TOPIC_MAX))
+            words = tt.split()
+            if len(words) < 1 or len(words) > 3:
+                errs.append("topic must be 1 to 3 words (check: topic words)")
+            elif tt != tt.lower() or not re.fullmatch(r"[a-z0-9]+(?:[ -][a-z0-9]+)*", tt):
+                errs.append("topic must be 1 to 3 lower-case words (check: topic case)")
+    return errs
 
 
 # ---- database --------------------------------------------------------------
@@ -30,7 +96,7 @@ def db_path():
 NEW_LESSON_COLS = (("strength", "INTEGER DEFAULT 1"), ("triggers", "TEXT"), ("effect", "TEXT"),
                    ("applied_at", "TEXT"), ("folded_into", "TEXT"), ("needs_cycle", "INTEGER DEFAULT 0"),
                    ("check_json", "TEXT"), ("change_fp", "TEXT"), ("promoted_shown", "INTEGER DEFAULT 0"),
-                   ("when_terms", "TEXT"))
+                   ("when_terms", "TEXT"), ("short", "TEXT"), ("topic", "TEXT"))
 
 
 def connect():
@@ -88,7 +154,7 @@ def _backfill(con):
 # ---- the committed dump ------------------------------------------------------
 LESSON_COLS = ("id", "created", "aim", "change_kind", "target", "moment", "cause", "change", "status", "count", "last_seen",
                "strength", "triggers", "effect", "applied_at", "folded_into", "needs_cycle", "check_json", "change_fp",
-               "promoted_shown", "when_terms")
+               "promoted_shown", "when_terms", "short", "topic")
 OCC_COLS = ("id", "lesson_id", "ts", "session", "tool", "cwd", "repo", "moment", "fp", "delivery_s")
 IMP_COLS = ("id", "lesson_id", "ts", "session", "place", "occ_count")
 SIGHT_COLS = ("id", "lesson_id", "ts", "session", "moment")
@@ -269,6 +335,7 @@ def validate(f, same_as=False):
             bad = next(t for t in terms if len(t.split()) > 6)
             errs.append('each --when term should be a word or a short phrase (at most 6 words); %s has %d (check: when-term length)'
                         % (_quote(bad), len(bad.split())))
+    errs.extend(validate_short_topic(f.get("short"), f.get("topic")))
     if errs:
         return errs
     if not same_as:
@@ -527,10 +594,19 @@ def new_lesson(con, f, cwd, fp):
     now = store.now()
     change, target = f["change"].strip(), f.get("target") or None
     when = ", ".join(parse_when(f.get("when"))) or None
-    cur = con.execute("INSERT INTO lessons(created, aim, change_kind, target, moment, cause, change, status, count, last_seen,"
-                      " strength, triggers, change_fp, when_terms) VALUES (?,?,?,?,?,?,?, 'open', 0, ?, 1, ?, ?, ?)",
+    short = (f.get("short") or "").strip() or None
+    topic = (f.get("topic") or "").strip() or None
+    # tolerate stores predating short/topic: only insert columns that exist
+    cols = [r[1] for r in con.execute("PRAGMA table_info(lessons)")]
+    extra_cols = [c for c in ("short", "topic") if c in cols]
+    extra_vals = [short if c == "short" else topic for c in extra_cols]
+    base_cols = ("created, aim, change_kind, target, moment, cause, change, status, count, last_seen,"
+                 " strength, triggers, change_fp, when_terms")
+    all_cols = base_cols + (", " + ", ".join(extra_cols) if extra_cols else "")
+    placeholders = "?,?,?,?,?,?,?, 'open', 0, ?, 1, ?, ?, ?" + (", ?" * len(extra_cols))
+    cur = con.execute("INSERT INTO lessons(%s) VALUES (%s)" % (all_cols, placeholders),
                       (now, f["aim"], f["change_kind"], target, f["moment"].strip(), f["cause"].strip(),
-                       change, now, triggers_for(change, target, when), change_fp(change), when))
+                       change, now, triggers_for(change, target, when), change_fp(change), when) + tuple(extra_vals))
     lid = cur.lastrowid
     add_occurrence(con, lid, f["moment"].strip(), cwd, fp)
     apply_effect(con, lid)  # every lesson takes effect on its first occurrence
@@ -539,8 +615,10 @@ def new_lesson(con, f, cwd, fp):
 
 def notes_chars(con):
     """Characters counted toward the learned-notes limit: length(change) of active, strength-1,
-    still-loose learned notes only. Folded lessons (into a rule, entry, draft or enforced check),
-    tool backlog lessons and strengthened lessons do not count: folding is what reduces this."""
+    still-loose learned notes only. This still counts `change`, not `short`: the limit is about
+    lesson content not yet folded, not about the printed heading (headings count `short` when
+    present, because that is what is printed). Folded lessons (into a rule, entry, draft or
+    enforced check), tool backlog lessons and strengthened lessons do not count."""
     try:
         return con.execute(
             "SELECT COALESCE(sum(length(change)),0) FROM lessons WHERE status IN ('open','applied') "
@@ -550,6 +628,79 @@ def notes_chars(con):
         return con.execute(
             "SELECT COALESCE(sum(length(change)),0) FROM lessons WHERE status IN ('open','applied') "
             "AND COALESCE(strength,1)=1 AND folded_into IS NULL").fetchone()[0]
+
+
+def _bullet_for(r, note_text=None, date=None):
+    """One field-note bullet. An explicit note wins; else the short line when present."""
+    date = date or store.now()[:10]
+    lid = _get(r, "id")
+    count = _get(r, "count") or 1
+    aim = _get(r, "aim")
+    if note_text is not None:
+        return "- %s: %s (aim: %s; seen %d times; lesson %d)" % (date, " ".join(str(note_text).split()), aim, count, lid)
+    short = _get(r, "short")
+    if short and str(short).strip():
+        return "- %s: %s (seen %d times; lesson %d; full text: sisi lessons show %d)" % (
+            date, " ".join(str(short).split()), count, lid, lid)
+    return "- %s: %s (aim: %s; seen %d times; lesson %d)" % (
+        date, " ".join(str(_get(r, "change") or "").split()), aim, count, lid)
+
+
+def _parse_bullet(line):
+    """(date, text, lesson_id) for a field-note bullet, or None. Handles old and short forms."""
+    import re as _re
+    m = _re.match(r"^- (\d{4}-\d{2}-\d{2}): (.*) \((?:aim: [^;]+; )?seen \d+ times; lesson (\d+)(?:; full text: sisi lessons show \d+)?\)\s*$", line.rstrip("\n"))
+    if not m:
+        return None
+    return m.group(1), m.group(2), int(m.group(3))
+
+
+def rewrite_notes_for_lesson(con, lesson_id):
+    """Rewrite a folded lesson's default bullets to its short form.
+
+    How explicit notes are told apart: a bullet whose text (between the date and the
+    parenthesised tail) equals the lesson's full `change`, whitespace-normalised, is a
+    default bullet written from the change. Any other text came from an explicit `note`
+    in a fold (or was already the short line) and is left alone.
+    """
+    r = con.execute("SELECT * FROM lessons WHERE id=?", (lesson_id,)).fetchone()
+    if not r:
+        return []
+    short = _get(r, "short")
+    if not short or not str(short).strip():
+        return []
+    change_norm = " ".join(str(_get(r, "change") or "").split())
+    d = paths.notes_dir()
+    changed = []
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    for name in names:
+        if not name.endswith(".md"):
+            continue
+        p = os.path.join(d, name)
+        try:
+            with open(p, encoding="utf-8") as f:
+                lines = f.read().splitlines(True)
+        except OSError:
+            continue
+        out, dirty = [], False
+        for line in lines:
+            parsed = _parse_bullet(line)
+            if parsed and parsed[2] == lesson_id and parsed[1] == change_norm:
+                nl = "\n" if line.endswith("\n") else ""
+                out.append(_bullet_for(r, date=parsed[0]) + nl)
+                dirty = True
+            else:
+                out.append(line)
+        if dirty:
+            tmp = p + ".tmp%d" % os.getpid()
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write("".join(out))
+            os.replace(tmp, p)
+            changed.append(p)
+    return changed
 
 
 def _append_note(kind_file, target, r, draft=False, note_text=None):
@@ -563,8 +714,7 @@ def _append_note(kind_file, target, r, draft=False, note_text=None):
             if draft:
                 f.write("No recipe with this id exists yet. These notes are shown by `sisi done for` when their "
                         "words match, until a cycle turns them into a recipe or folds them elsewhere.\n\n")
-        text = note_text if note_text is not None else r["change"]
-        f.write("- %s: %s (aim: %s; seen %d times; lesson %d)\n" % (store.now()[:10], " ".join(text.split()), r["aim"], r["count"], r["id"]))
+        f.write(_bullet_for(r, note_text=note_text) + "\n")
     return p
 
 
@@ -718,10 +868,11 @@ def tick_block(cwd, n=8, session=None):
         for r in rows:
             if len(out) >= n:
                 break
-            t = safe_line(r["change"], repo)
+            src = _get(r, "short") or r["change"]
+            t = safe_line(src, repo)
             if not t:
                 continue
-            line = "- %s (seen %d)" % (t[:150], r["count"])
+            line = "- %s (seen %d)" % (word_cut(t, 150) if not _get(r, "short") else " ".join(t.split()), r["count"])
             if total + len(line) + 1 > LIMIT:
                 continue
             out.append(line)
@@ -867,7 +1018,7 @@ def lessons_block(query, place, session=None, limit=3, max_chars=600, extra=""):
             room = max_chars - total - 1
             if room < 60:
                 continue
-            line = line[:room - 1] + "…"
+            line = word_cut(line, room)
         lines.append(line)
         ids.append(r["id"])
         total += len(line) + 1
@@ -888,8 +1039,11 @@ def _is_loose(row):
 
 
 def loose_heading(row):
-    return "- #%d (strength %d): %s" % (row["id"], row["strength"] or 1,
-                                        " ".join((row["change"] or "").split())[:90])
+    # Headings count the short line when present (it is what is printed); without one they
+    # count a word-boundary cut of the change. See notes_chars for the separate learned-notes
+    # limit, which still counts length(change).
+    return "- #%d (strength %d): %s" % (_get(row, "id"), (_get(row, "strength") or 1),
+                                        heading_text(row, 90))
 
 
 def delivery(query, extra="", targets=(), con=None):
@@ -932,7 +1086,7 @@ def delivery_block(query, place, session=None, extra="", targets=()):
         out.append(PART1_HEADER + "\n" + "\n".join(lines1))
     lines2, total = [], len(PART2_HEADER) + 1
     for d in part2:
-        if not display_line(d["row"]["change"], repo):
+        if not display_line(_get(d["row"], "short") or d["row"]["change"], repo):
             continue
         line = loose_heading(d["row"])
         reserve = 70 if len(listed2) < len(part2) else 0
@@ -942,7 +1096,7 @@ def delivery_block(query, place, session=None, extra="", targets=()):
         listed2.append(d["row"]["id"])
         total += len(line) + 1
     if lines2:
-        omitted = len([d for d in part2 if display_line(d["row"]["change"], repo)]) - len(lines2)
+        omitted = len([d for d in part2 if display_line(_get(d["row"], "short") or d["row"]["change"], repo)]) - len(lines2)
         block = PART2_HEADER + "\n" + "\n".join(lines2)
         if omitted > 0:
             block += "\n- ... and %d more not listed (`sisi lessons` lists them; a cycle is due)" % omitted
@@ -986,7 +1140,8 @@ def backlog_rows(con=None):
 def _parse(argv):
     f, flags, i = {}, set(), 0
     names = {"--aim": "aim", "--moment": "moment", "--cause": "cause", "--change-kind": "change_kind",
-             "--change": "change", "--target": "target", "--same-as": "same_as", "--when": "when"}
+             "--change": "change", "--target": "target", "--same-as": "same_as", "--when": "when",
+             "--short": "short", "--topic": "topic"}
     while i < len(argv):
         a = argv[i]
         if a in names:
@@ -1026,7 +1181,7 @@ def cmd_retro(argv, stdin=None):
             if k == "new":
                 if v:
                     flags.add("new")
-            elif isinstance(v, (str, int)) and k in ("aim", "moment", "cause", "change_kind", "change", "target", "same_as", "when"):
+            elif isinstance(v, (str, int)) and k in ("aim", "moment", "cause", "change_kind", "change", "target", "same_as", "when", "short", "topic"):
                 f.setdefault(k, str(v))
     for k in list(f):
         f[k] = f[k].strip()
@@ -1083,13 +1238,16 @@ def cmd_retro(argv, stdin=None):
         fp = current_fp(cwd)  # after any field-note write, so the gate sees this retro as for the current tree
         con.execute("UPDATE occurrences SET fp=? WHERE id=(SELECT max(id) FROM occurrences WHERE lesson_id=?)", (fp, lid))
         con.commit()
-        row = con.execute("SELECT count, effect FROM lessons WHERE id=?", (lid,)).fetchone()
-        count = row[0]
+        row = con.execute("SELECT * FROM lessons WHERE id=?", (lid,)).fetchone()
+        count = row["count"]
         applied = bool(applied) or (row["effect"] == "field-note" and count == 1)
+        needs_short = not (_get(row, "short") and str(_get(row, "short")).strip()) or not (_get(row, "topic") and str(_get(row, "topic")).strip())
     finally:
         con.close()
     sync("lessons: retro recorded for lesson #%d" % lid)
     print("recorded: lesson #%d, seen %d time%s%s" % (lid, count, "" if count == 1 else "s", "; applied to notes/" if applied else ""))
+    if needs_short:
+        print("sisi: this lesson has no short line yet; the next learning round will write one (run `sisi cycle --now` to start it now).")
     try:
         from . import cycle
         line = cycle.due_notice()
@@ -1101,14 +1259,101 @@ def cmd_retro(argv, stdin=None):
 
 
 def _lesson_line(r):
-    return "#%-4d %-9s %-8s %-9s x%-3d s%s %s" % (r["id"], r["status"], r["aim"], r["change_kind"], r["count"],
-                                                  (r["strength"] or 1) if "strength" in r.keys() else 1,
-                                                  " ".join(r["change"].split())[:100])
+    return "#%-4d %-9s %-8s %-9s x%-3d s%s %s" % (_get(r, "id"), _get(r, "status"), _get(r, "aim"), _get(r, "change_kind"), _get(r, "count"),
+                                                  (_get(r, "strength") or 1),
+                                                  heading_text(r, 100))
+
+
+def plain_state(r):
+    """A lesson's state in plain words for the human digest (no internal labels)."""
+    if _get(r, "change_kind") == "tool":
+        return "change to sisi itself, not built yet"
+    folded = _get(r, "folded_into") or ""
+    if folded.startswith("rule:") or folded == "enforced" or _get(r, "check_json"):
+        return "in the rulebook"
+    if folded:
+        first = folded.split(",")[0].strip()
+        if first.startswith("draft:"):
+            first = first[6:]
+        if first:
+            return "attached to %s work" % first
+    if _get(r, "effect") == "field-note":
+        target = _get(r, "target")
+        if target:
+            return "attached to %s work" % target
+    return "loose note"
+
+
+def digest_lines(include_all=False, con=None):
+    """`sisi lessons digest`: short lines grouped by topic, for the human."""
+    own = con is None
+    if own:
+        con = connect()
+    try:
+        ensure_effects(con)
+        rows = [dict(r) for r in con.execute("SELECT * FROM lessons ORDER BY id")]
+    finally:
+        if own:
+            con.close()
+    if not include_all:
+        rows = [r for r in rows if r.get("status") not in ("retired", "withdrawn", "superseded")]
+    said = []
+    try:
+        for rec in store.read("quarantine"):
+            t = " ".join(str(rec.get("text") or "").split())
+            if t:
+                said.append(t)
+    except Exception:
+        said = []
+    summarized = [r for r in rows if (r.get("short") or "").strip() and (r.get("topic") or "").strip()]
+    _summ_ids = {r["id"] for r in summarized}
+    pending = [r for r in rows if r["id"] not in _summ_ids]
+    n = len(rows)
+    if n == 1:
+        count_line = "Sisi has learned 1 lesson from past work, %d summarized and %d not yet summarized." % (len(summarized), len(pending))
+    else:
+        count_line = "Sisi has learned %d lessons from past work, %d summarized and %d not yet summarized." % (n, len(summarized), len(pending))
+    out = [count_line, ""]
+    if said:
+        out.append("## What you said")
+        for t in said:
+            out.append('- "%s"' % t)
+        out.append("")
+    groups = {}
+    for r in summarized:
+        groups.setdefault(" ".join(str(r["topic"]).split()), []).append(r)
+    for topic in sorted(groups, key=lambda t: (-len(groups[t]), t)):
+        out.append("## %s" % topic)
+        for r in sorted(groups[topic], key=lambda x: (-(x.get("count") or 1), x.get("id"))):
+            line = "- %s (lesson %d; %s" % (" ".join(str(r["short"]).split()), r["id"], plain_state(r))
+            if (r.get("count") or 1) > 1:
+                line += "; seen %d times" % r["count"]
+            out.append(line + ")")
+        out.append("")
+    if pending:
+        out.append("## Not yet summarized")
+        for r in sorted(pending, key=lambda x: x.get("id")):
+            text = " ".join(str(r["short"]).split()) if (r.get("short") or "").strip() else word_cut(r.get("change") or "", 140)
+            line = "- %s (lesson %d; %s" % (text, r["id"], plain_state(r))
+            if (r.get("count") or 1) > 1:
+                line += "; seen %d times" % r["count"]
+            out.append(line + ")")
+        out.append("")
+    out.append("To see one lesson in full, run `sisi lessons show ID` with the lesson number in place of ID.")
+    return out
 
 
 def cmd_lessons(argv):
     con = connect()
     try:
+        if argv and argv[0] == "digest":
+            extra = argv[1:]
+            if extra not in ([], ["--all"]):
+                print("usage: sisi lessons digest [--all]")
+                return 2
+            for line in digest_lines(include_all="--all" in extra, con=con):
+                print(line)
+            return 0
         if argv and argv[0] == "show":
             if len(argv) < 2 or not argv[1].isdigit():
                 print("usage: sisi lessons show ID")
@@ -1125,6 +1370,8 @@ def cmd_lessons(argv):
                 listed_count(con, r["id"]), read_count(con, r["id"]),
                 recurrences_after_shown(con, r), sightings_count(con, r["id"])))
             print("moment: %s\ncause : %s\nchange: %s" % (r["moment"], r["cause"], r["change"]))
+            print("short : %s" % (_get(r, "short") or "- (none yet; a learning cycle can write one)"))
+            print("topic : %s" % (_get(r, "topic") or "-"))
             print("when  : %s" % (r["when_terms"] or "- (none recorded; a cycle can add terms)"))
             print("\noccurrences:")
             for o in con.execute("SELECT * FROM occurrences WHERE lesson_id=? ORDER BY id", (r["id"],)):
@@ -1205,7 +1452,7 @@ def cmd_lessons(argv):
                     top = int(v)
                 i += 2
             else:
-                print("usage: sisi lessons [--aim A] [--kind K] [--status S] [--repo PATH] [--top N] [--json] | show ID | set ID --status S | apply ID | export [FILE] | import FILE")
+                print("usage: sisi lessons [--aim A] [--kind K] [--status S] [--repo PATH] [--top N] [--json] | show ID | digest [--all] | set ID --status S | apply ID | export [FILE] | import FILE")
                 return 2
         rows = [dict(r) for r in con.execute("SELECT * FROM lessons WHERE %s ORDER BY count DESC, last_seen DESC, id DESC" % " AND ".join(where), args)]
         if top:
@@ -1230,7 +1477,9 @@ def stats():
         by = {r[0]: r[1] for r in con.execute("SELECT status, count(*) FROM lessons GROUP BY status")}
         week = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 7 * 86400))
         occ = con.execute("SELECT count(*) FROM occurrences WHERE ts>=?", (week,)).fetchone()[0]
-        top = [dict(r) for r in con.execute("SELECT id, change, count FROM lessons WHERE status IN ('open','applied') ORDER BY count DESC, last_seen DESC LIMIT 5")]
+        _cols = [r[1] for r in con.execute("PRAGMA table_info(lessons)")]
+        _sel = "id, change, count" + (", short" if "short" in _cols else "")
+        top = [dict(r) for r in con.execute("SELECT %s FROM lessons WHERE status IN ('open','applied') ORDER BY count DESC, last_seen DESC LIMIT 5" % _sel)]
         active = con.execute("SELECT count(*) FROM lessons WHERE status IN ('open','applied')").fetchone()[0]
         strength = {r[0]: r[1] for r in con.execute(
             "SELECT COALESCE(strength,1), count(*) FROM lessons WHERE status IN ('open','applied') GROUP BY 1")}
@@ -1284,5 +1533,5 @@ def cmd_backlog(argv):
         return 0
     for r in rows:
         print("#%-4d x%-3d s%d shown %-3d %s" % (r["id"], r["count"], r["strength"] or 1, shown[r["id"]],
-                                                " ".join(r["change"].split())[:110]))
+                                                heading_text(r, 110)))
     return 0

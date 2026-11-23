@@ -55,6 +55,35 @@ class LearningCase(LibCase):
     def cycle_doc(self, **parts):
         doc = {"version": 1, "base": cycle.base_version(), "summary": "test cycle"}
         doc.update(parts)
+        # A cycle file must now summarise every active lesson lacking a short line:
+        # add a set-short for any not already covered or leaving the active notes.
+        try:
+            con = retro.connect()
+            try:
+                rows = [dict(r) for r in con.execute(
+                    "SELECT id, short, topic FROM lessons WHERE status IN ('open','applied')")]
+            finally:
+                con.close()
+            notes = list(doc.get("notes") or [])
+            covered = {e.get("lesson") for e in notes if isinstance(e, dict) and e.get("action") == "set-short"}
+            exempt = {e.get("lesson") for e in notes if isinstance(e, dict)
+                      and e.get("action") in ("retire", "withdraw", "merge")}
+            extra = []
+            for r in rows:
+                if r["id"] in covered or r["id"] in exempt:
+                    continue
+                if (r.get("short") or "").strip() and (r.get("topic") or "").strip():
+                    continue
+                e = {"lesson": r["id"], "action": "set-short"}
+                if not (r.get("short") or "").strip():
+                    e["short"] = "Use a readiness probe, not a sleep."
+                if not (r.get("topic") or "").strip():
+                    e["topic"] = "testing"
+                extra.append(e)
+            if extra:
+                doc["notes"] = notes + extra
+        except Exception:
+            pass
         p = os.path.join(self.tmp, "cycle.json")
         with open(p, "w") as f:
             json.dump(doc, f)
@@ -445,8 +474,9 @@ class CycleApplyTests(LearningCase):
         a = self.mk(change="Session one lesson about parser readiness", moment="s1 wait at step 1")
         b = self.mk(change="Session two lesson about widget caching", moment="s2 wait at step 2")
         base = cycle.base_version()  # both sessions read the same brief
-        doc1 = {"version": 1, "base": base, "summary": "one", "notes": [{"lesson": a, "action": "keep"}]}
-        doc2 = {"version": 1, "base": base, "summary": "two", "notes": [{"lesson": b, "action": "keep"}]}
+        _ss = lambda lid: {"lesson": lid, "action": "set-short", "short": "Use a readiness probe, not a sleep.", "topic": "testing"}
+        doc1 = {"version": 1, "base": base, "summary": "one", "notes": [{"lesson": a, "action": "keep"}, _ss(a), _ss(b)]}
+        doc2 = {"version": 1, "base": base, "summary": "two", "notes": [{"lesson": b, "action": "keep"}, _ss(a), _ss(b)]}
         paths_ = []
         for i, d in enumerate((doc1, doc2)):
             p = os.path.join(self.tmp, "two-%d.json" % i)
@@ -1020,7 +1050,8 @@ class CycleGapTests(LearningCase):
         retro.record_shown([lid], "done-for", "s")
         doc = self.cycle_doc(notes=[{"lesson": lid, "action": "keep"}])
         # cycle_doc recomputes base; rebuild with the original base
-        d = {"version": 1, "base": base, "summary": "x", "notes": [{"lesson": lid, "action": "keep"}]}
+        d = {"version": 1, "base": base, "summary": "x", "notes": [{"lesson": lid, "action": "keep"},
+             {"lesson": lid, "action": "set-short", "short": "Use a readiness probe, not a sleep.", "topic": "testing"}]}
         p = os.path.join(self.tmp, "g2.json")
         with open(p, "w") as f:
             json.dump(d, f)
@@ -1044,7 +1075,8 @@ class CycleGapTests(LearningCase):
         lid = self.mk()
         base = cycle.base_version()
         self.mk(change="Brand new parser lesson arriving mid cycle", moment="new wait at step 5")
-        d = {"version": 1, "base": base, "summary": "x", "notes": [{"lesson": lid, "action": "keep"}]}
+        d = {"version": 1, "base": base, "summary": "x", "notes": [{"lesson": lid, "action": "keep"},
+             {"lesson": lid, "action": "set-short", "short": "Use a readiness probe, not a sleep.", "topic": "testing"}]}
         p = os.path.join(self.tmp, "g3.json")
         with open(p, "w") as f:
             json.dump(d, f)

@@ -27,21 +27,25 @@ HELP = """sisi: shared rulebook and enforced definitions of done for every AI co
   sisi overlay list|diff|add-rule|replace-rule|disable-rule|enable-rule|add-verifier|...|revert COMMIT
                                      learned changes to rules, verifiers and recipes; each one a commit in your personal repo
   sisi audit                         inventory of standing instructions per tool
-  sisi retro --aim A --moment M --cause C --change-kind K --change X --when "csv, tsv, spreadsheet, tabular data, import, parse, delimited file" [--target ID] [--same-as ID | --new]
+  sisi retro --aim A --moment M --cause C --change-kind K --change X --when "csv, tsv, spreadsheet, tabular data, import, parse, delimited file" [--target ID] [--same-as ID | --new] [--short "one plain sentence"] [--topic "1-3 lower-case words"]
              (or --json - with the same keys on stdin)
                                      end of every piece of work: HOW it could have gone better; --when (at least
-                                     5 terms, synonyms included) is how a later agent with different words finds it
+                                     5 terms, synonyms included) is how a later agent with different words finds it;
+                                     --short (at most 140 characters) and --topic (at most 30) are optional: when
+                                     omitted, the next learning round writes them
              aims: level (the human could have worked at a higher level), verified (a stronger check was
              possible), hands-off (the human was interrupted more than needed), intent (the result was not
              what they meant), speed (it took longer than it had to)
-  sisi lessons [filters] | show ID | set ID --status S | apply ID | export [FILE] | import FILE
-                                     the shared lessons from retros (--aim --kind --status --repo --top --json)
+  sisi lessons [filters] | show ID | digest [--all] | set ID --status S | apply ID | export [FILE] | import FILE
+                                     the shared lessons from retros (--aim --kind --status --repo --top --json);
+                                     digest prints a short plain-language summary grouped by topic, for the human
   sisi backlog                       tool lessons: changes to sisi itself, most seen first
-  sisi cycle [due|apply FILE|check FILE|--dry-run FILE|revert [ID]|status|help]
+  sisi cycle [due|apply FILE|check FILE|--dry-run FILE|revert [ID]|status|help|--now]
                                      consolidate lessons into rules, entries and enforced checks (no
                                      scheduler: due-ness is a counter checked during normal use);
-                                     check/--dry-run prints what would change, changing nothing;
-                                     help prints the full cycle file format
+                                     with no argument, or with --now, it prints the brief on demand even
+                                     when none is due; check/--dry-run prints what would change, changing
+                                     nothing; help prints the full cycle file format
   sisi improve                       is it getting better? lessons, recurrence, send-backs, time, rulebook size
   sisi note TEXT                     (older; prefer retro) record something that went wrong
   sisi propose TEXT                  (older; prefer retro) suggest a rule change
@@ -199,7 +203,8 @@ def _status_retro():
     print("retros             : %s of sessions with real work recorded one (%d of %d)"
           % ("%.0f%%" % (100 * st["sessions_with_retro"] / w) if w else "n/a", st["sessions_with_retro"], w))
     for t in st["top"]:
-        print("  active #%-4d x%-3d %s" % (t["id"], t["count"], " ".join(t["change"].split())[:90]))
+        from . import retro as _R
+        print("  active #%-4d x%-3d %s" % (t["id"], t["count"], _R.heading_text(t, 90)))
 
 
 def _status_contracts(res):

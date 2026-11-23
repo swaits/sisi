@@ -16,9 +16,17 @@ what "done" means, verifying, or being sent back by the gate.
    overlap alone cannot bridge "CSV" and "spreadsheet": the recording agent, who knows what the lesson
    is about, supplies the bridge vocabulary in advance. Lessons recorded before when-terms existed
    keep working by their own wording and are listed in the cycle brief so a consolidating agent can
-   add terms.
+   add terms. A retro may also carry `--short` (one sentence in plain words, at most 140 characters,
+   no trailing ellipsis and no newline) and `--topic` (between one and three lower-case words, at
+   most 30 characters, such as "releases" or "asking questions"). Both are optional and checked
+   only for those limits when given; when either is missing, the retro still succeeds and says
+   that the next learning round will write it. Stores written before these fields existed gain
+   them on open, losing nothing, and lessons without them keep working.
 2. **It takes effect at once**, in your personal data (the overlay), never in the product files:
-   - a verifier or recipe lesson naming an entry is attached to it as a field note straight away;
+   - a verifier or recipe lesson naming an entry is attached to it as a field note straight away.
+     When the lesson has a short line, the bullet reads "- YYYY-MM-DD: <short> (seen N times;
+     lesson ID; full text: sisi lessons show ID)" in place of the long change text; an explicit
+     note text given by a later fold still wins over the short line;
    - a recipe lesson naming a recipe that does not exist is kept as a draft recipe note;
    - a rule, oracle or brief lesson becomes an active learned note with trigger words taken from its text;
    - a tool lesson (a change to sisi itself) goes on the backlog (`sisi backlog`, most seen first).
@@ -35,7 +43,11 @@ what "done" means, verifying, or being sent back by the gate.
    never read, still recurs" means the heading is bad, and the cycle brief says so. `sisi verifiers
    show` and the gate's send-back message keep the older single strong-match block. Draft recipe notes
    appear in `sisi done for` when their words match. Lesson text is always framed as information to
-   weigh, not as commands, and text from a lesson is never executed.
+   weigh, not as commands, and text from a lesson is never executed. One-line headings — the
+   other-lessons list, session-start notes, `sisi backlog` and `sisi lessons` — use the short
+   line when one is present; without one they cut the change at a word boundary and end with
+   "…", never mid-word. Printed-heading budgets count the short line when present, because that
+   is what is printed.
 4. **Showings are counted.** Every time a lesson is printed or listed, sisi records which lesson, in
    which session, and where; opening one in full counts separately as read. Promotion needs at least
    two listings or readings since the last promotion. A later sighting of the same problem — a retro recorded with `--same-as`, which
@@ -74,17 +86,22 @@ for strength-3 lessons). The agent answers with one JSON file:
 The brief names the scratch path to write it to, lists every valid rule, recipe and verifier id
 (with each recipe's one-line applies-to and the rule number-to-id map), shows full lesson text when
 it fits its stated text budget (otherwise it says to run `sisi lessons show ID`), and puts the full
-format behind `sisi cycle help`. `sisi cycle check FILE` (or `--dry-run`) validates and prints
-exactly what would change, changing nothing.
+format behind `sisi cycle help`. It also lists every active lesson lacking a short line or topic,
+lists the topics already in use so the agent reuses one instead of inventing a near-duplicate,
+states the short and topic limits, and requires a `set-short` entry for each listed lesson:
+`sisi cycle check FILE` (or `--dry-run`) refuses a file that omits one, naming the lesson, and
+prints exactly what would change, changing nothing. A round can be started on demand even when
+none is due: `sisi cycle --now` (or plain `sisi cycle`) prints the brief either way.
 
 ```json
 {"version": 1, "base": "<base version from the brief>", "summary": "one line",
  "rules": [{"id": "rule-id", "title": "Title", "body": "text, ending with Why: ...", "action": "add|replace",
             "shortens": "rule-id: what is removed (required when the book would grow in characters)"}],
  "disable_rules": ["rule-id"],
- "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-when|create-entry|keep-as-draft",
+ "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-when|create-entry|keep-as-draft|set-short",
             "into": "rule/entry id or [ids]", "merged_into": 4, "note": "split text (optional)",
-            "when": "at least 5 terms (optional)", "entry_kind": "recipe|verifier", "entry_text": "full file (create-entry)",
+            "when": "at least 5 terms (optional)", "short": "one plain sentence (set-short)", "topic": "topic words (set-short)",
+            "entry_kind": "recipe|verifier", "entry_text": "full file (create-entry)",
             "reason": "why it stays a draft (keep-as-draft)"}],
  "enforced": [{"lesson": 3, "type": "command", "cmd": "...", "expect": {"exit": 0}, "timeout_s": 30},
               {"lesson": 4, "type": "contract-requirement", "when": "parser",
@@ -95,20 +112,28 @@ exactly what would change, changing nothing.
 `notes/<id>.md` and marks the lesson applied; `into` may be a list, and two notes for one lesson
 with different `note` text split a compound lesson. `create-entry` creates a personal recipe or
 verifier entry in the overlay, lint-checked; `keep-as-draft` keeps it as a draft with a reason.
-`set-when` only sets when-terms. Merge only lessons requesting the same change, into the older or
-more general one, which keeps its text and count; the other becomes superseded and needs no action.
-Tool lessons cannot be done in a cycle: they stay in `sisi backlog`, except merging a duplicate.
+`set-when` only sets when-terms. `set-short` writes the short line and topic, and may be combined
+with other actions on the same lesson; when it lands on a lesson already folded into an entry, the
+entry's existing default bullets are rewritten to the short form. A bullet is treated as a default
+bullet only when its text equals the lesson's full change with whitespace normalised; any other
+text came from an explicit `note` and is left alone. Merge only lessons requesting the same change,
+into the older or more general one, which keeps its text and count; the other becomes superseded
+and needs no action. Tool lessons cannot be done in a cycle: they stay in `sisi backlog`, except
+merging a duplicate (and a `set-short` for one, so the digest can show it).
 Retire only what is fully folded and quiet (folded, at least 20 listed/read, no recurrences after
 first listing); folding in this cycle does not make it quiet. The learned-notes limit counts only
-`length(change)` of active strength-1 loose learned notes: folded lessons no longer count, which
-is why folding (or merging, retiring, withdrawing, enforcing) reduces it.
+`length(change)` of active strength-1 loose learned notes — it counts the change, not the short
+line, because it is about content not yet folded — while printed headings count the short line
+when present: folded lessons no longer count toward the learned-notes limit, which is why folding
+(or merging, retiring, withdrawing, enforcing) reduces it.
 
 `sisi cycle apply FILE` checks the file before writing anything: every lesson id exists, the base
 version is still current, changed rules keep their id and their Why, named `sisi` commands and
 enforced programs exist, and the resulting rulebook is inside both budgets (120 lines and 7,200
 characters) and no longer in characters than before unless `shortens` names what was removed.
 Rules are re-wrapped to 100 characters on apply. The base version covers only what a cycle may
-change (lesson content and status, rules, notes, enforced checks), not listed/read counters, and
+change (lesson content and status, short lines and topics, rules, notes, enforced checks), not
+listed/read counters, and
 lessons recorded since the brief are left for the next cycle; a stale refusal names exactly what
 changed. The base version plus the personal-data lock means two sessions consolidating at once
 cannot overwrite each other: the second apply is refused and told to read a fresh brief. A successful apply is one commit in your personal repository, with before-and-after
@@ -122,6 +147,18 @@ Enforced checks live in `overlay/enforced.json` and are checked like the minimum
 contract-requirement fails a contract that touches its subject without a check of the required kind;
 a command check runs in the project like a contract check, and only in projects already on the trust
 list.
+
+## What has been learned, in plain words
+
+`sisi lessons digest` is for the human, not for agents. Its first line says how much has been
+learned in one sentence, and its last line says how to see a lesson in full (`sisi lessons show
+ID`), with the lesson number on every line. Preferences recorded with `sisi learn` appear first,
+in the person's own words, under "What you said" when any are stored. Short lines are grouped
+under their topic headings, ordered by how much each topic holds, most first. After every line
+comes its state in plain words — in the rulebook; attached to a kind of work; a loose note; or a
+change to sisi itself, not built yet — plus "seen N times" only when a lesson has been seen more
+than once. Lessons without a short line go last, under "Not yet summarized", cut at a word
+boundary. Retired, withdrawn and superseded lessons are left out unless `--all` is given.
 
 ## Is it getting better?
 

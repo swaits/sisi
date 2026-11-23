@@ -9,8 +9,9 @@ A cycle file (what the agent writes, what `sisi cycle apply` checks) is one JSON
   {"version": 1, "base": "<base version printed by the brief>", "summary": "one line",
    "rules": [{"id": "rule-id", "title": "Title", "body": "text with a Why: line", "action": "add|replace"}],
    "disable_rules": ["rule-id"],
-   "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep",
-              "into": "rule or entry id", "merged_into": 4,
+   "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-short",
+              "into": "rule or entry id", "merged_into": 4, "short": "one plain sentence, at most 140 characters",
+              "topic": "1 to 3 lower-case words, at most 30 characters",
               "when": "csv, tsv, spreadsheet, tabular data, import, parse (optional; sets the lesson's when-terms)"}],
    "enforced": [{"lesson": 3, "type": "command", "cmd": "...", "expect": {"exit": 0}, "timeout_s": 30},
                 {"lesson": 4, "type": "contract-requirement", "when": "parser",
@@ -29,7 +30,7 @@ class CycleError(Exception):
 
 
 ACTIONS = ("merge", "fold-into-rule", "fold-into-entry", "retire", "withdraw", "keep",
-           "set-when", "create-entry", "keep-as-draft")
+           "set-when", "create-entry", "keep-as-draft", "set-short")
 # Total characters of lesson text (change+moment+cause) the brief prints in full. Over this,
 # lessons are truncated and the brief says to run `sisi lessons show ID` for the full text.
 BRIEF_TEXT_BUDGET = 6000
@@ -192,7 +193,7 @@ def _announce_save(data):
 # occurrence counters (count, last_seen) and new lessons do NOT count: reading a lesson or a
 # lesson arriving must never stale a brief (gaps 2 and 3).
 _RELEVANT = ("aim", "change_kind", "target", "moment", "cause", "change", "status", "strength",
-             "folded_into", "effect", "when_terms", "check_json", "needs_cycle")
+             "folded_into", "effect", "when_terms", "check_json", "needs_cycle", "short", "topic")
 
 
 def _snapshot(con):
@@ -421,10 +422,11 @@ Shape (all but version/base optional; full detail: `sisi cycle help`):
    "rules": [{"id": "rule-id", "title": "Title", "body": "text ending with Why: ...", "action": "add|replace",
               "shortens": "rule-id: what text is removed/shortened (required when the rulebook would grow in characters)"}],
    "disable_rules": ["rule-id"],
-   "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-when|create-entry|keep-as-draft",
+   "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-when|create-entry|keep-as-draft|set-short",
               "into": "id or [ids] (folds; entry folds append a field note)", "merged_into": 4,
               "note": "text to append instead of the lesson change (for splitting one lesson)",
               "when": "at least 5 terms (sets when-terms; alone with action set-when)",
+              "short": "one plain sentence, at most 140 characters (set-short)", "topic": "1 to 3 lower-case words, at most 30 characters (set-short)",
               "entry_kind": "recipe|verifier", "entry_text": "full file text (create-entry)",
               "reason": "why it stays a draft (keep-as-draft)"}],
    "enforced": [{"lesson": 3, "type": "command", "cmd": "...", "expect": {"exit": 0}, "timeout_s": 30},
@@ -438,6 +440,8 @@ File: write ONE JSON file at the scratch path the brief prints, then:
   sisi cycle apply FILE     apply it (one commit in the personal repository)
   sisi cycle revert [ID]    undo the newest applied cycle exactly
   sisi cycle status         past cycles and what happened since
+  sisi cycle                print the brief (works whether or not a cycle is due)
+  sisi cycle --now          same: start a round on demand, even when none is due
 
 Top level: {"version": 1 (required), "base": "<from the brief, required>", "summary": "one line",
   "rules": [...], "disable_rules": [...], "notes": [...], "enforced": [...]} - all else optional.
@@ -464,9 +468,12 @@ Notes - one object per decision; the same lesson may appear several times (split
   fold-into-entry {"lesson": A, "action": "fold-into-entry", "into": "id" or ["id", ...],
                   "note": "optional text"} - appends one field-note bullet to notes/<id>.md:
                   "- YYYY-MM-DD: <the lesson's change, or `note` when given> (aim: <aim>; seen
-                  <count> times; lesson <id>)", and marks the lesson applied / field-note /
-                  folded_into=<id>. To split a compound lesson, use two notes objects with the
-                  same lesson, different `into` and different `note` text each.
+                  <count> times; lesson <id>)", or, when the lesson has a short line and no
+                  explicit `note` was given, "- YYYY-MM-DD: <short> (seen <count> times; lesson
+                  <id>; full text: sisi lessons show <id>)". An explicit `note` always wins.
+                  Marks the lesson applied / field-note / folded_into=<id>. To split a compound
+                  lesson, use two notes objects with the same lesson, different `into` and
+                  different `note` text each.
   create-entry    {"lesson": A, "action": "create-entry", "into": "new-id",
                   "entry_kind": "recipe|verifier", "entry_text": "<full file text>"}
                   Creates a personal recipe or verifier entry in the overlay from the lesson,
@@ -478,6 +485,17 @@ Notes - one object per decision; the same lesson may appear several times (split
                   recipe note (shown by `sisi done for` when its words match), nothing else.
   set-when        {"lesson": A, "action": "set-when", "when": "at least 5 terms"} - only sets
                   the lesson's when-terms; nothing else changes.
+  set-short       {"lesson": A, "action": "set-short", "short": "...", "topic": "..."} - writes
+                  the lesson's one-line plain-language summary and its topic. Limits: short is
+                  one sentence, at most 140 characters, no trailing ellipsis, no newline; topic
+                  is 1 to 3 lower-case words, at most 30 characters. Reuse a topic already in
+                  use (the brief lists them) instead of inventing a near-duplicate. Every active
+                  lesson the brief lists as lacking a short line or topic needs a set-short in
+                  the file; `sisi cycle check` refuses a file that omits one, naming the lesson
+                  (lessons this file retires, withdraws or merges away are exempt). set-short may
+                  be combined with other actions on the same lesson. When the lesson is already
+                  folded into an entry, its default field-note bullet is rewritten to the short
+                  form; a bullet that came from an explicit `note` is left alone.
   keep            {"lesson": A, "action": "keep"} - leave it; clears its waiting flag.
   retire          leave the active notes. Only when fully folded and quiet: folded into a rule,
                   entry or enforced check, listed/read at least 20 times, and 0 recurrences after
@@ -499,9 +517,12 @@ Enforced checks - write none for lessons below strength 3. One per strength-3 NE
   Complete examples are the two objects above.
 
 Learned-notes limit: counts length(change) of active strength-1 loose learned notes only
-(limit 4000 characters). Folded, strengthened, retired, withdrawn and tool-backlog lessons do
-not count. fold-into-entry, fold-into-rule, merge, retire, withdraw and writing an enforced
-check all reduce it; keep and set-when do not.
+(limit 4000 characters). It still counts `change`, not `short`: it is about lesson content not
+yet folded. Delivery budgets for printed headings (session start, the other-lessons list) count
+the short line when one is present, because that is what is printed; without one they count a
+word-boundary cut of the change. Folded, strengthened, retired, withdrawn and tool-backlog
+lessons do not count toward the learned-notes limit. fold-into-entry, fold-into-rule, merge,
+retire, withdraw and writing an enforced check all reduce it; keep, set-when and set-short do not.
 """
 
 def cycle_file_path():
@@ -534,6 +555,9 @@ def brief_text():
         sight = {r["id"]: retro.sightings_count(con, r["id"]) for r in rows}
         base = base_version(con)
         before = measures(con)
+        missing_short = [r for r in rows if r["status"] in retro.ACTIVE
+                         and (not str(r.get("short") or "").strip() or not str(r.get("topic") or "").strip())]
+        topics_in_use = _topics_in_use(con)
     finally:
         con.close()
     from . import verifiers as V
@@ -606,6 +630,10 @@ def brief_text():
         elif not r["when_terms"]:
             out.append("       when: MISSING - add at least 5 terms with set-when or any note's when")
         out.append("       target: %s  folded_into: %s" % (r["target"] or "-", r["folded_into"] or "-"))
+        if r["status"] in retro.ACTIVE and (not str(r.get("short") or "").strip() or not str(r.get("topic") or "").strip()):
+            out.append("       short: MISSING - add a set-short for this lesson (short at most %d characters, topic at most %d)" % (retro.SHORT_MAX, retro.TOPIC_MAX))
+        elif r.get("short"):
+            out.append("       short: %s (topic: %s)" % (r["short"], r.get("topic") or "-"))
         if listed[r["id"]] >= 5 and readn[r["id"]] == 0 and rec[r["id"]] > 0 and r["status"] in retro.ACTIVE:
             out.append("       LISTED %d TIMES, NEVER READ, STILL RECURS: rewrite the start of its change and its when-terms" % listed[r["id"]])
         if sight[r["id"]]:
@@ -618,6 +646,16 @@ def brief_text():
     missing = [r["id"] for r in rows if r["status"] in retro.ACTIVE and not r["when_terms"]]
     if missing:
         out += ["Lessons with no when-terms yet: " + ", ".join("#%d" % i for i in missing), ""]
+    out += ["Short lines: every active lesson lacking a short line or topic needs a set-short in your file; "
+            "`sisi cycle check` will refuse a file that omits one, naming the lesson. Write each short as "
+            "one sentence in plain words, an instruction, at most %d characters, no trailing ellipsis, no "
+            "newline. Topic: 1 to 3 lower-case words, at most %d characters. Reuse a topic already in use "
+            "when it fits instead of inventing a near-duplicate. set-short may be combined with other "
+            "actions on the same lesson (fold, keep, set-when and the rest)."
+            % (retro.SHORT_MAX, retro.TOPIC_MAX),
+            "Topics already in use: " + (", ".join(topics_in_use) if topics_in_use else "(none yet)"),
+            "Lessons lacking a short line or topic: " +
+            (", ".join("#%d" % r["id"] for r in missing_short) if missing_short else "(none)"), ""]
     out += ["Do this, in order:",
             "1. Fold each loose lesson into the recipe/entry whose applies-to (above) fits its kind of "
             "work, or lift several into one general rule. fold-into-entry appends a field note (see help). "
@@ -629,7 +667,9 @@ def brief_text():
             "3. Tool lessons (kind tool) cannot be done in a cycle: leave them in `sisi backlog` untouched, except merging a duplicate.",
             "4. Rules: keep id and Why, format per help; name in `shortens` which existing rule text gets shorter or is replaced whenever a rule is added or the book would grow in characters.",
             "5. For each NEEDS A CHECK lesson write one enforced check (help has fields and examples); none below strength 3.",
-            "6. Retire only what is fully folded and quiet (folded, at least 20 listed/read, 0 recurrences "
+            "6. For every lesson listed above as lacking a short line or topic, add a set-short (it may sit "
+            "beside its fold, keep or set-when entry). Reuse a topic already in use when it fits.",
+            "7. Retire only what is fully folded and quiet (folded, at least 20 listed/read, 0 recurrences "
             "after first listed) - folding now does not make it quiet, so fold and keep, retire next cycle. "
             "Withdraw what made things worse. set-when only sets when-terms. Keep the rest.",
             "Every changed rule keeps its id and ends with its Why. Never ask the human anything.", "", FORMAT_DOC]
@@ -667,6 +707,41 @@ def _lesson_ids_in(doc):
                     if isinstance(e.get(k), int):
                         ids.add(e[k])
     return ids
+
+
+def _missing_short_at_base(doc, con):
+    """[(lesson_id, snapshot)] active at the brief whose short line or topic was missing then.
+
+    Lessons recorded since the brief are not included: they are left for the next cycle and
+    must not make this file fail (see _check_base)."""
+    old = _load_snapshot(doc.get("base")) if isinstance(doc, dict) and doc.get("base") else None
+    out = []
+    if old and isinstance(old.get("lessons"), dict):
+        for lid_s, v in old["lessons"].items():
+            if not isinstance(v, dict) or v.get("status") not in retro.ACTIVE:
+                continue
+            if not str(v.get("short") or "").strip() or not str(v.get("topic") or "").strip():
+                try:
+                    out.append((int(lid_s), v))
+                except ValueError:
+                    continue
+        return sorted(out)
+    try:
+        for r in con.execute("SELECT * FROM lessons WHERE status IN ('open','applied') ORDER BY id"):
+            d = dict(r)
+            if not str(d.get("short") or "").strip() or not str(d.get("topic") or "").strip():
+                out.append((d["id"], d))
+    except Exception:
+        pass
+    return out
+
+
+def _topics_in_use(con):
+    try:
+        return sorted({str(r[0]).strip() for r in con.execute(
+            "SELECT DISTINCT topic FROM lessons WHERE topic IS NOT NULL AND trim(topic)<>''") if r[0] and str(r[0]).strip()})
+    except Exception:
+        return []
 
 
 def static_validate(doc, con):
@@ -719,9 +794,15 @@ def static_validate(doc, con):
             errs.append("each note needs an action in %s: %r" % (", ".join(ACTIONS), e))
             continue
         lid = e.get("lesson")
-        if kinds.get(lid) == "tool" and e["action"] not in ("merge", "keep", "keep-as-draft", "set-when"):
+        if kinds.get(lid) == "tool" and e["action"] not in ("merge", "keep", "keep-as-draft", "set-when", "set-short"):
             errs.append("lesson %s: tool lessons cannot be done in a cycle (they change sisi itself); "
                         "leave them in `sisi backlog` untouched, except merging a duplicate" % lid)
+        if e["action"] == "set-short":
+            if e.get("short") is None and e.get("topic") is None:
+                errs.append("lesson %s: set-short needs a short line and/or a topic" % lid)
+            else:
+                for sub in retro.validate_short_topic(e.get("short"), e.get("topic")):
+                    errs.append("lesson %s: %s" % (lid, sub))
         if e["action"] == "merge" and (not isinstance(e.get("merged_into"), int) or e.get("merged_into") == lid):
             errs.append("lesson %s: merge needs merged_into naming a different lesson" % lid)
         if e["action"] in ("fold-into-rule", "fold-into-entry", "create-entry") and not _into_list(e):
@@ -782,6 +863,30 @@ def static_validate(doc, con):
                 errs.append("lesson %s: max_rung must be 1-6" % e.get("lesson"))
         else:
             errs.append("lesson %s: enforced type must be command or contract-requirement" % e.get("lesson"))
+    # Every active lesson that lacked a short line or topic in the brief needs a set-short here.
+    # Lessons this same file retires, withdraws or merges away are exempt: they leave the active
+    # notes, so a summary would never be shown. Lessons recorded since the brief are not in the
+    # snapshot and are left for the next cycle.
+    if isinstance(doc, dict) and doc.get("base"):
+        notes_list = [e for e in doc.get("notes") or [] if isinstance(e, dict)]
+        covered = {}
+        for e in notes_list:
+            if e.get("action") == "set-short" and isinstance(e.get("lesson"), int):
+                covered[e["lesson"]] = e
+        exempt = {e.get("lesson") for e in notes_list if e.get("action") in ("retire", "withdraw", "merge")}
+        for lid, snap in _missing_short_at_base(doc, con):
+            if lid in exempt:
+                continue
+            e = covered.get(lid) or {}
+            need = []
+            if not str(snap.get("short") or "").strip() and not str(e.get("short") or "").strip():
+                need.append("short")
+            if not str(snap.get("topic") or "").strip() and not str(e.get("topic") or "").strip():
+                need.append("topic")
+            if need:
+                errs.append("lesson %d: missing set-short (%s) - the brief listed this lesson as needing "
+                            "a short line; add {\"lesson\": %d, \"action\": \"set-short\", \"short\": \"...\", \"topic\": \"...\"}"
+                            % (lid, " and ".join(need), lid))
     return errs
 
 
@@ -845,6 +950,16 @@ def _apply_writes(doc, con):
                 overlay._write(rel, e["entry_text"] if e["entry_text"].endswith("\n") else e["entry_text"] + "\n")
             con.execute("UPDATE lessons SET status='applied', effect='field-note', folded_into=?, needs_cycle=0, "
                         "applied_at=COALESCE(applied_at,?) WHERE id=?", (",".join(_into_list(e)), store.now(), lid))
+        elif act == "set-short":
+            cols = [c[1] for c in con.execute("PRAGMA table_info(lessons)")]
+            sets, vals = [], []
+            if "short" in cols and e.get("short") is not None:
+                sets.append("short=?"); vals.append(str(e["short"]).strip())
+            if "topic" in cols and e.get("topic") is not None:
+                sets.append("topic=?"); vals.append(str(e["topic"]).strip())
+            if sets:
+                con.execute("UPDATE lessons SET %s WHERE id=?" % ", ".join(sets), vals + [lid])
+            retro.rewrite_notes_for_lesson(con, lid)
         elif act == "keep-as-draft":
             con.execute("UPDATE lessons SET needs_cycle=0 WHERE id=?", (lid,))
         elif act == "set-when":
@@ -1140,6 +1255,10 @@ def check_file(path):
                 extra += " reason=%r" % e["reason"][:60]
             if e.get("entry_kind"):
                 extra += " entry_kind=%s" % e["entry_kind"]
+            if e.get("short"):
+                extra += " short=%r" % e["short"][:60]
+            if e.get("topic"):
+                extra += " topic=%r" % e["topic"][:60]
             out.append("  lesson %s: %s%s" % (e.get("lesson"), e.get("action"), extra))
         for e in doc.get("enforced") or []:
             out.append("  lesson %s: enforced %s %s" % (e.get("lesson"), e.get("type"),
@@ -1210,7 +1329,7 @@ def cmd_cycle(args):
             print("no learning cycle is due (%d lessons since the last cycle, %d waiting, %d note characters)"
                   % (st.get("since", 0), st.get("pending", 0), st.get("notes_chars", 0)))
             return 1
-        if sub in ("brief",):
+        if sub in ("brief", "--now", "now"):
             print(brief_text(), end="")
             return 0
         if sub == "apply":
@@ -1229,7 +1348,7 @@ def cmd_cycle(args):
             for line in status_lines():
                 print(line)
             return 0
-        print("usage: sisi cycle [due|apply FILE|check FILE|--dry-run FILE|revert [ID]|status|help]  (no argument prints the brief)")
+        print("usage: sisi cycle [due|apply FILE|check FILE|--dry-run FILE|revert [ID]|status|help|--now]  (no argument, or --now, prints the brief on demand even when none is due)")
         return 2
     except CycleError as e:
         print("sisi cycle: %s" % e)
