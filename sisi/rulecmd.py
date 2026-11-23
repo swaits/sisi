@@ -134,7 +134,8 @@ def _orchestrate():
                           if meter else None,
                           "an unavailable worker (a limit, quota, login or connection failure arriving as a delegation result or as "
                           "a later notice) is recorded down with the reset time parsed from the message, the router's next worker "
-                          "is handed over for the same brief, and a question-dialog call right after it is refused once"
+                          "is handed over for the same brief; a question-dialog call right after it is refused once, ending the turn with no fallback "
+                          "started is sent back once, and so is a final message that names the unavailable worker"
                           if meter and _has("fallback", "handle", "fallback_text") else None,
                           "a delegation with no `sisi route` decision in the last minutes (`orchestrate.route_window_min`) is refused once; "
                           "the run keeps the kind and difficulty guess, and a worker other than the router's pick is recorded as an override"

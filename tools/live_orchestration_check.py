@@ -35,10 +35,10 @@ MAIN_MODEL = "haiku"                     # the host's least expensive model, the
 WORKERS = (("sonnet", 3), ("opus", 15))  # fixture workers (names the host's subagent tool accepts) and a price each
 RESET = "2036-12-01T00:00:00Z"            # the reset time the fake provider's error message names
 QUOTA_TEXT = ("API error 429 [request_id=req_live]: Subscription quota exhausted. Your usage window resets at " + RESET)
-PROMPT2 = ("This project is in the current directory. Delegate one small task to the cheapest worker: list the python "
-           "files in src/, one per line. Ask `sisi route --kind research --difficulty 1` who that is, write the brief "
+PROMPT2 = ("This project is in the current directory. Have a worker do one small task: list the python "
+           "files in src/, one per line. Ask `sisi route --kind research --difficulty 1` who the cheapest suitable worker is, write the brief "
            "(`sisi delegate brief` prints the template; save it as brief.md), and run it with "
-           "`sisi delegate --kind research --difficulty 1 --brief brief.md`. The list is what I want back: reply with it.")
+           "`sisi delegate --kind research --difficulty 1 --brief brief.md`. The listing must come from a worker, not from your own commands. The list is what I want back: reply with it.")
 PROMPT = ("This project is in the current directory. Find and fix the bug (a test in tests/ fails), then tell me "
           "what each file in src/ does, one line per file.")
 
@@ -132,7 +132,7 @@ def run_agent(args, tmp, proj, env, log, prompt=PROMPT):
     settings = os.path.join(tmp, "home", ".claude", "settings.json")
     cmd = ["claude", "-p", prompt, "--model", args.model, "--output-format", "stream-json", "--verbose",
            "--include-hook-events", "--setting-sources", "project", "--settings", settings,
-           "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence",
+           "--strict-mcp-config", "--disable-slash-commands",
            "--permission-mode", "bypassPermissions", "--max-budget-usd", str(args.max_usd),
            "--tools", "Bash,Read,Edit,Write,Glob,Grep,Agent,AskUserQuestion"]
     t0 = time.time()

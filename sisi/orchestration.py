@@ -293,7 +293,8 @@ def new_turn(sid, cwd=None, prompt=None):
 def end_turn(sid):
     """The turn ended (the gate let the agent finish): counts start again at the next call."""
     with Meter(sid) as m:
-        m.update(calls=0, chars=0, ext=0, refusals=0, fails={}, ext_log=[], same_model_ok=False, unavail=None)
+        m.update(calls=0, chars=0, ext=0, refusals=0, fails={}, ext_log=[], same_model_ok=False, unavail=None,
+                 unavail_names=[], report_asked=False, fallback_asked=0)
 
 
 # ---------------------------------------------------------------- messages
@@ -638,7 +639,7 @@ def after(payload, host=None):
         _project(m, cwd)
         if kind == "delegation":
             return _after_delegation(payload, ev, sid, m, sess, cwd)
-        if shell and kind == "exempt" and " delegate" in " " + (cmd or ""):
+        if shell and re.search(r"\bsisi\b.*\bdelegate\b", cmd or "", re.S):  # alone or inside a longer command line
             from . import fallback
             note = fallback.shell_notice(_flat(payload))
             if note:  # `sisi delegate` recorded the worker down itself; hand over the fallback in the same breath
@@ -825,6 +826,52 @@ def judgement_sendback(payload, sid):
     lines.append("Judge each: `sisi delegate judge ID --outcome accepted|rejected --check read|tests|diffstat|review|none "
                  "--type KIND --difficulty 1|2|3`, then finish. (Asked once for this set.)")
     return "\n".join(lines)
+
+
+FALLBACK_SENDBACKS = 2  # bounded, like every send-back: a session is never trapped
+
+
+def fallback_sendback(payload, sid):
+    """The turn is ending with an unavailability recorded and no fallback started: sent back (at most twice) with
+    the fallback instruction, when the router has a worker to name. State, not wording."""
+    from . import fallback, workers
+    sess = store.load_session(sid)
+    with Meter(sid) as m:
+        info = m.get("unavail")
+        if not info or int(m.get("fallback_asked") or 0) >= FALLBACK_SENDBACKS or _session_is_worker(m, sess):
+            return None
+        own = _own_model({}, sess, m)
+        project = m.get("project") or os.getcwd()
+        worker, _mech, _n = workers.recommend(info.get("kind") or "implementation", info.get("difficulty") or 2, project, own)
+        if worker is None:
+            return None
+        m["fallback_asked"] = int(m.get("fallback_asked") or 0) + 1
+        text = fallback.fallback_text(info, project, own)
+    return "sisi: not finished: the failed task has not been given to another worker yet.\n" + text
+
+
+def report_sendback(payload, sid):
+    """The final message to the person names a worker or provider that was unavailable this turn: sent back once,
+    because which worker is out is internal (SPEC 9.7, 17). Judged on the names recorded, never on the wording."""
+    from . import questions
+    with Meter(sid) as m:
+        names = m.get("unavail_names") or []
+        if not names or m.get("report_asked"):
+            return None
+        sess = store.load_session(sid)
+        final = payload.get("last_assistant_message")  # the host's own copy of the final message, when it sends one
+        if not isinstance(final, str) or not final:
+            tp = payload.get("transcript_path") if isinstance(payload.get("transcript_path"), str) else sess.get("transcript_path")
+            turn = questions._last_turn(tp) if isinstance(tp, str) and tp else None
+            final = turn[0] if turn else ""
+        low = final.lower()
+        hits = [n for n in names if n in low]
+        if not hits:
+            return None
+        m["report_asked"] = True
+    return ("sisi: your final message mentions a worker, provider or failure that was internal (%s). Do not "
+            "report it. Say only what the person receives and when, and only if that differs from what they expect; "
+            "then finish again." % ", ".join(hits[:3]))
 
 
 # ---------------------------------------------------------------- the unit record

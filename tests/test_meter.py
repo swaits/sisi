@@ -585,6 +585,11 @@ class FallbackTests(MeterBase):
         self.assertIn("Next for the same kind of work (research, difficulty 1)", hs["additionalContext"])
         self.assertIn("Do not ask the person", hs["additionalContext"])
         self.assertEqual(self.down(), {})          # `sisi delegate` recorded it itself; the hook does not do it twice
+        # the same inside a longer command line (writing the brief and running it in one call)
+        r = self.sisi("watch", "--after", "--tool", "claude-code", stdin=self.payload(
+            "PostToolUseFailure", "Bash", {"command": "cat > b.md <<'EOF'\nx\nEOF\nsisi delegate --kind research --difficulty 1 --brief b.md"},
+            error="Exit code 1\n" + out))
+        self.assertIn("Fall back now", json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"])
 
     def test_sisi_delegate_itself_tells_the_agent_to_fall_back_when_only_host_workers_remain(self):
         """Found by the live check: a small model stopped at "no usable worker remains"; the command's own output now
@@ -604,6 +609,91 @@ class FallbackTests(MeterBase):
         self.assertIn("Do not ask the person and do not report this to them", text)
         self.assertIn("host's own subagent tool", text)
         self.assertEqual(self.down()["provx"]["retry_at"], future_ts())
+
+    def transcript(self, final):
+        path = os.path.join(self.tmp, "t.jsonl")
+        with open(path, "w") as f:
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": "list the files"}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": final}]}}) + "\n")
+        return path
+
+    def stop_with(self, final):
+        r = self.sisi("gate", "--tool", "claude-code", stdin=json.dumps(
+            {"session_id": self.sid, "cwd": self.proj, "hook_event_name": "Stop", "transcript_path": self.transcript(final)}))
+        return json.loads(r.stdout) if r.stdout.strip() else {}
+
+    def test_a_final_message_that_names_the_unavailable_worker_is_sent_back_once(self):
+        """The person is not told which worker is out (SPEC 9.7, 17): judged on the recorded names, once."""
+        self.prompt()
+        self.launch()
+        self.prompt(self.notice())
+        self.pre("Agent", {"description": "d", "prompt": "Outcome: x", "model": "alpha-small"}, tool_use_id="fb1")   # fell back
+        out = self.stop_with("Done. The provx provider hit its quota so I did it myself.")
+        self.assertEqual(out.get("decision"), "block")
+        self.assertIn("internal", out["reason"])
+        self.assertIn("provx", out["reason"])
+        self.assertEqual(self.stop_with("Done. The provx provider was out."), {})            # once: never a trap
+
+    def test_the_failure_words_are_covered_too(self):
+        """The provider's name need not appear: "quota" or "fallback" after an unavailability is the same leak."""
+        self.prompt()
+        self.launch()
+        self.prompt(self.notice())
+        self.pre("Agent", {"description": "d", "prompt": "Outcome: x", "model": "alpha-small"}, tool_use_id="fb5")
+        out = self.stop_with("Here are the files, from a subagent after the first worker hit its quota.")
+        self.assertEqual(out.get("decision"), "block")
+        self.assertIn("quota", out["reason"])
+
+    def test_the_hosts_own_copy_of_the_final_message_is_used_when_it_is_sent(self):
+        """Found by the live check: the transcript may not hold the final message yet when the stop hook runs."""
+        self.prompt()
+        self.launch()
+        self.prompt(self.notice())
+        self.pre("Agent", {"description": "d", "prompt": "Outcome: x", "model": "alpha-small"}, tool_use_id="fb3")
+        r = self.sisi("gate", "--tool", "claude-code", stdin=json.dumps(
+            {"session_id": self.sid, "cwd": self.proj, "hook_event_name": "Stop",
+             "last_assistant_message": "The provx provider hit its quota, so I did it myself."}))
+        self.assertEqual(json.loads(r.stdout).get("decision"), "block")
+
+    def test_ending_the_turn_with_no_fallback_started_is_sent_back_twice_at_most(self):
+        """Found by the live check: a small model read the instruction and still stopped. State-based, once."""
+        self.prompt()
+        self.launch()
+        self.prompt(self.notice())
+        out = self.stop_with("Here are the 14 files.")
+        self.assertEqual(out.get("decision"), "block")
+        self.assertIn("has not been given to another worker", out["reason"])
+        self.assertIn("alpha-small", out["reason"])
+        self.assertLessEqual(len(out["reason"].splitlines()), 6)
+        self.assertEqual(self.stop_with("Here are the 14 files.").get("decision"), "block")   # a model may ignore it once
+        self.assertEqual(self.stop_with("Here are the 14 files."), {})        # bounded: never a trap
+
+    def test_no_send_back_when_the_fallback_was_started(self):
+        self.prompt()
+        self.launch()
+        self.prompt(self.notice())
+        self.pre("Agent", {"description": "d", "prompt": "Outcome: x", "model": "alpha-small"}, tool_use_id="fb2")
+        self.assertEqual(self.stop_with("Here are the 14 files."), {})
+
+    def test_no_send_back_when_nothing_usable_is_left(self):
+        os.unlink(workers.ledger_path())
+        os.unlink(os.path.join(self.data, "workers.json"))
+        workers.append_record({"kind": "attempt", "id": "only", "run_id": None, "ts": 1, "project": "p", "type": "research",
+                               "difficulty": 1, "worker": "alpha-small", "outcome": "accepted", "check": "read"})
+        self.prompt()
+        self.prompt(self.notice("[failed]: alpha-small: API error 429: Subscription quota exhausted. Your usage window resets at " + FUTURE))
+        self.assertEqual(self.stop_with("Done myself."), {})
+
+    def test_a_final_message_that_does_not_name_it_is_left_alone(self):
+        self.prompt()
+        self.launch()
+        self.prompt(self.notice())
+        self.pre("Agent", {"description": "d", "prompt": "Outcome: x", "model": "alpha-small"}, tool_use_id="fb4")
+        self.assertEqual(self.stop_with("Here are the 14 files, one per line."), {})
+
+    def test_no_unavailability_no_report_check(self):
+        self.prompt()
+        self.assertEqual(self.stop_with("provx was great"), {})
 
     def test_a_tool_failure_event_for_the_delegation_counts_too(self):
         self.prompt()

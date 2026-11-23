@@ -499,7 +499,8 @@ def _orchestration_step(payload, action):
         if store.load_session(sid).get("subagent"):
             return None
         if action == "allow":
-            text = orchestration.judgement_sendback(payload, sid)
+            text = (orchestration.fallback_sendback(payload, sid) or orchestration.judgement_sendback(payload, sid)
+                    or orchestration.report_sendback(payload, sid))
             if text:
                 return "block", text
             orchestration.end_turn(sid)

@@ -19,6 +19,9 @@ from . import store, workers
 NOTICE = "<task-notification>"
 _FAIL_MARKERS = ("[failed]", "api error", "error:", "failed:", "traceback", "exit code")
 _DEFAULT_KIND = ("implementation", 2)
+# what a report of the failure would call it, by class: the final message must not say these after one (state-based)
+_REASON_WORDS = {"limit": ("quota", "rate limit", "usage limit", "429"), "auth": ("logged in", "login", "credentials"),
+                 "missing": ("not connected", "not installed"), "error": ("outage",)}
 
 
 def _tag(text, name):
@@ -90,7 +93,7 @@ def handle(m, sid, cwd, text, own_model=None, worker=None, run_id=None, record=T
     from . import orchestration
     worker = worker or workers.identify_worker(text)
     info = {"worker": worker, "ts": time.time(), "kind": kind, "difficulty": difficulty}
-    run = None
+    run, marked = None, None
     if run_id:
         run = next((r for r in workers.merged_runs() if r.get("id") == run_id), None)
         if run:
@@ -109,5 +112,12 @@ def handle(m, sid, cwd, text, own_model=None, worker=None, run_id=None, record=T
         workers.append_record({"kind": "run-end", "run_id": run_id, "ts": round(time.time()), "status": "superseded",
                                "ended": round(time.time())})
     m["unavail"] = {k: info.get(k) for k in ("worker", "kind", "difficulty", "until", "reason")}
+    names = set(m.get("unavail_names") or [])
+    for n in [worker] + list((marked or {}).get("keys") or []):
+        for part in re.split(r"[/\s]+", str(n or "").lower()):
+            if len(part) >= 4:
+                names.add(part)
+    names.update(("fallback", "fall back", "unavailable") + _REASON_WORDS.get(workers.classify_failure(text)[0], ()))
+    m["unavail_names"] = sorted(names)
     orchestration._event(m, sid, "unavailable", worker=worker, run=run_id)
     return fallback_text(info, cwd, own_model)
