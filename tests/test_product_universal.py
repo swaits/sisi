@@ -104,7 +104,7 @@ class ProductIsUniversal(unittest.TestCase):
     def test_the_scan_can_fail(self):
         self.assertTrue(findings("x.py", "ask swaits about it"))
         self.assertTrue(findings("x.py", "Stephen said so"))
-        self.assertTrue(findings("x.py", "see /home/someone/project"))
+        self.assertTrue(findings("x.py", "see /home/" + "charlie/project"))
         self.assertTrue(findings("x.py", "it costs $12 per run"))
         self.assertTrue(findings("x.py", "use claude-example-1 for this"))
         self.assertTrue(findings("x.py", "send it to the haiku worker"))

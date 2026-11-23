@@ -676,8 +676,9 @@ class CliHookTests(SisiCase):
     def test_help_points_to_retro(self):
         out = self.sisi("help").stdout
         self.assertIn("sisi retro", out)
-        self.assertEqual(self.sisi("note", "still works").returncode, 64)
-        self.assertEqual(self.sisi("propose", "still works").returncode, 64)
+        for retired in ("note", "propose"):
+            self.assertNotIn("sisi " + retired + " ", out)
+            self.assertEqual(self.sisi(retired, "still works").returncode, 64)
 
 
 if __name__ == "__main__":
