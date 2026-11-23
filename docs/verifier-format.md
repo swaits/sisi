@@ -61,8 +61,8 @@ Body headings, in this order, all required:
   `.sisi/contract.json`, with `id`, `claim`, `kind`, `rung`, `cmd`, `expect`
   (`exit`, optionally `stdout_contains`) and `timeout_s`. Whenever `timeout_s`
   is over 60, include `"tier": "deep"`: fast checks (the default) may not
-  exceed 60 s, because they run in the end-of-turn gate. Deep checks run with
-  `sisi verify --deep`, in the background, and never block a turn by being slow.
+  exceed 60 s, because they run in the end-of-turn gate. Deep checks run with `sisi verify --deep`, in the background; a slow background check blocks
+  only a `release` change, never an ordinary turn by being slow.
   Contract-level options: top-level `"parallel": true` makes `sisi verify` and
   the gate run the fast-tier checks at the same time (at most 4; results still
   come in contract order), and `"serial": true` on a check makes it always run
