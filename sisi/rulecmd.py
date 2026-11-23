@@ -97,37 +97,24 @@ def _why_paragraphs(body):
 
 
 def _folded_lessons(rule_id):
-    try:
-        from . import retro
-        if not os.path.exists(retro.db_path()):
-            return []
-        con = retro.connect()
-        try:
-            return [dict(r) for r in con.execute(
-                "SELECT * FROM lessons WHERE folded_into=? OR folded_into=? ORDER BY id",
-                (rule_id, "rule:" + rule_id))]
-        finally:
-            con.close()
-    except Exception:
-        return []
+    """The learnings behind a rule: those whose target is the rule, in scope here."""
+    from . import learning as L
+    return L.learnings_in_scope(os.getcwd(), targets=(rule_id,))
 
 
 def _history(rule_id):
-    """Learning rounds that changed this rule, from the cycle records' changed-files evidence."""
-    try:
-        from . import cycle
-        out = []
-        suffix = "rules/%s.md" % rule_id
-        for rec in cycle.cycle_records():
-            changed = rec.get("changed_files") or {}
-            if any(k.endswith(suffix) for k in changed):
-                line = "%s (%s): %s" % (rec.get("id"), (rec.get("ts") or "")[:10], rec.get("summary") or "")
-                if rec.get("reverted"):
-                    line += " (reverted)"
-                out.append(line)
-        return out
-    except Exception:
-        return []
+    """Learning rounds that changed this rule, from the cycle records' changed files."""
+    from . import cycle
+    out = []
+    suffix = "overlay/rules/%s.md" % rule_id
+    for rec in cycle.cycle_records():
+        if any(f == suffix for f in rec.get("changed") or []):
+            line = "%s (%s): %s" % (rec.get("id"), (rec.get("ts") or "")[:10],
+                                    "; ".join(x for x in rec.get("lines") or [] if rule_id in x) or rec.get("label") or "")
+            if rec.get("reverted"):
+                line += " (reverted)"
+            out.append(line)
+    return out
 
 
 _ORIGIN = {"base": "base text, from the product rulebook (canon/core.md)",
@@ -136,7 +123,7 @@ _ORIGIN = {"base": "base text, from the product rulebook (canon/core.md)",
 
 
 def _detail(n, rule):
-    from . import retro
+    from . import learning as L
     print("Rule %d: %s {#%s}\n" % (n, rule["title"], rule["id"]))
     print(rule["body"].strip("\n"))
     why = _why_paragraphs(rule["body"])
@@ -152,24 +139,18 @@ def _detail(n, rule):
         print("  - " + h)
     lessons = _folded_lessons(rule["id"])
     if lessons:
-        print("\nLessons folded into this rule:")
+        print("\nLearnings behind this rule:")
         for r in lessons:
-            date = (retro._get(r, "last_seen") or retro._get(r, "applied_at") or "")[:10]
-            print("  - #%d (%s, seen %d times): %s (full text: `sisi lessons show %d`)"
-                  % (r["id"], date or "undated", r["count"] or 0,
-                     retro.heading_text(r, 140), r["id"]))
-            try:
-                from . import documents as _docs
-                for _key, _t in _docs.traces_for_lesson(r["id"]):
-                    if _t.get("fragment"):
-                        print("    carried in %s by: %r" % (_key, _t["fragment"]))
-            except Exception:
-                pass
-            if (r.get("moment") or "").strip():
-                print("    Where this came from (historical example): %s"
-                      % retro.word_cut(r["moment"], 160))
+            val = (r.get("validation") or {}).get("result") or "unvalidated"
+            print("  - %s (%s, %d unit(s), %s): %s (full text: `sisi lessons show %s`)"
+                  % (r["id"], (r.get("created") or "undated")[:10],
+                     len({p.get("unit") for p in r.get("provenance") or []}),
+                     val if val == "validated" else "unvalidated", L.derive_title(r.get("title") or "", 140), r["id"]))
+            ev = (r.get("observation") or {}).get("evidence") or ""
+            if ev.strip():
+                print("    Where this came from (historical example): %s" % L.derive_title(ev, 160))
     else:
-        print("\nLessons folded into this rule: none yet.")
+        print("\nLearnings behind this rule: none yet.")
     return 0
 
 

@@ -6,14 +6,15 @@ checks the named commit out into a temporary git worktree and removes it afterwa
 
 Seams for the other parts of sisi (plain functions, see docs/evaluation.md):
   capture_case(unit_record)          called when a work unit closes
-  validate_check(case)               called by the learning cycle before it promotes a command check
+  validate_check(case)               replay a stored case's checks at its two commits
+  validate_command(repo, before, after, cmd)  the learning cycle's replay of one command (trusted repo, ancestry, ran-and-failed)
   compare_for_candidate(dir, sample) called for a consequential policy change before the owner is asked
 
 Standard library only. Replay of ``task`` cases goes through the existing delegation runner
 (``sisi.workers.run_delegation``) unless a caller injects ``worker_runner`` or names a
 ``--worker-cmd``; tests always inject a fake, so no test calls a real AI tool.
 """
-import hashlib, json, math, os, re, shutil, statistics, subprocess, sys, tempfile, time, uuid
+import hashlib, json, math, os, re, shlex, shutil, statistics, subprocess, sys, tempfile, time, uuid
 
 from . import paths, store
 
@@ -395,8 +396,81 @@ class _Worktree:
         return False
 
 
+SHELL_BUILTINS = frozenset((":", "true", "false", "test", "[", "[[", "echo", "printf", "exit", "cd", "set",
+                            "export", "unset", "read", "type", "command", "eval", "exec", "return", "source", ".",
+                            "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case",
+                            "esac", "!", "{", "}", "(", ")", "time", "wait"))
+INTERPRETERS = frozenset(("python", "python3", "sh", "bash", "zsh", "dash", "node", "ruby", "perl"))
+SCRIPT_EXT = (".py", ".sh", ".js", ".rb", ".pl", ".mjs")
+_OPERATORS = frozenset((";", "&&", "||", "|", "&", "(", ")", ";;", "|&"))
+
+
+def exit_not_ran(code):
+    """True when an exit status says the command never really ran: not found (127), not
+    executable (126), a negative status (killed by a signal, as Python reports it), or the
+    128+signal a shell reports for a child that was killed."""
+    return code is None or code < 0 or code in (126, 127) or 129 <= code <= 159
+
+
+def _segments(cmd):
+    """The simple commands of a shell line, as token lists (operators split them). None when the
+    line does not parse."""
+    try:
+        lex = shlex.shlex(str(cmd), posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        return None
+    segs, cur = [], []
+    for t in toks:
+        if t in _OPERATORS:
+            if cur:
+                segs.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    if cur:
+        segs.append(cur)
+    return segs
+
+
+def unresolved_program(cmd, cwd):
+    """Why the command's program(s) cannot be found in the tree at ``cwd`` (None when every one
+    resolves). A path program, and a script given to an interpreter, must exist in this tree, so a
+    check that only exists in the later commit cannot count as failing in the earlier one."""
+    segs = _segments(cmd)
+    if not segs:
+        return "the command does not parse or is empty"
+    for seg in segs:
+        i = 0
+        while i < len(seg) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", seg[i]):
+            i += 1  # leading VAR=value assignments
+        if i >= len(seg):
+            continue
+        prog = seg[i]
+        if prog in SHELL_BUILTINS:
+            continue
+        if "/" in prog:
+            target = prog if os.path.isabs(prog) else os.path.join(cwd, prog)
+            if not (os.path.isfile(target) and os.access(target, os.X_OK)):
+                return "program %s does not exist in this commit" % prog
+        elif shutil.which(prog) is None:
+            return "program %s is not on PATH" % prog
+        if os.path.basename(prog) in INTERPRETERS:
+            rest = seg[i + 1:]
+            if "-c" in rest or "-m" in rest or "-e" in rest:
+                continue
+            script = next((t for t in rest if not t.startswith("-")), None)
+            if script and ("/" in script or script.endswith(SCRIPT_EXT)):
+                target = script if os.path.isabs(script) else os.path.join(cwd, script)
+                if not os.path.isfile(target):
+                    return "script %s does not exist in this commit" % script
+    return None
+
+
 def _run_checks(case, cwd, timeout_s):
-    """Run the case's checks in ``cwd``. Returns (rows, timed_out); rows carry exit/passed."""
+    """Run the case's checks in ``cwd``. Returns (rows, timed_out); rows carry exit/passed and
+    ``ran``: False when the command never really ran (program missing, exit 126/127, killed)."""
     rows, timed_out = [], False
     for c in case.get("checks") or []:
         expect = (c.get("expect") or {})
@@ -405,17 +479,23 @@ def _run_checks(case, cwd, timeout_s):
             want = int(want)
         except (TypeError, ValueError):
             want = 0
+        why = unresolved_program(c.get("cmd"), cwd)
+        if why:
+            rows.append({"id": c.get("id"), "cmd": c.get("cmd"), "exit": None, "ran": False,
+                         "expected_exit": want, "passed": False, "error": why})
+            continue
         try:
             r = subprocess.run(str(c.get("cmd")), shell=True, cwd=cwd, capture_output=True,
                                text=True, timeout=timeout_s)
             rows.append({"id": c.get("id"), "cmd": c.get("cmd"), "exit": r.returncode,
+                         "ran": not exit_not_ran(r.returncode),
                          "expected_exit": want, "passed": r.returncode == want})
         except subprocess.TimeoutExpired:
             timed_out = True
-            rows.append({"id": c.get("id"), "cmd": c.get("cmd"), "exit": None,
+            rows.append({"id": c.get("id"), "cmd": c.get("cmd"), "exit": None, "ran": False,
                          "expected_exit": want, "passed": False, "timed_out": True})
         except OSError as e:
-            rows.append({"id": c.get("id"), "cmd": c.get("cmd"), "exit": None,
+            rows.append({"id": c.get("id"), "cmd": c.get("cmd"), "exit": None, "ran": False,
                          "expected_exit": want, "passed": False, "error": str(e)})
     return rows, timed_out
 
@@ -452,8 +532,14 @@ def _replay_check(case, timeout_s):
                 if timed_out:
                     return {"outcome": "not-run", "reason": "check timed out at the %s commit" % label,
                             "check_results": results + [dict(r, at=label) for r in rows]}
-                seen[label] = passed
                 results += [dict(r, at=label) for r in rows]
+                stuck = [r for r in rows if not r.get("ran", True)]
+                if stuck:
+                    return {"outcome": "not-run", "check_results": results,
+                            "reason": "the check could not run at the %s commit (%s); a check that did "
+                                      "not run proves nothing" % (label, stuck[0].get("error")
+                                                                  or "exit %s" % stuck[0].get("exit"))}
+                seen[label] = passed
         except RuntimeError as e:
             return {"outcome": "not-run", "reason": str(e), "check_results": results}
         if case.get("split") == "counterexample":
@@ -490,6 +576,34 @@ def validate_check(case, store_dir=None, timeout_s=None, record=False):
         append_result(row, store_dir=store_dir)
         out["result_id"] = row["id"]
     return out
+
+
+def validate_command(repo, before, after, cmd, expect_exit=0, timeout_s=None, store_dir=None):
+    """Replay one command at two commits of a local, trusted repository: ``validated`` only when
+    it ran and failed at ``before`` and ran and passed at ``after``. Anything that stops the
+    command from really running (program missing at either commit, exit 126/127, a timeout, a
+    signal) is ``not-run`` with the reason, never a failure. ``before`` must be an ancestor of
+    ``after``; the repository must be a project on the trust list. Returns the replay outcome
+    dict (``outcome``, ``reason``, ``check_results``); nothing is recorded."""
+    from . import trust
+    repo = os.path.realpath(str(repo or ""))
+    if not os.path.isdir(repo) or _is_remote(repo):
+        return {"outcome": "not-run", "reason": "the repository is not a local directory", "check_results": []}
+    if not trust.is_trusted(repo):
+        return {"outcome": "not-run", "check_results": [],
+                "reason": "the repository is not on the trust list (`sisi contract trust` in it), "
+                          "so its commands are not replayed"}
+    if not _commit_exists(repo, before) or not _commit_exists(repo, after):
+        return {"outcome": "not-run", "reason": "a commit is missing in the repository", "check_results": []}
+    rc, _o, _e = _git(repo, "merge-base", "--is-ancestor", str(before), str(after))
+    if rc != 0:
+        return {"outcome": "not-run", "check_results": [],
+                "reason": "the before commit is not an ancestor of the after commit"}
+    case = {"id": "replay", "kind": "check", "split": "dev",
+            "project": {"repo": repo, "start_commit": str(before), "fix_commit": str(after)},
+            "checks": [{"id": "c", "cmd": str(cmd), "expect": {"exit": expect_exit}}]}
+    timeout_s = float(timeout_s or _eval_config(store_dir)["timeout_s"])
+    return _replay_check(case, timeout_s)
 
 
 def _rulebook_text(policy_dir):

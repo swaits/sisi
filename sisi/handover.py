@@ -1,80 +1,53 @@
-"""Project handover pile: project-scoped items leave the global store.
+"""Project handover: project-scope records leave sisi's care for the project's own documents.
 
-Scoping a lesson or a `sisi learn` statement to a project moves it here: a pile in
-the personal store, keyed by project id, kept only until an agent files it in that
-project's own design documentation or work list and confirms with
-`sisi handover done ID --where PATH`. After confirmation the item is gone from
-every global listing; a small filed log (id, project, path, date) keeps the trace,
-and the personal store's git history keeps the rest.
+A learning or `sisi learn` statement the owner (or the retro) scoped to a project, explicitly,
+waits here until an agent files it in that project's own design documentation or work list and
+confirms with `sisi handover done ID --where PATH`. The items are read from the learning store;
+a small filed log (id, project, path, date) keeps the trace of what was filed, and the user
+store's git history keeps the rest.
 """
 import json, os
 
-from . import paths, scope, store
-
-
-def pile_path():
-    return paths.data_file("handover.json")
+from . import learning as L, paths, scope
 
 
 def filed_path():
     return paths.data_file("handover-filed.jsonl")
 
 
+def _filed():
+    return {r.get("hid") for r in L._read_jsonl(filed_path())[0]}
+
+
+def _item(r):
+    pr = r.get("proposed") or {}
+    return {"hid": r["id"], "kind": "learn" if r.get("owner_statement") else "lesson", "lesson_id": r["id"],
+            "project": r.get("origin_project"), "date": r.get("created") or "",
+            "text": pr.get("description") or r.get("title"), "change": pr.get("description"),
+            "short": r.get("title"), "aim": (r.get("observation") or {}).get("impact"),
+            "change_kind": pr.get("mechanism"), "moment": (r.get("observation") or {}).get("evidence"),
+            "cause": r.get("root_cause"),
+            "occurrences": [{"ts": p.get("ts"), "repo": p.get("project"), "tool": None}
+                            for p in r.get("provenance") or []]}
+
+
 def load_pile():
-    try:
-        with open(pile_path(), encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, list) else []
-    except (OSError, ValueError):
-        return []
-
-
-def save_pile(items):
-    os.makedirs(os.path.dirname(pile_path()), exist_ok=True)
-    tmp = pile_path() + ".tmp%d" % os.getpid()
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(items, f, indent=1, sort_keys=True, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp, pile_path())
-
-
-def _next_hid(items):
-    n = len(items)
-    try:
-        with open(filed_path(), encoding="utf-8") as f:
-            n += sum(1 for _ in f)
-    except OSError:
-        pass
-    return "h%d" % (n + 1)
-
-
-def add_item(item):
-    items = load_pile()
-    item = dict(item)
-    item.setdefault("hid", _next_hid(items))
-    item.setdefault("date", store.now())
-    items.append(item)
-    save_pile(items)
-    return item
+    """Project-scope records waiting to be filed: explicitly scoped to a project, written by sisi's
+    own commands, not withdrawn, not yet filed."""
+    ledger = L.load_ledger()
+    done = _filed()
+    return [_item(r) for r in L.load_learnings()
+            if (r.get("proposed") or {}).get("scope_asked") == "project" and L.is_registered(r, ledger)
+            and r.get("status") not in L.ENDED and not r.get("candidate") and r["id"] not in done]
 
 
 def for_project(pid):
     return [it for it in load_pile() if it.get("project") == pid]
 
 
-def counts_by_project():
-    out = {}
-    for it in load_pile():
-        out[it.get("project") or ""] = out.get(it.get("project") or "", 0) + 1
-    return out
-
-
 def notice(cwd):
     """The session-start / request-time line inside the owning project only."""
-    try:
-        items = for_project(scope.project_id(cwd))
-    except Exception:
-        return ""
+    items = for_project(scope.project_id(cwd))
     if not items:
         return ""
     return ("sisi: %d item(s) recorded by sisi belong to this project. File each in this project's own "
@@ -86,37 +59,6 @@ def notice(cwd):
 
 def _norm(t):
     return " ".join(str(t or "").split()).lower()
-
-
-def move_lesson(con, lesson_id, pid):
-    """Copy a lesson (with its occurrences, the historical example) into the pile and remove
-    it from the delivered global data. Returns the pile item, or None."""
-    r = con.execute("SELECT * FROM lessons WHERE id=?", (lesson_id,)).fetchone()
-    if r is None:
-        return None
-    d = dict(r)
-    occ = [dict(o) for o in con.execute("SELECT * FROM occurrences WHERE lesson_id=? ORDER BY id", (lesson_id,))]
-    item = {"kind": "lesson", "lesson_id": d["id"], "project": pid,
-            "date": d.get("created") or store.now(),
-            "aim": d.get("aim"), "change_kind": d.get("change_kind"), "target": d.get("target"),
-            "change": d.get("change"), "short": d.get("short"), "when": d.get("when_terms"),
-            "moment": d.get("moment"), "cause": d.get("cause"),
-            "occurrences": [{"ts": o.get("ts"), "repo": o.get("repo"), "cwd": o.get("cwd"),
-                             "tool": o.get("tool"), "session": o.get("session"), "moment": o.get("moment")}
-                            for o in occ]}
-    con.execute("DELETE FROM impressions WHERE lesson_id=?", (lesson_id,))
-    con.execute("DELETE FROM sightings WHERE lesson_id=?", (lesson_id,))
-    # the occurrence rows stay: they are the history of the work itself (and what satisfies
-    # the retro gate for that session), not delivered lesson data
-    con.execute("DELETE FROM lessons WHERE id=?", (lesson_id,))
-    return add_item(item)
-
-
-def move_learn(rec, pid):
-    item = {"kind": "learn", "project": pid, "date": rec.get("ts") or store.now(),
-            "text": rec.get("text"), "cwd": rec.get("cwd"),
-            "occurrences": [{"ts": rec.get("ts"), "repo": rec.get("cwd"), "tool": rec.get("tool")}]}
-    return add_item(item)
 
 
 def _find(items, ident):
@@ -138,7 +80,7 @@ def _item_lines(it):
     if it.get("kind") == "learn":
         out.append('  what the owner said: "%s"' % " ".join(str(it.get("text") or "").split()))
     else:
-        out.append("  lesson #%s (%s/%s): %s" % (it.get("lesson_id"), it.get("aim"), it.get("change_kind"),
+        out.append("  learning %s (%s/%s): %s" % (it.get("lesson_id"), it.get("aim"), it.get("change_kind"),
                                                 " ".join(str(it.get("change") or "").split())))
         if it.get("short"):
             out.append("  short: %s" % it["short"])
@@ -201,12 +143,12 @@ def main(argv):
                   "first, or pass --quote with a quoted fragment of the item that the file does contain."
                   % (where, " ".join(str(need).split())[:120]))
             return 1
-        save_pile([x for x in items if x is not it])
         rec = {"hid": it.get("hid"), "kind": it.get("kind"), "lesson_id": it.get("lesson_id"),
-               "project": it.get("project"), "where": ap, "date": store.now()}
-        os.makedirs(os.path.dirname(filed_path()), exist_ok=True)
-        with open(filed_path(), "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, sort_keys=True, ensure_ascii=False) + "\n")
+               "project": it.get("project"), "where": ap, "date": L.now()}
+        from . import pdata
+        pdata.write_text("handover-filed.jsonl", (pdata.read_text("handover-filed.jsonl", "") or "")
+                         + json.dumps(rec, sort_keys=True, ensure_ascii=False) + "\n")
+        pdata.commit("handover: %s filed in %s" % (it.get("hid"), ap), ["handover-filed.jsonl"])
         print("filed %s in %s; removed from the handover pile" % (ident, where))
         return 0
     if argv not in ([], ["--all"]):

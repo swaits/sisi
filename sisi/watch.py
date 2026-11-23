@@ -108,12 +108,24 @@ def _session(sid, d, cwd):
     return sess
 
 
+def note_shell(sess, cmd, payload):
+    """Record, for the learning loop, who ran this shell command: whether its hook payload came
+    from a subagent (an agent id or a subagent transcript path). `sisi retro` reads this from the
+    session record to quarantine what a subagent records; it never trusts the caller's environment."""
+    from . import workers
+    shells = sess.setdefault("shells", [])
+    shells.append({"cmd": (cmd or "")[:200], "subagent": bool(workers.is_subagent_payload(payload)),
+                   "ts": time.time()})
+    del shells[:-8]
+
+
 def before(payload):
     tool, cmd, _ev, cwd, sid = extract(payload)
     if not is_shell(tool, cmd):
         return
     sid = sid or "cwd-" + cwd
     sess = _session(sid, payload, cwd)
+    note_shell(sess, cmd, payload)
     store.save_session(sid, sess)
     if _may_write(cmd) is False:
         return  # provably read-only (incl. sisi's own and git commit): no measurement paid

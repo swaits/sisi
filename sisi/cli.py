@@ -21,39 +21,46 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
                                      wire sisi into the tools (by reference), undo, inspect; --dry-run only prints what would change
   sisi release [--deep]              run the source's checks, then make the stable copy the tools run (see docs/developing.md)
   sisi rollback                      switch the stable copy back to the previous release
-  sisi promote [ID|lesson:N] [--apply] | --export [PATH]
-                                     no ID: list core-tier items not yet in the product; an ID
-                                     scrubs a personal overlay item into the source folder and
-                                     drops the personal copy once the product contains it (dry
-                                     run unless --apply); lesson:N promotes a core lesson on a
-                                     from the clone; --export writes a contribution file
+  sisi promote [ID|L-NNNN] [--apply] | --export [PATH]
+                                     no ID: list items not yet in the product (learnings that change
+                                     sisi itself, or earned organization scope); an ID scrubs a
+                                     personal overlay item into the source folder and drops the
+                                     personal copy once the product contains it (dry run unless
+                                     --apply); L-NNNN promotes the rule or recipe a learning was
+                                     folded into, from the clone; --export writes a contribution file
                                      (universal text only; nothing is sent anywhere)
   sisi update                        fast-forward the product clone, then back up, migrate and rebuild personal data
   sisi export [PATH] | import PATH   one tar.gz of personal data, results and session records; restore it
   sisi overlay list|diff|add-rule|replace-rule|disable-rule|enable-rule|add-verifier|...|revert COMMIT
                                      learned changes to rules, verifiers and recipes; each one a commit in your personal repo
   sisi retro                         print the unit's record and what stands out in it
-  sisi retro --finding F --cause C --impact value|correctness|time|cost|attention --disposition promote|record|drop [--same-as ID]
+  sisi retro --finding F --cause C --impact value|correctness|time|cost|attention --disposition promote|record|drop [--same-as ID | --new] [--target ID]
                                      record one finding; promote also needs --change, --mechanism,
-                                     --expect and --validate; record needs --limits; drop needs --why-not
+                                     --expect and --validate; record needs --limits; drop needs --why-not;
+                                     a match in scope is printed and attached as a recurrence (--new records
+                                     a learning of its own); --target names the rule or recipe it concerns
+  sisi retro --adopt ID              a parent adopts a subagent's candidate learning, by id
   sisi lessons [--json] | show ID    the learning records and their statuses
   sisi cycle [due|apply FILE|check FILE|revert [ID]|help]
                                      turn proposed learnings into mechanisms (no scheduler:
                                      due-ness is a counter); apply validates and replays before
                                      promoting; help prints the cycle file format
-  sisi approve [ID --yes|--no]       decide a consequential learning change a cycle parked
+  sisi approve [ID --yes|--no]       list, in full, the consequential changes waiting for the owner; decide one
+                                     (in a terminal: an agent's --yes without one is refused)
   sisi learn [--scope user|project] TEXT
                                      record an owner statement; it takes effect at once and
                                      `sisi oracle` prints it. Scope for other learnings is
                                      earned by evidence, never claimed
+  sisi learn --withdraw ID --reason WHY
+                                     take a statement recorded by mistake out of delivery (kept in history)
   sisi risk [--json]                 risk floor for the working-tree change, with reasons and
                                      what that profile requires
   sisi handover [--all] | done ID --where PATH [--quote FRAGMENT]
-                                     project items waiting to be filed in this project's own docs or
+                                     project-scope learnings waiting to be filed in this project's own docs or
                                      work list; done confirms one is filed (the named file must contain
-                                     its key text) and removes it from the pile
+                                     its key text) and removes it from the list
   sisi oracle                        print what the human wants: the standing principles from
-                                     `sisi learn`, live at once (oracle.md in the personal folder)
+                                     `sisi learn`, live at once (project-scoped ones only in their project)
   sisi status                        verification statistics from the store
   sisi time [--json]                 time from request to verified result: 7 days against the 7 before, slowest checks
   sisi verifiers [WORDS] [--lang L] [--kind K] [--rung N] [--section S] [--installed] [--json]

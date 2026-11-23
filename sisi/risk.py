@@ -44,11 +44,13 @@ def _patterns_from(table):
 
 
 def load_patterns(cwd=None):
-    """Canon patterns plus user-store and project adjustments, in that order."""
+    """Canon patterns plus user-store, learned (cycle) and project adjustments, in that order."""
     from . import paths
     pats = _patterns_from(default_table())
     pats += _patterns_from(_load_json(paths.data_file("risk.json")))
     if cwd:
+        from . import cycle
+        pats += cycle.risk_patterns(cwd)  # learned by a cycle, for this project only unless earned wider
         from . import gitutil
         root = gitutil.root(cwd) or os.path.abspath(cwd)
         pats += _patterns_from(_load_json(os.path.join(root, ".sisi", "risk.json")))
