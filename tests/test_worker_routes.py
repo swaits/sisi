@@ -78,6 +78,45 @@ class HostNativeTests(RouteCase):
         self.assertNotIn("wk-", r.stdout.splitlines()[0])
 
 
+class DownUntilATimeTests(RouteCase):
+    def stamp(self, delta_s, offset_hours=None):
+        import datetime
+        t = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=delta_s)
+        if offset_hours is None:
+            return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+        tz = datetime.timezone(datetime.timedelta(hours=offset_hours))
+        return t.astimezone(tz).isoformat(timespec="seconds")
+
+    def first_line(self):
+        r = self.sisi("route", "--kind", "impl", "--difficulty", "2", env=self.env())
+        return r.stdout.splitlines()[0] if r.stdout else ""
+
+    def test_down_until_a_time_is_due_at_that_time(self):
+        """A limit that resets at a known time today: a mark until a minute ago is usable, one until a
+        minute ahead is not (UTC `Z` or an offset), a date alone still works."""
+        self.seed([("wk-fast", 300, 290), ("wk-mid", 120, 100)])
+        for until in (self.stamp(-60), self.stamp(-60, 5), self.stamp(-60, -7)):
+            r = self.sisi("workers", "down", "wk-fast", "--reason", "limit", "--until", until, env=self.env())
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(self.first_line(), "wk-fast", until)
+        for until in (self.stamp(60), self.stamp(60, 5), self.stamp(60, -7)):
+            r = self.sisi("workers", "down", "wk-fast", "--reason", "limit", "--until", until, env=self.env())
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(self.first_line(), "wk-mid", until)
+        self.sisi("workers", "up", "wk-fast", env=self.env())
+        self.sisi("workers", "down", "wk-fast", "--reason", "limit", "--until", "2099-01-02", env=self.env())
+        self.assertEqual(self.first_line(), "wk-mid")
+        bad = self.sisi("workers", "down", "wk-fast", "--reason", "limit", "--until", "tomorrow-ish", env=self.env())
+        self.assertEqual(bad.returncode, 1)
+
+    def test_the_time_parser_does_not_depend_on_the_python_version(self):
+        from sisi import workers
+        a = workers._parse_time("2026-12-01T09:00:00Z")
+        self.assertEqual(a, workers._parse_time("2026-12-01T11:00:00+02:00"))
+        self.assertEqual(a, workers._parse_time("2026-12-01T09:00:00+00:00"))
+        self.assertEqual(a, workers._parse_time("2026-12-01T09:00:00z"))
+
+
 class DownProvidersTests(RouteCase):
     def test_host_worker_recommended_while_providers_are_down(self):
         """R-7.2-1, R-7.2-3, R-17-5: every provider down, a record exists: route still names the best
@@ -123,13 +162,31 @@ class NotesAndLimitsTests(RouteCase):
         text = "\n".join(notes)
         self.assertIn("set it lower", text)
         self.assertIn("information, not an instruction", text)
-        self.assertIn("passed over", text)
-        self.assertIn("approvals", text)
+        self.assertNotIn("approvals", text)  # a passed-over worker's note waits for --explain
+        ex = self.sisi("route", "--kind", "impl", "--difficulty", "2", "--explain", env=self.env())
+        self.assertIn("passed over", ex.stdout)
+        self.assertIn("approvals", ex.stdout)
         listing = self.sisi("workers", env=self.env())
         self.assertIn("set it lower", listing.stdout)
         self.sisi("workers", "note", "wk-fast", "--remove", env=self.env())
         after = self.sisi("route", "--kind", "impl", "--difficulty", "2", env=self.env())
         self.assertNotIn("set it lower", after.stdout)
+
+    def test_plain_route_is_short_and_quiet_about_workers_it_did_not_choose(self):
+        """Plain `sisi route` is at most 6 lines; notes on passed-over workers (down or not) appear only with --explain."""
+        self.seed_real_shape()
+        self.down("muse/beta-1")
+        for pat in ("beta", "alpha", "muse", "codex", "wk-mid"):
+            self.sisi("workers", "note", pat, "standing fact about %s" % pat, "--why", "owner", env=self.env())
+        self.sisi("workers", "note", "wk-fast", "chosen worker fact", "--why", "owner", env=self.env())
+        r = self.sisi("route", "--kind", "impl", "--difficulty", "2", env=self.env())
+        self.assertEqual(r.returncode, 0, r.stdout)
+        lines = r.stdout.splitlines()
+        self.assertLessEqual(len(lines), 6, r.stdout)
+        self.assertIn("chosen worker fact", r.stdout)
+        self.assertNotIn("passed over", r.stdout)
+        ex = self.sisi("route", "--kind", "impl", "--difficulty", "2", "--explain", env=self.env())
+        self.assertIn("passed over", ex.stdout)
 
     def test_only_limits_a_provider_to_named_models(self):
         """R-7.2-1, R-7.3-3: a newly discovered, cheap model on a limited provider is not routed."""

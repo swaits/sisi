@@ -383,6 +383,12 @@ def _parse_time(value):
         return float(text)
     except ValueError:
         pass
+    # a trailing Z (UTC) and a +HHMM offset are accepted on every Python version; a time with no
+    # zone is read as local time, a bare date as the start of that day
+    if text[-1:] in ("Z", "z"):
+        text = text[:-1] + "+00:00"
+    elif re.search(r"[+-]\d{4}$", text) and "T" in text.upper().replace(" ", "T"):
+        text = text[:-2] + ":" + text[-2:]
     try:
         return datetime.datetime.fromisoformat(text).timestamp()
     except ValueError:
@@ -472,36 +478,6 @@ def import_ledger(src, now=None):
     if changed:
         write_json(availability_path(), avail)
     return before, before + added, added
-
-
-def ensure_imported(now=None):
-    """Import the previously hand-kept ledger once, losslessly. Returns the row count, or None
-    when there was nothing (more) to import. The original file is only read."""
-    now = time.time() if now is None else now
-    marker = _data_file("delegations-import.json")
-    if os.path.exists(marker):
-        return None
-    try:
-        from . import taskset
-        src = taskset.ledger_path()
-    except Exception:
-        src = None
-    if not src or not os.path.isfile(src):
-        return None
-    if os.path.realpath(src) == os.path.realpath(ledger_path()):
-        return None
-    _before, _after, count = import_ledger(src, now=now)
-    # Merge the availability file that sat beside the old ledger, so nothing is forgotten.
-    sibling = os.path.join(os.path.dirname(src), "availability.json")
-    if os.path.isfile(sibling):
-        avail = read_availability()
-        for k, v in read_json(sibling).items():
-            if isinstance(v, dict):
-                avail[str(k).lower()] = v
-        if avail:
-            write_json(availability_path(), avail)
-    write_json(marker, {"source": src, "rows": count, "ts": now})
-    return count
 
 
 def unjudged_runs(records=None):
@@ -760,6 +736,21 @@ def with_commit(fn, args, label):
             from . import pdata
             sub = " ".join(str(a) for a in list(args)[:1] if not str(a).startswith("-"))
             pdata.commit("sisi %s%s: worker data changed" % (label, (" " + sub) if sub else ""), list(DATA_FILES))
+
+
+def effective_prefs(kind, difficulty, project):
+    """The user's avoid/prefer patterns plus the routing adjustments a learning cycle wrote that apply in
+    this project for this kind (and difficulty, when the adjustment names one). A learned entry carries
+    its learning id as its reason, so `sisi route --explain` shows where it came from."""
+    from . import cycle
+    prefs = load_prefs()
+    for a in cycle.routing_adjustments(project):
+        if a.get("kind") != kind or a.get("difficulty") not in (None, difficulty):
+            continue
+        for key in ("avoid", "prefer"):
+            if a.get(key):
+                prefs[key].append({"pattern": str(a[key]), "why": "learning %s" % a.get("learning")})
+    return prefs
 
 
 def _fact_dates():
@@ -1102,7 +1093,7 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
         timeout = DEFAULT_RUN_TIMEOUT_S
     tried = []
     cand = explicit
-    prefs = load_prefs()
+    prefs = effective_prefs(kind, difficulty, cwd)
     if cand is not None and cand.get("host_native"):
         notes.append("sisi: %s is a host-native worker; start it with the host's own subagent tool "
                      "(`sisi delegate` runs only command-line tools)" % cand["worker"])
@@ -1110,6 +1101,7 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
     candidates = [c for c in apply_limits(candidates, prefs)[0] if not c.get("host_native")]
     while True:
         if cand is None:
+            prefs = effective_prefs(kind, difficulty, cwd)
             result = routing.choose(candidates, read_records(), read_availability(), kind, difficulty,
                                     review_of=review_of, now=time.time(), exclude=tried,
                                     avoid=prefs["avoid"], prefer=prefs["prefer"])
@@ -1333,7 +1325,6 @@ def cmd_workers(args=()):
         return _cmd_up(args[1:])
     if args[:1] == ["import"]:
         return _cmd_import(args[1:])
-    imported = ensure_imported()
     disc = discover(force="--refresh" in args)
     records = read_records()
     avail = read_availability()
@@ -1377,9 +1368,6 @@ def cmd_workers(args=()):
             continue
         print("Unavailable: %s - %s, next try %s%s" % (k, v.get("reason") or "down", _when(v.get("retry_at")),
                                                        (" (%s)" % v["note"]) if v.get("note") else ""))
-    if imported is not None:
-        print("Imported the existing delegation ledger: imported %d rows, once, without changing the original."
-              % imported)
     waiting = unjudged_runs(records)
     if waiting:
         print("%d delegation%s waiting for a judgement (%s). Judge with `sisi delegate judge ID "
@@ -1420,7 +1408,6 @@ def _down_lines(down, limit=3):
 
 
 def _route_setup(args):
-    ensure_imported()
     kind = _opt(args, "--kind")
     difficulty = _opt(args, "--difficulty")
     if not kind or difficulty is None:
@@ -1442,7 +1429,7 @@ def cmd_route(args=()):
     kind, difficulty = setup
     records = read_records()
     candidates, cold, excluded = routable_candidates(build_candidates(), records)
-    prefs = load_prefs()
+    prefs = effective_prefs(kind, difficulty, os.getcwd())
     everyone = candidates
     candidates, limited = apply_limits(candidates, prefs)
     result = routing.choose(candidates, records, read_availability(), kind, difficulty,
@@ -1466,9 +1453,14 @@ def cmd_route(args=()):
     print("mechanism: %s" % mechanism_for(result["choice"]))
     for line in _down_lines(down):
         print(line)
-    for line in notes_for(by_worker, result["choice"], result["passed_over"]):
+    head = 2 + len(_down_lines(down))
+    explain = "--explain" in args
+    # Notes for the chosen worker always print; notes for workers passed over only with --explain.
+    # Plain output stays within 6 lines: the worker, the mechanism, what is down, then the notes.
+    for line in notes_for(by_worker, result["choice"], result["passed_over"] if explain else [],
+                          limit=5 if explain else max(1, 5 - head)):
         print(line)
-    if "--explain" in args:
+    if explain:
         for line in routing.explain_choice(result, kind, difficulty):
             print(line)
         if excluded:
@@ -1736,27 +1728,32 @@ def _cmd_brief_check(args):
     missing = brief_contract.missing_parts(text)
     if not missing:
         print("brief ok: all %d parts present" % len(brief_contract.PARTS))
-        return 0
-    print("brief lacks:")
-    for title in missing:
-        print("  - %s" % title)
-    print("`sisi delegate brief` prints the template.")
-    return 1
+    else:
+        print("brief lacks:")
+        for title in missing:
+            print("  - %s" % title)
+        print("`sisi delegate brief` prints the template.")
+    advice = brief_contract.advice(text)
+    if advice:
+        print("advice (does not block):")
+        for line in advice:
+            print("  - %s" % line)
+    return 1 if missing else 0
 
 
 def _cmd_down(args):
     if not args:
-        print("usage: sisi workers down WORKER --reason limit|auth|missing|error [--until DATE] [--note TEXT]")
+        print("usage: sisi workers down WORKER --reason limit|auth|missing|error [--until DATE|DATETIME] [--note TEXT]")
         return 1
     worker = str(args[0]).strip().lower().rstrip("/")
     reason = _opt(args, "--reason")
     if reason not in REASONS:
-        print("usage: sisi workers down WORKER --reason limit|auth|missing|error [--until DATE] [--note TEXT]")
+        print("usage: sisi workers down WORKER --reason limit|auth|missing|error [--until DATE|DATETIME] [--note TEXT]")
         return 1
     until = _opt(args, "--until")
     until_ts = _parse_time(until) if until is not None else None
     if until is not None and until_ts is None:
-        print("sisi: --until wants a date like 2026-12-01 or 2026-12-01T09:00", file=sys.stderr)
+        print("sisi: --until wants a date like 2026-12-01 or a time like 2026-12-01T09:00 (add Z or an offset such as +02:00 for a zone)", file=sys.stderr)
         return 1
     note = _opt(args, "--note")
     record_down([worker], reason, note, until_ts=until_ts)

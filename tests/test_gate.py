@@ -25,7 +25,7 @@ def full(**over):
                  [dict(check("keeps", "test -f README.md"), covers="the readme is deleted")])
     c.update(id="t", goal="make the feature work",
              requirements=[{"id": "r1", "kind": "explicit", "text": "ok.txt exists when the feature is done", "decision": "now"}],
-             risk={"blast_radius": "only the feature file; nothing else reads it", "rollback": "git revert the commit"},
+             risk={"profile": "isolated", "blast_radius": "only the feature file; nothing else reads it", "rollback": "git revert the commit"},
              approach={"chosen": "write the file directly", "why": "the simplest thing that works",
                        "alternatives": ["generate it from a template: more moving parts"]},
              started=store.now(), status="open", pauses=[], deviations=[])
@@ -174,6 +174,16 @@ class RequirementTests(GateBase):
         self.assertIn("sisi contract init", miss[0][1])
         self.assertEqual(assure.missing("isolated", contract([check("a", "false")]), self.proj), [])
 
+    def test_a_contract_without_a_risk_profile_is_missing_one_in_the_gates_list(self):
+        """R-5.3-1: the declared profile is on the "what is missing" list, once, with the field that supplies it."""
+        c = full()
+        c["risk"] = {"blast_radius": "x" * 20, "rollback": "git revert"}
+        miss = assure.missing("isolated", c, self.proj, errors=C.validate(c))
+        self.assertEqual(len(miss), 1, miss)
+        self.assertIn("risk profile", miss[0][0])
+        self.assertIn('"profile"', miss[0][1])
+        self.assertEqual(assure.missing("isolated", full(), self.proj, errors=C.validate(full())), [])
+
     def test_logic_needs_covers_on_every_check(self):
         """R-5.3-6."""
         c = contract([check("a", "false"), dict(check("b", "false"), covers="the parser drops a line")])
@@ -185,7 +195,7 @@ class RequirementTests(GateBase):
 
     def test_integration_needs_invariants_requirements_a_risk_note_and_an_approach(self):
         """R-5.3-7: each missing piece is named, with the field that supplies it."""
-        c = full(invariants=[], requirements=[], risk={}, approach=None)
+        c = full(invariants=[], requirements=[], risk={"profile": "isolated"}, approach=None)
         text = " | ".join("%s -> %s" % m for m in assure.missing("integration", c, self.proj))
         for field in ('"invariants"', '"requirements"', '"risk"', '"approach"'):
             self.assertIn(field, text)
@@ -517,6 +527,16 @@ class FlowTests(GateBase):
         a, msg = self.call(cwd=os.path.join(self.proj, "sub"))
         self.assertEqual(a, "block")
         self.assertIn("bad", msg)
+
+    def test_the_send_back_shows_the_failing_test_not_only_the_end_of_the_output(self):
+        """R-5.6-1, R-5.6-4: the failure printed 300 lines above the end of the output is in the gate's message."""
+        cmd = ("echo 'FAIL: test_needle (mod.T.test_needle)'; echo 'AssertionError: needle missing'; "
+               "for i in $(seq 1 300); do echo \"summary $i\"; done; exit 1")
+        self.write_contract(contract([check("t", cmd)]) | {"risk": {"profile": "isolated"}})
+        a, msg = self.call()
+        self.assertEqual(a, "block")
+        self.assertIn("FAIL: test_needle (mod.T.test_needle)", msg)
+        self.assertIn("AssertionError: needle missing", msg)
 
     def test_a_check_over_the_budget_is_reported_not_passed(self):
         """R-15-5: a check that cannot finish in time is not-run, never passed."""

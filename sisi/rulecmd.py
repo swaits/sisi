@@ -3,7 +3,7 @@ full with its reasons, history and the lessons folded into it. The generated rul
 `More: sisi rule N` at the end of each rule, so every rule an agent sees names the command that explains it.
 
 The enforcement wording is derived from code facts (which hooks are wired, whether the gate carries
-the question check, whether the floors exist), not from prose: if a mechanism is removed, this
+the question check and the risk requirements exist), not from prose: if a mechanism is removed, this
 output stops claiming it. A rule with no entry below is reported honestly as depending on the agent.
 """
 import os, sys
@@ -13,22 +13,6 @@ def _gate_wired():
     try:
         from . import wiring
         return "Stop" in wiring.hook_cmds()
-    except Exception:
-        return False
-
-
-def _floors():
-    try:
-        from . import contract, paths
-        return os.path.exists(paths.canon("floors.json")) and callable(contract.floor_failures)
-    except Exception:
-        return False
-
-
-def _question_gate():
-    try:
-        from . import gate
-        return bool(gate.QUESTION_DIALOG_TOOLS) and callable(gate.ends_with_question)
     except Exception:
         return False
 
@@ -66,26 +50,32 @@ def _say(enforced=(), measured=(), judgement=()):
     return " | ".join(parts) if (enforced or measured) else _NOT + (" (%s)" % "; ".join(judgement) if judgement else "")
 
 
-# One function per rule, so its wording can be tightened on its own when the end-of-turn gate
-# rebuild (gate.py, contract.py, risk.json) merges. They describe what exists on this branch.
+# One function per rule. Each names the module that holds the mechanism: the question check is in
+# questions.py, the requirements per risk profile in assure.py and risk.py, the end-of-turn decision and
+# the retro offer in gate.py, closing a unit in unit.py, the commit-time notice in watch.py.
 
 def _dialog_names():
     try:
-        from . import gate
-        return ", ".join(sorted({t for v in gate.QUESTION_DIALOG_TOOLS.values() for t in v}))
+        from . import questions
+        return ", ".join(sorted({t for v in questions.QUESTION_DIALOG_TOOLS.values() for t in v}))
     except Exception:
         return "the question dialog"
 
 
 def _own_the_outcome():
     return _say(enforced=["ending a reply on a question instead of the question dialog (%s) is sent back by the end-of-turn gate"
-                          % _dialog_names() if _has("gate", "ends_with_question", "QUESTION_DIALOG_TOOLS") and _gate_wired() else None],
+                          % _dialog_names() if _has("questions", "ends_with_question", "sendback", "QUESTION_DIALOG_TOOLS")
+                          and _gate_wired() else None],
                 judgement=["reading the request as the outcome, the requirement list, assume or ask, amendments"])
 
 
 def _size_by_risk():
-    return _say(enforced=["the end-of-turn gate demands the contract and evidence the risk floor calls for"
-                          if _gate_wired() and _has("risk", "floor_for_working_tree") and _has("contract", "floor_failures") else None],
+    return _say(enforced=["the end-of-turn gate computes the risk floor of the change, takes the profile the contract declares "
+                          "(lowering it needs a reason) and sends the agent back for whatever that profile requires"
+                          if _gate_wired() and _has("risk", "assess", "requirements_for")
+                          and _has("assure", "effective_profile", "missing") else None,
+                          "a contract without a declared `risk.profile` is invalid"
+                          if _has("contract", "RISK_PROFILES") and _has("assure", "missing") else None],
                 measured=["`sisi risk` prints the floor and what the profile requires, the unit record keeps the profile"
                           if _has("risk", "assess") else None],
                 judgement=["raising the profile when you know better; lowering it needs a reason"])
@@ -94,21 +84,26 @@ def _size_by_risk():
 def _define_done():
     return _say(enforced=["contract check refuses a check with no command or one that cannot fail (vacuous)"
                           if _has("contract", "vacuous_reason") else None,
-                          "end-of-turn gate sends the agent back when a sizeable change has no contract"
-                          if _gate_wired() else None],
+                          "end-of-turn gate sends the agent back when the profile needs a contract and there is none, "
+                          "or when a check lacks what it covers, invariants or the requirement list are missing"
+                          if _gate_wired() and _has("assure", "missing") else None],
                 judgement=["the goal in the person's words, one check on the purpose, invariants captured before the first edit"])
 
 
 def _verify_enough():
     return _say(enforced=["`sisi verify` runs the checks with five statuses (passed, failed, skipped, not-applicable, not-run), nothing unrun passes"
                           if _has("verify", "STATUSES") else None,
-                          "minimum rungs refused when the contract is checked" if _floors() else None,
-                          "the end-of-turn gate runs verify and sends the agent back on a failure" if _gate_wired() else None],
+                          "the end-of-turn gate runs the fast checks and sends the agent back on a failure, with the failing evidence lines"
+                          if _gate_wired() and _has("assure", "failure_lines") else None,
+                          "high-risk profiles need evidence from someone or something other than the author"
+                          if _has("assure", "independent_evidence") else None],
+                measured=["a commit or merge with no passing `sisi verify` for the tree gets a notice, never a block"
+                          if _has("watch", "commit_notice") else None],
                 judgement=["choosing the technique, which checks the change can affect, watching a test fail once"])
 
 
 def _deliver_fast():
-    return _say(measured=["the unit record keeps timings (checks, delivery), `sisi status` shows trends and the slow steps"
+    return _say(measured=["the unit record keeps timings (checks, delivery), `sisi status` shows trends by project, risk profile, model and policy version"
                           if _has("delivery", "record") and _has("scorecard", "cmd_status") else None,
                           "a slower learned change is flagged for reversal" if _has("delivery", "record") else None],
                 judgement=["parallel work, background checks, handing over early, changing approach when stuck"])
@@ -116,7 +111,7 @@ def _deliver_fast():
 
 def _orchestrate():
     return _say(enforced=["a delegation brief without outcome, acceptance or files it may change is refused (`sisi delegate`)"
-                          if _has("workers", "cmd_delegate") else None],
+                          if _has("workers", "cmd_delegate") and _has("brief", "missing_required") else None],
                 measured=["the delegation ledger and `sisi delegate judge`, `sisi route` recommends the worker from that record"
                           if _has("routing", "choose") and _has("workers", "cmd_delegate") else None],
                 judgement=["who gets the task, how much to check what comes back, recording the judgement"])
@@ -129,9 +124,9 @@ def _report_plainly():
 
 
 def _close_with_retro():
-    return _say(enforced=["a retro is required before the unit closes; the gate sends the agent back, with a limit on reminders"
-                          if _gate_wired() and _has("retro", "cmd_retro") else None],
-                measured=["`sisi cycle` due-ness is a counter of recorded lessons" if _has("cycle", "protected_rules") else None],
+    return _say(enforced=["the end-of-turn gate asks for a retro once per state of the tree and closes the unit when a finding is recorded"
+                          if _gate_wired() and _has("learning", "findings_for_unit") and _has("unit", "close_unit") else None],
+                measured=["`sisi cycle` due-ness is a counter of recorded lessons" if _has("cycle", "due_notice") else None],
                 judgement=["whether a finding is concrete, names a root cause and picks the right disposition"])
 
 

@@ -103,6 +103,11 @@ def missing(profile, c, project, results=None, errors=None, deep_state=None, now
         absent = True
     else:
         absent = False
+    rk = c.get("risk") if isinstance(c.get("risk"), dict) else {}
+    if not absent and rk.get("profile") not in C.RISK_PROFILES:
+        out.append(("a declared risk profile (your own judgement of the change)",
+                    '"risk": {"profile": %s}; `sisi risk` shows the floor' % "|".join(C.RISK_PROFILES)))
+        errors = [e for e in errors or [] if "risk.profile" not in e and not e.startswith("risk must be")]
     if errors:
         shown = "; ".join(errors[:3]) + ("; and %d more" % (len(errors) - 3) if len(errors) > 3 else "")
         out.append(("a valid contract: %s" % shown, "fix it, then `sisi contract check`"))
@@ -160,16 +165,24 @@ def fit(lines, limit=MAX_LINES):
                                          % (len(flat) - limit + 1)])
 
 
+def shown_lines(r, evidence_lines, tail_lines):
+    """The lines to show for one result: the evidence that identifies the failure first, then the last
+    lines of its output that the evidence did not already include."""
+    ev = [ln for ln in str(r.get("evidence") or "").splitlines() if ln.strip()][:evidence_lines]
+    tail = [ln for ln in str(r.get("tail") or "").splitlines() if ln.strip() and ln not in ev][-tail_lines:]
+    return ev + tail
+
+
 def failure_lines(results, per_check=4, checks=4):
-    """A short report of the blocking results: id, status, and the last lines of what they printed."""
+    """A short report of the blocking results: id, status, the lines that identify each failure, then
+    the last lines of what it printed."""
     from . import verify as V
     out = []
     bad = V.blocking(results)
     for r in bad[:checks]:
         head = "- %s [%s%s]" % (r["id"], r["status"], (": " + r["reason"]) if r.get("reason") else "")
         out.append(head)
-        tail = [ln for ln in str(r.get("tail") or "").splitlines() if ln.strip()][-per_check:]
-        out += ["    " + ln[:200] for ln in tail]
+        out += ["    " + ln[:200] for ln in shown_lines(r, per_check, 1)]
     if len(bad) > checks:
         out.append("- and %d more failing" % (len(bad) - checks))
     return out

@@ -80,6 +80,67 @@ class BriefTests(OrchCase):
         self.assertIn("Acceptance", r.stdout)
         self.assertIn("Files you may change", r.stdout)
 
+    def brief_with(self, **parts):
+        """valid_brief() with the text of some parts replaced; keys are the heading words."""
+        text = valid_brief()
+        heads = {"acceptance": "Acceptance", "verification": "Verification", "outcome": "Outcome and scope",
+                 "deliverables": "Deliverables and report format"}
+        for key, body in parts.items():
+            h = heads[key]
+            start = text.index("## " + h)
+            end = text.find("\n\n##", start)
+            end = len(text) if end < 0 else end
+            text = text[:start] + "## %s\n%s" % (h, body) + text[end:]
+        return text
+
+    def advice(self, text):
+        p = os.path.join(self.proj, "b.md")
+        open(p, "w").write(text)
+        r = self.sisi("delegate", "check", p, env=self.env())
+        self.assertEqual(r.returncode, 0, r.stdout)  # advice never blocks
+        self.assertLessEqual(len(r.stdout.splitlines()), 20)
+        return r.stdout
+
+    def test_brief_template_carries_what_the_rebuild_learned(self):
+        """R-7.5-1: the template's guidance names the six cases, and an unfilled template is still unfilled."""
+        t = self.sisi("delegate", "brief", env=self.env()).stdout
+        for phrase in ("a number with the command that measures it", "name that reader", "different worker",
+                       "held-out", "abuse cases", "forge the field that marks trust", "unrelated reason",
+                       "30 times", "in parallel", "done / next"):
+            self.assertIn(phrase, t)
+        p = os.path.join(self.proj, "t.md")
+        open(p, "w").write(t)
+        r = self.sisi("delegate", "check", p, env=self.env())
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("advice", r.stdout)  # the template's own guidance is not the author's words
+
+    def test_check_flags_each_case_and_stays_quiet_on_a_clean_brief(self):
+        """R-7.5-1, abuse: each flag has a brief that trips it and a near-identical one that does not."""
+        self.assertNotIn("advice", self.advice(valid_brief()))
+        cases = {
+            "acceptance": (dict(acceptance="Keep the report short and fast."), "Acceptance says"),
+            "gate": (dict(outcome="Add an approval gate for deploys."), "abuse cases"),
+            "tests": (dict(verification="Write tests for the parser."), "repeat run"),
+            "reader": (dict(outcome="Write the index file for other modules to read."), "no reader is named"),
+            "labels": (dict(outcome="Build a matcher and a labelled set of examples."), "different worker"),
+            "commits": (dict(deliverables="1. the parser\n2. the writer"), "commit per item"),
+        }
+        for name, (parts, flag) in cases.items():
+            with self.subTest(name):
+                self.assertIn(flag, self.advice(self.brief_with(**parts)))
+        fixed = {
+            "acceptance": dict(acceptance="The report is under 40 lines (`wc -l report.md`) and the check runs in 5 s."),
+            "gate": dict(outcome="Add an approval gate for deploys.", verification="Abuse cases: omit the trigger field."),
+            "tests": dict(verification="Write tests; run the new module 30 times in parallel."),
+            "reader": dict(outcome="Write the index for other modules to read; the reader is `sisi/search.py`."),
+            "labels": dict(outcome="Build a matcher; the labelled set comes from a different worker."),
+            "commits": dict(deliverables="1. the parser\n2. the writer\nCommit after each item with a done / next note."),
+        }
+        for name, parts in fixed.items():
+            with self.subTest("fixed " + name):
+                self.assertNotIn("advice", self.advice(self.brief_with(**parts)))
+        self.assertLessEqual(len(self.advice(self.brief_with(**{k: v for c in cases.values() for k, v in c[0].items()})).splitlines()), 20)
+
     def test_check_passes_a_full_brief(self):
         p = os.path.join(self.proj, "full.md")
         open(p, "w").write(valid_brief())

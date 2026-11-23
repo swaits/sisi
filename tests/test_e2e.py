@@ -132,7 +132,7 @@ class EndToEnd(SisiCase):
                         "covers": "the migration is deleted"}]
         c["invariants"] = [{"id": "readme", "claim": "the readme stays", "cmd": "test -f README.md", "expect": {"exit": 0}}]
         c["requirements"] = [{"id": "r1", "kind": "explicit", "text": "a users table exists", "decision": "now"}]
-        c["risk"] = {"blast_radius": "one new table; nothing reads it yet", "rollback": "drop the table"}
+        c["risk"] = {"profile": "data", "blast_radius": "one new table; nothing reads it yet", "rollback": "drop the table"}
         c["approach"] = {"chosen": "a plain SQL migration", "why": "the project already uses them",
                          "alternatives": ["an ORM auto-migration: hides the schema"]}
         self.agent_writes(os.path.join(".sisi", "contract.json"), json.dumps(c))

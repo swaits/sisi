@@ -301,9 +301,42 @@ class LintCrossCheckTests(LibCase):
         self.assertIn("warning(s)", r.stdout)
 
 
+class RepeatUnderLoadTests(SisiCase):
+    """R-5.6-1: the library has an entry for repeating a test under parallel load, its command works with the
+    standard library alone, and the two recipes say what this rebuild learned."""
+
+    def test_the_entry_is_in_the_library_and_its_command_separates_stable_from_order_dependent_tests(self):
+        import subprocess
+        r = self.sisi("verifiers", "show", "repeat-under-parallel-load")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("xargs -P 8", r.stdout)
+        d = os.path.join(self.tmp, "rp")
+        os.makedirs(d)
+        with open(os.path.join(d, "test_mod.py"), "w") as f:
+            f.write("import os, time, unittest\n"
+                    "class Stable(unittest.TestCase):\n    def test_ok(self):\n        self.assertEqual(1 + 1, 2)\n"
+                    "class Shared(unittest.TestCase):\n    def test_shared_path(self):\n"
+                    "        p = os.path.join(os.path.dirname(__file__), 'shared.txt')\n"
+                    "        open(p, 'w').write(str(os.getpid())); time.sleep(0.05)\n"
+                    "        self.assertEqual(open(p).read(), str(os.getpid()))\n")
+        cmd = "seq 30 | xargs -P 8 -I{} python3 -m unittest -q test_mod.%s"
+        run = lambda name: subprocess.run(cmd % name, shell=True, cwd=d, capture_output=True).returncode
+        self.assertEqual(run("Stable"), 0)
+        self.assertNotEqual(run("Shared"), 0)
+
+    def test_the_recipes_name_the_first_increment_and_the_scored_heuristic(self):
+        root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+        for name in ("feature", "new-product"):
+            text = open(os.path.join(root, "done", name + ".md"), encoding="utf-8").read()
+            self.assertIn("first usable increment", text, name)
+            self.assertIn("labelled as an estimate", text, name)
+            self.assertIn("labels a different worker wrote", text, name)
+            self.assertIn("repeat-under-parallel-load", text, name)
+
+
 class CoreMdTests(SisiCase):
     def test_help_lists_new_commands(self):
-        out = self.sisi("help").stdout
+        out = self.sisi("help").stdout + self.sisi("help", "verifiers").stdout + self.sisi("help", "done").stdout
         for w in ("verifiers show", "verifiers for", "verifiers doctor | lint", "sisi done", "done for"):
             self.assertIn(w, out)
 

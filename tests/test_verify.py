@@ -2,6 +2,64 @@ import json, unittest
 from support import *
 
 
+class EvidenceTests(SisiCase):
+    """R-5.6-1, R-5.6-4: a failed check keeps the lines that identify the failure, not only the tail of its output."""
+
+    NOISE = "for i in $(seq 1 300); do echo \"summary noise $i\"; done"
+
+    def test_a_failure_300_lines_above_the_end_is_in_the_stored_result_and_the_report(self):
+        cmd = "echo 'FAIL: test_alpha (mod.T.test_alpha)'; echo 'AssertionError: 1 != 2'; %s; exit 1" % self.NOISE
+        r = self.sisi("verify") if self.write_contract(contract([check("t", cmd)])) is None else None
+        self.assertEqual(r.returncode, 1)
+        row = [x for x in self.results() if x["check"] == "t"][0]
+        self.assertEqual(row["status"], "failed")
+        self.assertIn("FAIL: test_alpha (mod.T.test_alpha)", row["evidence"])
+        self.assertIn("AssertionError: 1 != 2", row["evidence"])
+        self.assertLess(len(row["evidence"]), 3100)
+        shown = r.stdout[r.stdout.index("FAILED:"):]
+        self.assertIn("test_alpha", shown)
+        self.assertLess(shown.index("test_alpha"), shown.index("summary noise 300"))
+
+    def test_each_known_runner_keeps_its_failing_test_names(self):
+        from sisi import verify as V
+        outputs = {
+            "unittest": ("FAIL: test_a (m.T.test_a)\n----\nTraceback\nAssertionError: x\n" + "ok\n" * 200 + "FAILED (failures=1)", "test_a (m.T.test_a)"),
+            "pytest": ("_____ test_b _____\nE   assert 1 == 2\n" + "x\n" * 200 + "FAILED tests/t.py::test_b - assert 1 == 2", "tests/t.py::test_b"),
+            "cargo": ("test tests::c ... FAILED\n---- tests::c stdout ----\nthread 'tests::c' panicked at src/l.rs:1:1:\n" + "x\n" * 200 + "test result: FAILED", "tests::c"),
+            "go": ("--- FAIL: TestD (0.00s)\n    d_test.go:9: want 1 got 2\n" + "x\n" * 200 + "FAIL\tpkg", "TestD"),
+            "jest": ("  ● suite › case e\n    Expected: 1\n    Received: 2\n" + "x\n" * 200 + "Tests: 1 failed", "case e"),
+        }
+        for name, (text, want) in outputs.items():
+            with self.subTest(name):
+                ev = V.evidence(text)
+                self.assertIn(want, ev)
+                self.assertNotIn("\nx\nx\nx", ev)
+
+    def test_unknown_output_keeps_the_first_and_last_30_lines_bounded_and_scrubbed(self):
+        from sisi import verify as V
+        text = "\n".join(["line %d" % i for i in range(1, 401)] + ["password=hunter2hunter2"])
+        ev = V.evidence(text)
+        self.assertIn("line 1\n", ev + "\n")
+        self.assertIn("line 30\n", ev + "\n")
+        self.assertNotIn("line 31\n", ev + "\n")
+        self.assertIn("line 400", ev)
+        self.assertNotIn("hunter2", ev)
+        self.assertLessEqual(len(V.evidence("y" * 100000)), V.EVIDENCE_CHARS)
+
+    def test_a_timeout_keeps_what_it_had_printed(self):
+        c = contract([check("slow", "echo 'FAIL: test_slow (m.T.test_slow)'; sleep 5", timeout_s=0.5)])
+        self.write_contract(c)
+        self.sisi("verify")
+        row = [x for x in self.results() if x["check"] == "slow"][0]
+        self.assertEqual(row["status"], "not-run")
+        self.assertIn("test_slow", row["evidence"])
+
+    def test_a_passing_check_stores_no_evidence(self):
+        self.write_contract(contract([check("ok", "echo fine; test -d .")]))
+        self.sisi("verify")
+        self.assertEqual([x["evidence"] for x in self.results() if x["check"] == "ok"], [""])
+
+
 class VerifyTests(SisiCase):
     def run_verify(self, c, *extra):
         self.write_contract(c)

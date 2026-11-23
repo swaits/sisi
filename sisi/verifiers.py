@@ -1,5 +1,5 @@
 """The verifier library and the recipes for "done": parse, list, show, choose, doctor, lint. No model calls."""
-import concurrent.futures as cf, json, os, re, subprocess, sys
+import concurrent.futures as cf, json, os, re, subprocess
 
 from . import contract as C, paths
 

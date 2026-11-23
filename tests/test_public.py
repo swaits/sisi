@@ -103,6 +103,54 @@ class PublishableTree(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(REPO, "docs", "superpowers")))
 
 
+class HelpIsGrouped(SisiCase):
+    """`sisi help` is for its readers: four headings, one line per command, short enough to read at a glance."""
+
+    HEADINGS = ["For the person", "For the agent at work", "Hooks (the tools call these)", "Maintaining sisi"]
+
+    def dispatched(self):
+        """Every command name the dispatcher in cli.main compares `cmd` to, plus the data-layer subcommands."""
+        import ast, argparse
+        from sisi import cli, learn_cli
+        tree = ast.parse(open(cli.__file__, encoding="utf-8").read())
+        main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+        found = set()
+        for n in ast.walk(main):
+            if isinstance(n, ast.Compare) and isinstance(n.left, ast.Name) and n.left.id == "cmd":
+                for c in n.comparators:
+                    for k in (c.elts if isinstance(c, ast.Tuple) else [c]):
+                        if isinstance(k, ast.Constant) and isinstance(k.value, str) and not k.value.startswith("-"):
+                            found.add(k.value)
+        ap = argparse.ArgumentParser()
+        sub = ap.add_subparsers()
+        learn_cli.register(sub)
+        return found | set(sub.choices)
+
+    def test_the_whole_help_fits_60_lines_of_110_characters_under_four_headings(self):
+        out = self.sisi("help").stdout
+        lines = out.splitlines()
+        self.assertLessEqual(len(lines), 60)
+        self.assertLessEqual(max(map(len, lines)), 110)
+        at = [lines.index(h) for h in self.HEADINGS]
+        self.assertEqual(at, sorted(at))
+
+    def test_every_command_the_dispatcher_accepts_is_listed_once_and_nothing_else(self):
+        from sisi import helptext
+        listed = helptext.names()
+        self.assertEqual(len(listed), len(set(listed)), "a command is listed twice")
+        self.assertEqual(set(listed), self.dispatched())
+        text = self.sisi("help").stdout
+        for name in listed:
+            self.assertTrue(re.search(r"(^  sisi |\| |, )%s\b" % re.escape(name), text, re.M), name)
+
+    def test_the_long_explanation_is_one_help_away(self):
+        a, b = self.sisi("help", "retro"), self.sisi("retro", "--help")
+        self.assertEqual((a.returncode, b.returncode), (0, 0))
+        self.assertEqual(a.stdout, b.stdout)
+        self.assertIn("--disposition promote|record|drop", a.stdout)
+        self.assertEqual(self.sisi("help", "nonesuch").returncode, 64)
+
+
 NOT_BUILT = {"build", "inbox"}  # designed in docs/design.md, named in the README as not built
 
 

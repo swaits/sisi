@@ -6,7 +6,7 @@ change selection is skipped (not affected by this change), or not-applicable whe
 file it watches exists; an identical-inputs pass is skipped (reused: passed at <time>).
 Nothing that did not run is ever reported as passed, on any path.
 """
-import hashlib, json, os, signal, subprocess, time
+import hashlib, json, os, re, signal, subprocess, time
 from fnmatch import fnmatch
 from pathlib import PurePosixPath
 
@@ -21,16 +21,65 @@ def _tail(s):
     return s[-TAIL:] if len(s) > TAIL else s
 
 
+EVIDENCE_LINES = 60       # at most this many lines of evidence per failed check
+EVIDENCE_CHARS = 3000
+EVIDENCE_LINE = 300       # and each line is cut here
+EDGE = 30                 # unknown output: this many lines from the start and from the end
+
+# What names a failure in each known runner's output. A line that matches is kept, with the few lines
+# after it that carry the assertion or the panic message.
+_RUNNERS = (
+    ("unittest", re.compile(r"^(FAIL|ERROR): \S+ \(.+\)"), re.compile(r"^\s*(\w+\.)*\w*(Error|Exception|Failure)\b.*|^\s+self\.assert\w+\(.*")),
+    ("pytest", re.compile(r"^(FAILED|ERROR) \S+|^_{3,} .+ _{3,}$"), re.compile(r"^E\s+.*|^\S+:\d+: \w+")),
+    ("cargo test", re.compile(r"^test \S+ \.\.\. FAILED$|^---- \S+ stdout ----$"), re.compile(r"^thread '.*' panicked at.*|^\s+(left|right):.*|^assertion .*")),
+    ("go test", re.compile(r"^\s*--- FAIL: \S+"), re.compile(r"^\s+\S+\.go:\d+:.*|^\s+(expected|actual|got|want).*|^panic: .*")),
+    ("jest", re.compile(r"^\s*● .+ › .+|^FAIL \S+"), re.compile(r"^\s*(expect\(|Expected|Received).*|^\s*(\w*Error):? .*")),
+)
+
+
+def _clip(lines):
+    out, chars = [], 0
+    for ln in lines:
+        ln = ln.rstrip()[:EVIDENCE_LINE]
+        chars += len(ln) + 1
+        if len(out) >= EVIDENCE_LINES or chars > EVIDENCE_CHARS:
+            break
+        out.append(ln)
+    return out
+
+
+def evidence(text):
+    """The lines that identify a failure, scrubbed of secrets and bounded in size. For output of a known
+    test runner (unittest, pytest, cargo test, go test, jest): each failing test's name line and the
+    assertion lines after it. Otherwise the first and the last 30 lines. A runner prints its summary last,
+    so the tail alone loses the failing test; these lines are what the agent needs first."""
+    lines = [ln for ln in str(text or "").splitlines() if ln.strip()]
+    picked = []
+    for _name, head, detail in _RUNNERS:
+        if not any(head.match(ln) for ln in lines):
+            continue
+        for i, ln in enumerate(lines):
+            if head.match(ln):
+                picked.append(ln)
+                picked += [d for d in lines[i + 1:i + 40] if detail.match(d) and not head.match(d)][:3]
+        break
+    if not picked:
+        picked = lines if len(lines) <= 2 * EDGE else lines[:EDGE] + ["... (%d lines not shown)" % (len(lines) - 2 * EDGE)] + lines[-EDGE:]
+    from . import learning
+    return "\n".join(learning.scrub_secrets(ln) for ln in _clip(dict.fromkeys(picked)))
+
+
 def run_cmd(cmd, cwd, timeout, expect):
-    """Return (status, duration, tail). status: passed/failed/not-run (a timeout never ran to a verdict)."""
+    """Return (status, duration, tail, evidence). status: passed/failed/not-run (a timeout never ran to a
+    verdict). `evidence` is empty unless the check failed or timed out."""
     t0 = time.time()
     if timeout <= 0:
-        return "not-run", 0.0, "not run: time budget exhausted"
+        return "not-run", 0.0, "not run: time budget exhausted", ""
     try:
         p = subprocess.Popen(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              stdin=subprocess.DEVNULL, start_new_session=True)
     except OSError as e:
-        return "failed", 0.0, "could not start: %s" % e
+        return "failed", 0.0, "could not start: %s" % e, "could not start: %s" % e
     try:
         out, err = p.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -39,20 +88,21 @@ def run_cmd(cmd, cwd, timeout, expect):
         except OSError:
             pass
         try:
-            p.communicate(timeout=5)
+            out, err = p.communicate(timeout=5)
         except Exception:
-            pass
-        return "not-run", time.time() - t0, "timed out after %gs" % timeout
+            out = err = b""
+        seen = (out or b"").decode("utf-8", "replace") + "\n" + (err or b"").decode("utf-8", "replace")
+        return "not-run", time.time() - t0, "timed out after %gs" % timeout, evidence(seen)
     dur = time.time() - t0
     o, e = out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
     tail = _tail(o + ("\n" if o and e else "") + e)
     want = expect.get("exit", 0)
     if p.returncode != want:
-        return "failed", dur, "exit %d, expected %d\n%s" % (p.returncode, want, tail)
+        return "failed", dur, "exit %d, expected %d\n%s" % (p.returncode, want, tail), evidence(o + "\n" + e)
     sc = expect.get("stdout_contains")
     if sc is not None and sc not in o:
-        return "failed", dur, "stdout does not contain %r\n%s" % (sc, tail)
-    return "passed", dur, tail
+        return "failed", dur, "stdout does not contain %r\n%s" % (sc, tail), evidence(o + "\n" + e)
+    return "passed", dur, tail, ""
 
 
 def tree_fp(project, contract_path):
@@ -200,16 +250,16 @@ def _run_item(item, x, tier, project, deadline, default_timeout):
          "tier": tier, "mandatory": x.get("mandatory", True), "independent": bool(x.get("independent", False)),
          "covers": x.get("covers"), "reason": None, "saved_s": 0.0}
     if x.get("rung") in (5, 6):
-        r.update(status="not-run", reason="needs human", duration_s=0.0, tail="")
+        r.update(status="not-run", reason="needs human", duration_s=0.0, tail="", evidence="")
     else:
         to = float(x.get("timeout_s", default_timeout))
         if deadline is not None:
             to = min(to, deadline - time.time())
-        st, dur, tail = run_cmd(x["cmd"], project, to, x.get("expect", {"exit": 0}))
+        st, dur, tail, ev = run_cmd(x["cmd"], project, to, x.get("expect", {"exit": 0}))
         reason = None
         if st == "not-run":
             reason = "timed out" if tail.startswith("timed out") else tail.removeprefix("not run: ")
-        r.update(status=st, reason=reason, duration_s=round(dur, 3), tail=tail)
+        r.update(status=st, reason=reason, duration_s=round(dur, 3), tail=tail, evidence=ev)
     return r
 
 
@@ -217,7 +267,7 @@ def _not_run_result(base_item, x, tier, status, reason, saved=0.0):
     return {"item": base_item, "id": x["id"], "kind": x.get("kind"), "rung": x.get("rung"),
             "claim": x.get("claim"), "tier": tier, "mandatory": x.get("mandatory", True),
             "independent": bool(x.get("independent", False)), "covers": x.get("covers"),
-            "status": status, "reason": reason, "duration_s": 0.0, "tail": "", "saved_s": round(saved, 3)}
+            "status": status, "reason": reason, "duration_s": 0.0, "tail": "", "evidence": "", "saved_s": round(saved, 3)}
 
 
 def run(c, project, deadline=None, default_timeout=60, tiers=("fast",), changed=None, reuse=True,
@@ -326,7 +376,7 @@ def record(c, project, results, fp=None):
                                  "seen_failing": bool(r.get("seen_failing")), "mandatory": r.get("mandatory", True),
                                  "independent": bool(r.get("independent", False)), "covers": r.get("covers"),
                                  "tool": store.tool(), "session": store.session_id(), "run": run_id,
-                                 "tier": r.get("tier", "fast"), "fp": fp})
+                                 "tier": r.get("tier", "fast"), "fp": fp, "evidence": r.get("evidence") or ""})
     return run_id
 
 
@@ -340,13 +390,15 @@ def format_table(results):
 
 
 def failure_report(results, limit=4000):
+    """What failed and why: the lines that identify each failure first, then the last lines of the output."""
+    from . import assure
     parts = []
     bad = {id(r) for r in blocking(results)} | {id(r) for r in results if r["status"] == "failed"}
     for r in results:
         if id(r) in bad:
             label = r["status"] + ((": " + r["reason"]) if r.get("reason") else "")
             parts.append("- %s %s [%s]: %s\n%s" % (r["item"], r["id"], label, r.get("claim") or "",
-                                                  "\n".join("    " + l for l in (r["tail"] or "").splitlines()[-15:])))
+                                                  "\n".join("    " + l for l in assure.shown_lines(r, 20, 5))))
     s = "\n".join(parts)
     return s if len(s) <= limit else s[:limit] + "\n... (truncated)"
 

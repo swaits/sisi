@@ -7,7 +7,7 @@ whose config folder does not exist is skipped and reported, never an error. Only
 from the tool's own documentation, `--help`, installed files or a local spike are wired here (see
 docs/harnesses.md); anything unconfirmed is reported in doctor, not guessed into a config.
 """
-import copy, difflib, hashlib, json, os, shlex
+import difflib, hashlib, json, os
 
 from . import hookjson, paths, store, wiring
 
@@ -514,10 +514,6 @@ class Adapter:
                 "enforcement": self.enforcement, "via": self.via, "wired": False,
                 "detail": "not wired", "action": None}
 
-
-def _st(a, rulebook, tick, wired, detail, action=None):
-    return {"tool": a.name, "detected": True, "rulebook": rulebook, "tick": tick,
-            "enforcement": a.enforcement, "via": a.via, "wired": wired, "detail": detail, "action": action}
 
 
 class Codex(Adapter):

@@ -374,7 +374,8 @@ def _decide(payload):
             store.log_error("gate-deep", e)
     failing = V.blocking(results)
     if ds and ds["state"] == "failed" and ds["fresh"]:
-        failing = failing + [{"id": i["id"], "status": "failed", "reason": "deep", "tail": i["tail"]} for i in ds["failed"]]
+        failing = failing + [{"id": i["id"], "status": "failed", "reason": "deep", "tail": i["tail"],
+                                   "evidence": i.get("evidence") or ""} for i in ds["failed"]]
     miss = assure.missing(profile, c, project, results, errs, ds["state"] if ds else None)
 
     if miss or failing:

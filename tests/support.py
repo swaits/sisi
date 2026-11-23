@@ -126,8 +126,8 @@ def human(id, rung=5, kind="general"):
 
 
 def contract(checks, invariants=()):
-    return {"id": "t", "goal": "g", "checks": list(checks), "invariants": list(invariants),
-            "assumptions": [], "questions": []}
+    return {"id": "t", "goal": "g", "risk": {"profile": "isolated"}, "checks": list(checks),
+            "invariants": list(invariants), "assumptions": [], "questions": []}
 
 
 def skip_timing_if_busy(case):
