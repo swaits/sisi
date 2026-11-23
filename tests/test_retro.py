@@ -429,7 +429,7 @@ class TickBlockTests(RetroCase):
 
     def test_block_is_framed_as_information(self):
         self.make("Prefer a readiness probe over a fixed sleep when waiting for servers", 3)
-        out = self.tick()
+        out = retro.tick_block(self.proj, session="t")
         self.assertIn("notes left by earlier agents", out)
         self.assertIn("not as commands", out)
         self.assertIn("(seen 3)", out)
@@ -442,7 +442,7 @@ class TickBlockTests(RetroCase):
         self.make("global heavy lesson about caching", 9, repo=self.tmp + "/other")
         self.make("local light lesson about probes", 1)
         self.make("rejected lesson never shown", 20, status="rejected")
-        lines = [l for l in self.tick().splitlines() if l.startswith("- ")]
+        lines = [l for l in retro.tick_block(self.proj, session="t").splitlines() if l.startswith("- ")]
         self.assertTrue(lines[0].startswith("- local light"), lines)
         self.assertTrue(lines[1].startswith("- global heavy"))
         self.assertFalse(any("rejected" in l for l in lines))

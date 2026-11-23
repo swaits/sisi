@@ -2,7 +2,7 @@
 statements until the product carries them, and not-yet-tiered ones meanwhile), live at once.
 
 A statement takes effect the moment it is recorded: `sisi oracle` prints it, request-time
-delivery hands it over, and a contract's design section must answer its objections. There is
+delivery hands it over when it matches a request. There is
 no quarantine and no holding file. The oracle is a proper document (oracle.md in the personal
 folder) whose structure a learning round owns through the whole-document edit in
 sisi/documents.py, tracing every statement into the text like any other document; until a

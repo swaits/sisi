@@ -70,7 +70,7 @@ def _load_verifiers_from(d):
         e.update(id=h.get("id") or e["stem"], title=h.get("title", ""), answers=h.get("answers", ""),
                  section=h.get("section") or parent or "", languages=_list(h.get("languages")),
                  kinds=_list(h.get("kinds")), cost=h.get("cost", ""), detect=h.get("detect", ""),
-                 ran_here=h.get("ran_here", ""), parent=parent)
+                 ran_here=h.get("ran_here", ""), verified=h.get("verified", ""), parent=parent)
         try:
             e["rung"] = int(h.get("rung", ""))
         except ValueError:
@@ -196,6 +196,113 @@ def parse_args(args):
 def _words(text):
     return [w for w in re.findall(r"[a-z0-9+#.\-]+", text.lower()) if len(w) > 1 and w not in STOP]
 
+
+# ---- structured matching ---------------------------------------------------
+import json as _json
+
+def _synonyms():
+    try:
+        from . import paths as _paths
+        with open(_paths.canon("synonyms.json"), encoding="utf-8") as f:
+            d = _json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+def _recipe_tags():
+    try:
+        from . import paths as _paths
+        with open(_paths.canon("recipe-tags.json"), encoding="utf-8") as f:
+            d = _json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+def _expand(query):
+    """(tags, kinds, sections, words, languages) a query implies, via the synonym table."""
+    low = " " + " ".join(re.findall(r"[a-z0-9]+", (query or "").lower().replace("-", " "))) + " "
+    syn = _synonyms()
+    tags, kinds, sections = set(), set(), set()
+    for g in syn.get("groups") or []:
+        for term in g.get("terms") or []:
+            norm = " " + " ".join(re.findall(r"[a-z0-9]+", term.lower().replace("-", " "))) + " "
+            if norm.strip() and norm in low:
+                tags.add(g.get("tag"))
+                kinds.update(g.get("kinds") or [])
+                sections.update(g.get("sections") or [])
+    words = set(_words(query or ""))
+    for term in list(words):
+        # single-word terms also fire their groups
+        for g in syn.get("groups") or []:
+            if term in (g.get("terms") or []):
+                tags.add(g.get("tag")); kinds.update(g.get("kinds") or []); sections.update(g.get("sections") or [])
+    langs = set()
+    for lang, names in (syn.get("languages") or {}).items():
+        if any((" " + " ".join(re.findall(r"[a-z0-9]+", n.lower())) + " ") in low for n in names):
+            langs.add(lang)
+    return tags, kinds, sections, words, langs
+
+def _verified_bonus(e):
+    v = (e.get("verified") or e["header"].get("verified") or "").lower()
+    return {"ran": 4.0, "docs": 0.0, "memory": -2.0}.get(v, 0.0)
+
+def rank_verifiers(query, entries=None, limit=None):
+    """Ranked [(score, entry)] for a claim, by structured tags first, proven runs first."""
+    tags, kinds, sections, words, langs = _expand(query)
+    out = []
+    for e in (entries if entries is not None else usable(load_verifiers())):
+        kind_hits = kinds & set(e["kinds"])
+        section_hit = e["section"] in sections
+        specific_lang = bool(langs & set(e["languages"]))
+        overlap = words & (set(_words(e["answers"])) | set(_words(e["title"])) | set(_words(e["id"].replace("-", " "))))
+        if not (kind_hits or section_hit or specific_lang or overlap):
+            continue  # proven-ness never creates relevance on its own
+        s = 0.0
+        s += 12.0 * len(kind_hits)
+        if section_hit:
+            s += 6.0
+        if specific_lang:
+            s += 5.0
+        elif langs and "any" in e["languages"]:
+            s += 1.0
+        s += 2.0 * len(overlap)
+        s += _verified_bonus(e)
+        s += 0.3 * (6 - min(e["rung"], 6))
+        if s > 0:
+            out.append((s, e))
+    out.sort(key=lambda x: (-round(x[0], 1), x[1]["rung"], x[1]["id"]))
+    return out[:limit] if limit else out
+
+def rank_recipes(query, entries=None, limit=None):
+    """Ranked [(score, recipe)] for a kind of work, by recipe tags and structured kinds."""
+    tags, kinds, sections, words, langs = _expand(query)
+    tagmap = _recipe_tags()
+    out = []
+    for r in (entries if entries is not None else usable(load_recipes())):
+        info = tagmap.get(r["id"]) or {}
+        rkinds = set(info.get("kinds") or [])
+        rtags = set(info.get("tags") or [])
+        s = 0.0
+        s += 12.0 * len(kinds & rkinds)
+        s += 10.0 * len(tags & rtags)
+        low = " " + " ".join(re.findall(r"[a-z0-9]+", (query or "").lower().replace("-", " "))) + " "
+        for rt in rtags:
+            phrase = " " + " ".join(re.findall(r"[a-z0-9]+", rt.lower().replace("-", " "))) + " "
+            if phrase.strip() and phrase in low and rt not in tags:
+                s += 10.0 if " " in rt.strip() else 5.0
+        text_words = set(_words(r["title"])) | set(_words(r["applies_to"])) | set(_words(r["id"].replace("-", " ")))
+        overlap = {w for w in words if w in text_words or
+                   any(len(w) > 3 and len(x) > 3 and (x.startswith(w) or w.startswith(x)) for x in text_words)}
+        s += 2.0 * len(overlap)
+        s += 0.2 * len(words & set(_words(r["body"])))
+        if r["id"] == "bugfix" and (words & {"bug", "defect", "broken"}):
+            s += 8.0  # a reported defect is bugfix work even when it names a subsystem
+        if r["id"] == "refactor" and (words & {"refactoring", "refactor", "restructure", "restructuring"}):
+            s += 8.0  # naming the restructure makes it refactor work even in a money module
+        if s > 0:
+            out.append((s, r))
+    out.sort(key=lambda x: (-round(x[0], 1), x[1]["id"]))
+    return out[:limit] if limit else out
 
 def _passes(e, o):
     if "lang" in o:
@@ -335,41 +442,18 @@ def cmd_show(args):
     return 0
 
 
-def _score(tokens, e):
-    """Word overlap against answers/title/kinds/languages/id, weighted."""
-    fields = ((e["answers"], 3.0), (e["title"], 3.0), (" ".join(e["kinds"]), 2.0), (" ".join(e["languages"]), 2.0), (e["id"], 2.0))
-    s = 0.0
-    for t in set(tokens):
-        for text, w in fields:
-            ws = set(_words(text.replace("-", " "))) | set(_words(text))
-            if t in ws or any(len(t) > 3 and (x.startswith(t) or t.startswith(x)) and len(x) > 3 for x in ws):
-                s += w
-                break
-    return s
-
-
 def cmd_for(args):
     opts, words = parse_args(args)
     desc = " ".join(words).strip()
     if not desc:
         print('usage: sisi verifiers for "<claim or work>" [--lang L] [--kind K]')
         return 1
-    tokens = _words(desc)
-    cands = []
-    for e in usable(load_verifiers()):
-        if not _passes(e, {k: v for k, v in opts.items() if k in ("lang", "kind")}):
-            continue
-        s = _score(tokens, e)
-        if s > 0:
-            cands.append((s, e))
-    cands.sort(key=lambda x: -x[0])
-    cands = cands[:30]
+    ranked_all = [(s, e) for s, e in rank_verifiers(desc)
+                  if _passes(e, {k: v for k, v in opts.items() if k in ("lang", "kind")})]
+    cands = ranked_all[:30]
     inst = installed_map([e for _, e in cands])
-    ranked = []
-    for s, e in cands:
-        f = s * (1 + 0.15 * (6 - min(e["rung"], 6))) * (1.3 if inst[e["path"]] == "yes" else 1.0)
-        ranked.append((f, e))
-    ranked.sort(key=lambda x: (-round(x[0], 0), x[1]["rung"], -x[0], x[1]["id"]))
+    ranked = [(s + (1.0 if inst[e["path"]] == "yes" else 0.0), e) for s, e in cands]
+    ranked.sort(key=lambda x: (-round(x[0], 1), x[1]["rung"], x[1]["id"]))
     top = ranked[:8]
     fl = None
     if "kind" in opts:
@@ -563,16 +647,7 @@ def done_main(args):
         if not desc:
             print('usage: sisi done for "<description of the work>"')
             return 1
-        toks = set(_words(desc))
-        scored = []
-        for r in rs:
-            s = 0.0
-            for text, w in ((r["title"], 3.0), (r["applies_to"], 3.0), (r["id"].replace("-", " "), 3.0), (r["body"], 0.2)):
-                ws = set(_words(text.replace("-", " ")))
-                s += w * sum(1 for t in toks if t in ws or any(len(t) > 3 and len(x) > 3 and (x.startswith(t) or t.startswith(x)) for x in ws))
-            if s > 0:
-                scored.append((s, r))
-        scored.sort(key=lambda x: (-x[0], x[1]["id"]))
+        scored = rank_recipes(desc, entries=rs)
         if not scored:
             print("no recipe matches that description; `sisi done` lists them")
             _print_drafts(desc)

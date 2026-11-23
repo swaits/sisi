@@ -316,17 +316,17 @@ class TickDeepTests(SisiCase):
         self.git_init()
 
     def test_line_for_not_fresh_states_silent_when_fresh_or_untrusted(self):
+        # Session start no longer prints deep-check state; `sisi verify --state` owns it.
         self.write_contract(contract([check("f", "true"), deepc("d")]))
-        self.assertIn("never-run", self.tick())
-        self.assertEqual(len(self.tick().strip().splitlines()), 1)
+        self.assertEqual(self.tick(), "")
         self.sisi("verify", "--deep")
         self.assertEqual(self.tick(), "")
         with open(os.path.join(self.proj, "n.txt"), "w") as f:
             f.write("x")
-        self.assertIn("stale-pass", self.tick())
+        self.assertEqual(self.tick(), "")
         self.write_contract(contract([check("f", "true"), deepc("d", "false")]))
         self.sisi("verify", "--deep")
-        self.assertIn("failed", self.tick())
+        self.assertEqual(self.tick(), "")
         self.write_contract(contract([check("f", "true"), deepc("d")]), trusted=False)
         os.remove(os.path.join(self.data, "trusted.json"))
         self.assertEqual(self.tick(), "")

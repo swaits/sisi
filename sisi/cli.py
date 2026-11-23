@@ -61,9 +61,8 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
                                      to every user who installs sisi? Both yes: core (in force
                                      for you, queued for the product). (a) only: user (your
                                      standing principles). Neither: project (handed over to it)
-  sisi design                        the owner's standing principles and the design questions to
-                                     answer in a contract's design section before sizeable work
-                                     (implies, provided, alternatives, chosen, objections, challenge)
+  sisi risk [--json]                 risk floor for the working-tree change, with reasons and
+                                     what that profile requires
   sisi handover [--all] | done ID --where PATH [--quote FRAGMENT]
                                      project items waiting to be filed in this project's own docs or
                                      work list; done confirms one is filed (the named file must contain
@@ -131,19 +130,6 @@ def cmd_contract(args):
               "(rung 1-4) and add every check that shows the work is done. Until then `sisi verify` fails and "
               "the end-of-turn gate ignores it." % p)
         try:
-            from . import principles
-            lines = principles.short_lines()
-            if lines:
-                print("\nThe owner's standing principles (the design section must answer each one's objection):")
-                for ln in lines:
-                    print(ln)
-            print("\nFor sizeable work, fill the contract's design section first (the skeleton is in "
-                  "the file; `sisi design` prints the questions): what the goal and these principles "
-                  "imply, what already exists to use, alternatives, the choice, each principle's "
-                  "objection, and an independent challenge. The gate sends a large change back without it.")
-        except Exception:
-            pass
-        try:
             from . import retro
             block = retro.delivery_block(goal or "", "contract-init", extra="contract checks verified")
             if block:
@@ -162,9 +148,6 @@ def cmd_contract(args):
             print("sisi: cannot read %s: %s" % (p, e))
             return 1
         errs = C.validate(c)
-        if isinstance(c, dict) and "design" in c and not C.is_unedited_skeleton(c):
-            from . import design as _D
-            errs = errs + _D.validate_design(c, cwd=C.project_dir(p))
         for e in errs:
             print("  - " + e)
         if not errs:
@@ -454,9 +437,9 @@ def main(argv):
         return cycle.cmd_improve(args)
     if cmd == "oracle":
         return cmd_oracle()
-    if cmd == "design":
-        from . import design
-        return design.main(args)
+    if cmd == "risk":
+        from . import risk
+        return risk.main(args)
     if cmd == "status":
         return cmd_status()
     if cmd == "time":

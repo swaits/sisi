@@ -569,33 +569,6 @@ def _measure_work(cwd, base=None):
     return m
 
 
-def _design_required(sess, cwd, top, g, payload, attr):
-    """The design section is required exactly where a contract is already required: a large
-    change (the gate's growth thresholds). Small edits, subagents, and sessions that edited
-    nothing here are exempt. Returns True when required, else None."""
-    if payload.get("agent_id") or payload.get("agent_transcript_path"):
-        return None  # a subagent works to its parent's brief; the parent owns the design
-    if attr is not None and not attr.get("writing") and not attr.get("unknown"):
-        return None  # this session edited nothing: no design is owed for others' work
-    if not top:
-        return None
-    try:
-        if sess.get("baseline") is not None:
-            now = _measure_work(cwd, sess.get("head"))
-            base = sess["baseline"]
-            dl = max(0, now["lines"] - base["lines"])
-            df = len(set(now["files"]) - set(base["files"]))
-        else:
-            m = _measure_work(cwd, gitutil.head(cwd))
-            dl, df = m["lines"], len(m["files"])
-    except Exception as e:
-        store.log_error("gate-design-measure", e)
-        return None
-    if not (dl > int(g.get("growth_lines", 40)) or df > int(g.get("growth_files", 3))):
-        return None
-    return True
-
-
 def _decide(payload):
     """Return ('allow', message_or_None) or ('block', reason)."""
     cfg = store.config()
@@ -784,23 +757,6 @@ def _decide(payload):
                              kind=sess.get("last_kind", "fast"))
 
     if path:
-        if c is not None and not errs:
-            try:
-                if _design_required(sess, cwd, top, g, payload, attr):
-                    from . import design as _design
-                    derrs = _design.validate_design(c, cwd=project)
-                    if derrs:
-                        missing = "missing" if "design" not in c else "invalid"
-                        return ctx.block(
-                            "sisi: this is a large change and the contract's design section is %s "
-                            "(send-back {n}). Choosing the approach is a checked step: fill the "
-                            "design section before building (`sisi design` prints the owner's "
-                            "standing principles and the questions; `sisi oracle` prints the "
-                            "principles in his words). Do not report this work as done.\n\n%s"
-                            % (missing, "\n".join("- " + e for e in derrs)),
-                            c["id"] if c else None, project, kind="design")
-            except Exception as e:  # the design check must never break the gate
-                store.log_error("gate-design", e)
         deadline = time.time() + float(g.get("budget_s", 120))
         if c is not None:
             errs = C.validate(c)
@@ -891,9 +847,7 @@ def _decide(payload):
         return ctx.allow()
     return ctx.block("sisi: this session has changed %d lines and %d files since its start and there is no "
                      "contract (send-back {n}). Write `.sisi/contract.json` (`sisi contract init` makes the "
-                     "skeleton; give it at least one check with a real command, and for a change this size "
-                     "fill its design section - `sisi design` prints the owner's principles and the "
-                     "questions), then run `sisi verify`. If "
+                     "skeleton; give it at least one check with a real command), then run `sisi verify`. If "
                      "the change needs no checks, run `sisi contract waive \"<reason>\"` instead." % (dl, df))
 
 

@@ -163,6 +163,8 @@ class ImmediateEffectTests(LearningCase):
         ids = [int(l.split()[0][1:]) for l in out if l.startswith("#")]
         self.assertEqual(ids, [b, c, a])  # most seen first; the tie goes to the older lesson
         self.assertEqual(self.lesson(b)["effect"], "backlog")
+        tick = self.sisi("tick", stdin=json.dumps({"session_id": "dev1", "cwd": self.proj, "source": "startup"})).stdout
+        self.assertNotIn("backlog", tick)  # session start no longer prints the backlog
 
 
 class DeliveryTests(LearningCase):

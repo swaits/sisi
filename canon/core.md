@@ -7,17 +7,8 @@ commands mentioned here.
 ## 1. Choose the approach from the goal {#choose-the-approach}
 
 Before sizeable work, think from the goal and the human's standing principles (`sisi oracle`)
-to what they imply. Fill the contract's `design` section first (`sisi design` prints the
-principles and the questions):
-
-- what the goal and the principles imply that the request did not spell out;
-- what the environment, the tool or the existing system already provides - use that instead
-  of building it, and give evidence it exists;
-- at least two other approaches, one line each on cost and risk;
-- the one chosen, and why it is the one the human would pick;
-- for each principle, the objection the human would raise and how the design answers it, or
-  why it does not apply;
-- an independent attack on the design as the human would make it, and what changed.
+to what they imply: what the request did not spell out, and what the environment, the tool or
+the existing system already provides - use that instead of building it.
 
 Why: the human should never have to state a consequence of something they already said. A
 well-built answer to the wrong approach wastes everything spent building it.

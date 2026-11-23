@@ -82,11 +82,7 @@ what "done" means, verifying, or being sent back by the gate.
    that prints it in full (`sisi done ID`, `sisi lessons show ID`), within a 2,000-character cap.
    A recipe counts only when at least two distinct non-generic request words hit its title,
    applies-to or id, at least one of them in its title (matched on stems, so "tag" meets
-   "tagging") — the same strict floor lessons use. When the request reads as design or build work
-   (a design, build, implement or create stem on a non-trivial message; never on a question or a
-   small edit such as a rename or a typo), the owner's standing principles are also injected in
-   short lines with the instruction to fill the contract's design section first, inside the same
-   cap. A message that is a question to the agent and
+   "tagging") — the same strict floor lessons use. A message that is a question to the agent and
    names no work (no fix, build, change or the like), trivial messages (a bare yes or no, a slash
    command, a short question) and unmatched requests inject nothing at all. These
    showings count as *listed* at place `prompt`. The hook never blocks a turn: any error exits
@@ -370,10 +366,6 @@ universal lessons that merely mention common file names such as README or CHANGE
 pass, and universal changes whose moment names a project, which also pass because only the
 delivered part is checked), and long real-style multi-part requests plus plain questions for
 request-time recipe delivery (a hit is the expected recipe; any other recipe is a false match).
-The design-section validation is measured the same way in the design tests: a labelled set of
-good design sections against filler ones (a hit is a good section passing; a false pass is a
-filler section passing), plus labelled design-work requests for request-time delivery.
-
 Delivery therefore depends on the quality of the when-terms the recording agent writes. Thin or
 copy-of-the-text terms leave a lesson findable only by its own wording, exactly the failure they
 exist to prevent. What sisi ultimately measures is not match scores but the outcome that matters:

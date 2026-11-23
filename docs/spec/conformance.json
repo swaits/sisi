@@ -484,24 +484,24 @@
   },
   {
     "id": "R-4.5-1",
-    "status": "partial",
-    "how": "The design section requires a named challenger and alternatives before large edits",
-    "evidence": "sisi/design.py",
-    "gap": "The challenge is structural text validated for shape, not evidence that a better solution was sought, and it fires by diff size rather than by flawed premises."
+    "status": "missing",
+    "how": "nothing: the six-part design section that touched this was retired as ceremony",
+    "evidence": "",
+    "gap": "An approach note (chosen approach, alternatives considered, what existing capability is reused) required by risk profile is designed in docs/target.md and not built yet."
   },
   {
     "id": "R-4.5-2",
-    "status": "partial",
-    "how": "The design section requires a named challenger and alternatives before large edits",
-    "evidence": "sisi/design.py",
-    "gap": "The challenge is structural text validated for shape, not evidence that a better solution was sought, and it fires by diff size rather than by flawed premises."
+    "status": "missing",
+    "how": "nothing: the six-part design section that touched this was retired as ceremony",
+    "evidence": "",
+    "gap": "An approach note (chosen approach, alternatives considered, what existing capability is reused) required by risk profile is designed in docs/target.md and not built yet."
   },
   {
     "id": "R-4.5-3",
-    "status": "partial",
-    "how": "The design section requires a named challenger and alternatives before large edits",
-    "evidence": "sisi/design.py",
-    "gap": "The challenge is structural text validated for shape, not evidence that a better solution was sought, and it fires by diff size rather than by flawed premises."
+    "status": "missing",
+    "how": "nothing: the six-part design section that touched this was retired as ceremony",
+    "evidence": "",
+    "gap": "An approach note (chosen approach, alternatives considered, what existing capability is reused) required by risk profile is designed in docs/target.md and not built yet."
   },
   {
     "id": "R-5.1-1",
@@ -1072,17 +1072,17 @@
   },
   {
     "id": "R-8.2-1",
-    "status": "partial",
-    "how": "The audits and design section favour the simplest coherent approach and sisi deletes or retires some dead surfaces",
-    "evidence": "sisi/design.py",
-    "gap": "Accidental complexity is not measured, and gate ceremony is triggered by diff size, which equates size with risk."
+    "status": "missing",
+    "how": "nothing: the six-part design section that touched this was retired as ceremony",
+    "evidence": "",
+    "gap": "An approach note (chosen approach, alternatives considered, what existing capability is reused) required by risk profile is designed in docs/target.md and not built yet."
   },
   {
     "id": "R-8.2-2",
-    "status": "partial",
-    "how": "The audits and design section favour the simplest coherent approach and sisi deletes or retires some dead surfaces",
-    "evidence": "sisi/design.py",
-    "gap": "Accidental complexity is not measured, and gate ceremony is triggered by diff size, which equates size with risk."
+    "status": "missing",
+    "how": "nothing: the six-part design section that touched this was retired as ceremony",
+    "evidence": "",
+    "gap": "An approach note (chosen approach, alternatives considered, what existing capability is reused) required by risk profile is designed in docs/target.md and not built yet."
   },
   {
     "id": "R-8.3-1",
@@ -1149,10 +1149,10 @@
   },
   {
     "id": "R-9.3-1",
-    "status": "partial",
-    "how": "A six-part design section is required before edits past 40 lines or 3 files",
-    "evidence": "sisi/design.py:100",
-    "gap": "Planning is triggered by diff size not risk, validates text shape rather than foreseeable rework, and records no dependencies or integration responsibilities."
+    "status": "missing",
+    "how": "nothing: the six-part design section that touched this was retired as ceremony",
+    "evidence": "",
+    "gap": "An approach note (chosen approach, alternatives considered, what existing capability is reused) required by risk profile is designed in docs/target.md and not built yet."
   },
   {
     "id": "R-9.4-1",
