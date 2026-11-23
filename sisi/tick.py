@@ -101,21 +101,19 @@ def main(args=()):
                     store.save_session(sid, sess)
         except Exception as e:
             store.log_error("tick-workers", e)
-        try:
+        try:  # ONE line for new worker models and new command-line tools (each kind is announced once)
             sess3 = rec or store.load_session(sid)
-            from . import workers as _W3
+            from . import discovery, workers as _W3
             if not sess3.get("subagent") and not _W3.is_subagent_payload(payload):
-                line = _W3.new_worker_line()
+                models = []
+                try:
+                    models = _W3.new_worker_names()
+                except Exception as e:
+                    store.log_error("tick-new-workers", e)
+                tools = discovery.new_tools()  # the first run only stores the list
+                line = discovery.new_line(models, tools)
                 if line:
                     sys.stdout.write(line + "\n")
-        except Exception as e:
-            store.log_error("tick-new-workers", e)
-        try:
-            from . import discovery, workers as _W2
-            if not _W2.is_subagent_payload(payload):
-                note = discovery.session_start()  # new executables on PATH, once per set (the first run only stores them)
-                if note:
-                    sys.stdout.write(note + "\n")
         except Exception as e:
             store.log_error("tick-discovery", e)
         try:

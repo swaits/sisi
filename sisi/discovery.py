@@ -161,6 +161,26 @@ def _hinted(name):
     return bool(hints & set(re.split(r"[-_.]", name.lower())))
 
 
+def _short_names(names, limit=3, width=16):
+    shown = ["%s%s" % (n[:width - 1], "…") if len(n) > width else n for n in names[:limit]]
+    return ", ".join(shown) + (" (and %d more)" % (len(names) - limit) if len(names) > limit else "")
+
+
+def new_line(models, tools):
+    """The ONE session-start line for what is new and unproven: worker models discovery found and command-line
+    tools that appeared on this machine ("" when there are neither). Names are shortened and counted."""
+    if not models and not tools:
+        return ""
+    parts = []
+    if models:
+        parts.append("worker model%s %s" % ("" if len(models) == 1 else "s", _short_names(models)))
+    if tools:
+        parts.append("command-line tool%s %s" % ("" if len(tools) == 1 else "s",
+                                                 _short_names(sorted(tools, key=lambda n: (not _hinted(n), n)), 2)))
+    return ("sisi: new %s: unproven, so low-stakes work first, checked one level more carefully.%s"
+            % (" and ".join(parts), " An AI agent among the tools: `sisi workers learn NAME`." if tools else ""))
+
+
 def new_tools_line(new):
     """One line naming at most five new tools, those whose names look like an agent's first."""
     ordered = sorted(new, key=lambda n: (not _hinted(n), n))
@@ -172,10 +192,17 @@ def new_tools_line(new):
 
 
 def session_start(now=None):
-    """The session-start notice about new executables in the user-level PATH folders, or "". The first
+    """The session-start notice about new executables in the user-level PATH folders, or "" (session start itself
+    uses new_tools(), with the new worker models, in one line: new_line). The first
     run stores the list and says nothing. The list is looked at again when a folder changed, when it is
     older than discovery.path_refresh_s, or after discovery.path_every_starts session starts; otherwise
     one stat per folder is all it costs. A name is announced once."""
+    new = new_tools(now)
+    return new_tools_line(new) if new else ""
+
+
+def new_tools(now=None):
+    """The names of new executables in the user-level PATH folders since the last look (once each), a list."""
     now = time.time() if now is None else now
     f = _state_file("path.json")
     st = _load(f)
@@ -189,14 +216,14 @@ def session_start(now=None):
     if not due:
         st["starts"] = starts
         _save(f, st)
-        return ""
+        return []
     names = sorted({n for d in dirs for n in list_executables(d)})
     announced = [n for n in st.get("announced") or [] if isinstance(n, str)]
     new = [] if first else _candidate_names([n for n in names if n not in set(st["names"]) | set(announced)],
                                             _known_tool_names())
     st.update(names=names, marks=marks, checked=now, starts=0, announced=(announced + new)[-500:])
     _save(f, st)
-    return new_tools_line(new) if new else ""
+    return new
 
 
 # ---------------------------------------------------------------- what the host can reach
@@ -1033,7 +1060,7 @@ def facts_targets(cands):
 
 
 def facts_phrase(targets):
-    shown = targets[:MAX_NAMED]
+    shown = targets[:3]
     return "the new workers %s%s" % (", ".join(shown), " and %d more" % (len(targets) - len(shown)) if len(targets) > len(shown) else "")
 
 

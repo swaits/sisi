@@ -800,10 +800,8 @@ def pending_notice(count=None):
     n = len(load_pending()) if count is None else count
     if not n:
         return ""
-    return ("sisi: %d change(s) wait for the owner's decision. Ask the owner through the host's "
-            "question dialog (`sisi approve` lists each change in full; show the owner what it would do) and give "
-            "the owner the command to run in a terminal: `sisi approve ID --yes` or `--no`. "
-            "Do not run it for the owner." % n)
+    return ("sisi: %d decision(s) wait for the owner. Ask through the host's question dialog, then give the owner the "
+            "command to run in a terminal (`sisi approve` lists each in full). Do not run it for the owner." % n)
 
 
 # ---- owner statements (one path: learn writes, oracle prints) ---------------------

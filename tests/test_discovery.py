@@ -682,7 +682,7 @@ class NewWorkersThroughTheCommands(DiscoveryCase):
 
 
 class FactsNameTheNewWorkers(DiscoveryCase):
-    def test_the_missing_facts_line_names_at_most_five_new_workers(self):
+    def test_the_missing_facts_line_names_at_most_three_new_workers(self):
         self.write_data("worker-prices.json", {"models": {"other/x": {"plan": "per-use", "cost_per_million_tokens": 1.0,
                                                                      "source": "s", "date": time.strftime("%Y-%m-%d")}}})
         self.assertEqual(workers.facts_line(), "", "facts are fresh and nobody new lacks any")
@@ -691,8 +691,8 @@ class FactsNameTheNewWorkers(DiscoveryCase):
         self.feed(LISTING_TOOL, wrapped(many))
         line = workers.facts_line()
         self.assertIn("worker facts are missing for the new workers p0/m", line)
-        self.assertIn("and 2 more", line)
-        self.assertEqual(sum(1 for i in range(7) if "p%d/m" % i in line), 5)
+        self.assertIn("and 4 more", line)
+        self.assertEqual(sum(1 for i in range(7) if "p%d/m" % i in line), 3)
         self.assertIn("sisi workers fact WORKER --price N", line)
         for i in range(7):
             self.write_data("model-strength.json", {"models": {"p%d/m" % j: {"standing": 40, "source": "s", "date": "2026-11-01"}

@@ -371,10 +371,9 @@ def _model_names(disc):
             if "contributor" not in str(m).lower()}  # a tier that trains on its prompts is never offered
 
 
-def new_worker_line():
-    """One line naming up to three models discovery found that the previous discovery did not have, once; they
-    are unproven, so low-stakes work first and a closer look at what they return, until their record is no longer
-    thin. None when there is nothing new (or it was said already)."""
+def new_worker_names():
+    """The models discovery found that the previous discovery did not have, once (they are unproven until their
+    record is no longer thin): a list, empty when there is nothing new or it was said already."""
     disc = load_discovery()
     records = read_records()
     judged = {}
@@ -384,9 +383,18 @@ def new_worker_line():
     new = [w for w in disc.get("new_unannounced") or []
            if "contributor" not in w.lower() and judged.get(w.lower(), 0) < routing.MIN_ATTEMPTS]
     if not disc.get("new_unannounced"):
-        return None
+        return []
     disc["new_unannounced"] = []
     write_json(discovery_path(), disc)
+    return new
+
+
+def new_worker_line():
+    """One line naming up to three models discovery found that the previous discovery did not have, once; they
+    are unproven, so low-stakes work first and a closer look at what they return, until their record is no longer
+    thin. None when there is nothing new (or it was said already). Session start uses discovery.new_line, which
+    says this and the new command-line tools in one line."""
+    new = new_worker_names()
     if not new:
         return None
     more = " (and %d more)" % (len(new) - 3) if len(new) > 3 else ""
@@ -1062,11 +1070,8 @@ def facts_line(now=None):
         what = "worker facts are missing (no prices or benchmark standing recorded yet)"
     else:
         what = "worker facts are stale (newest from %s)" % (status["newest"] or "an unstated date")
-    return ("sisi: %s: ask a fast, cheap worker to research current prices and "
-            "software-engineering benchmark standing for the workers found here (`sisi workers`) "
-            "and record each with its source: `sisi workers fact WORKER --price N --source S` "
-            "and `sisi workers fact WORKER --standing N --source S`. Until then routing "
-            "goes by the judged record alone." % what)
+    return ("sisi: %s: a cheap worker can research them (`sisi workers fact WORKER --price N|--standing N "
+            "--source S`); until then routing uses the judged record alone." % what)
 
 
 def estimate_cost(tokens, price_entry):

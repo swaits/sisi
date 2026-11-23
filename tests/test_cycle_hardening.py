@@ -180,6 +180,15 @@ class Approval(Base):
             "sisi approve $(echo P-0001) --yes",
             "sisi approve P-000{1,2} --yes",
             "sisi approve docs; sisi approve $X --yes",
+            # a learned tool (drv-NAME) and an allowance probe (probe-PROVIDER) are decided the same way, so the same
+            # wrappers are refused for them, and for an id of any shape
+            'script -qec "sisi approve drv-x --yes" /dev/null </dev/null',
+            "sh -c 'sisi approve probe-zai --yes'",
+            "/path/to/bin/sisi approve drv-x --no",
+            "python3 -m sisi approve probe-a.b --yes",
+            "env SISI_SESSION_ID=x sisi approve drv-x --yes",
+            "sisi${IFS}approve${IFS}probe-zai${IFS}--yes",
+            "sisi approve whatever --yes",
         ]
         for cmd in wrapped:
             with self.subTest(cmd=cmd):
@@ -196,7 +205,7 @@ class Approval(Base):
                     "sisi cycle apply f.json", "sisi cycle check c.json", "echo approve the plan",
                     "git commit -m 'approve the design'", "ls",
                     # prose that only mentions the command is not an invocation
-                    'grep -rn "sisi approve" docs', "grep -n 'sisi approve ID --yes|--no' SECURITY.md",
+                    'grep -rn "sisi approve" docs', "grep -n 'sisi approve drv-NAME --yes' SECURITY.md", "grep -n 'sisi approve ID --yes|--no' SECURITY.md",
                     "python3 - <<'E'\nprint('give him: sisi approve ID --yes')\nE"):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.hook(cmd), 0, cmd)
