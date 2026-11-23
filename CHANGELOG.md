@@ -6,7 +6,23 @@ All notable changes to this project are recorded here. The format follows
 
 ## Unreleased
 
+### Removed
+
+- `sisi note` and `sisi propose`: use `sisi retro` or `sisi learn`. Existing notes and proposal
+  files in a personal store are no longer read.
+- `sisi audit` and the audit module.
+- Developer mode (`sisi dev on|off|status` and the developer-source entry in personal config).
+  `sisi release` and `sisi promote` now act on the product folder of the launcher that is
+  running: run `bin/sisi release` from the clone. Release, rollback and the stable copy remain.
+- `sisi build-canon` and `sisi canon cost` as public commands; the functions remain for install
+  and other code, and `sisi doctor` now shows the always-loaded size.
+- `sisi migrate` as a command; `sisi update` performs the migration.
+
 ### Changed
+
+- The package version is read from the VERSION file, the one source of truth.
+- The README is rewritten and shortened; contributions are judged against SPEC.md by
+  requirement id.
 
 - Request-time delivery no longer hands over a recipe on a weak match or for a question that names
   no work; reading lessons can no longer stale a learning round; the due test counts only lessons a

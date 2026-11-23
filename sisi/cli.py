@@ -26,7 +26,7 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
                                      scrubs a personal overlay item into the source folder and
                                      drops the personal copy once the product contains it (dry
                                      run unless --apply); lesson:N promotes a core lesson on a
-                                     developer install; --export writes a contribution file
+                                     from the clone; --export writes a contribution file
                                      (universal text only; nothing is sent anywhere)
   sisi update                        fast-forward the product clone, then back up, migrate and rebuild personal data
   sisi export [PATH] | import PATH   one tar.gz of personal data, results and session records; restore it

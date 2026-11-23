@@ -64,7 +64,7 @@ what "done" means, verifying, or being sent back by the gate.
    - a recipe lesson naming a recipe that does not exist is kept as a draft recipe note;
    - a rule, oracle or brief lesson becomes an active learned note with trigger words taken from its text;
    - a tool lesson (a change to sisi itself) goes on the backlog (`sisi backlog`, most seen first).
-     In developer mode, a session started inside the sisi source folder is told the top item.
+     A session started inside the sisi source folder is told the top item.
 3. **It is shown at the moment it matters**, not only at session start. Session start prints up to
    eight active lessons, strongest first. `sisi done for`, `sisi done ID`, `sisi verifiers for` and
    `sisi contract init` print a two-part block, because the asking agent is a far better matcher than
@@ -109,7 +109,7 @@ what "done" means, verifying, or being sent back by the gate.
    3 (enforced). A recurrence after at least two showings since the last promotion moves it up one
    step — each step needs its own fresh evidence. A strength-2 lesson
    becomes a real rule only through consolidation (below), because the rulebook has hard budgets in
-   lines and characters (`sisi canon cost` prints them), and must not grow without shortening. A strength-3 lesson needs a check the gate can run; a folded lesson
+   lines and characters (`sisi doctor` prints them), and must not grow without shortening. A strength-3 lesson needs a check the gate can run; a folded lesson
    shown 20 times with no recurrence is retired from the notes (it stays in history); a lesson that
    still recurs at strength 3 is withdrawn, and the same wording will not be learned again.
 6. **Consolidation happens in a cycle**, run by whichever agent is working — see below.
@@ -183,7 +183,7 @@ explaining at least three lessons and at least six incidents (two constants in t
 or update its statement in the rulebook as one strategic behaviour, traced like any folded
 lesson. These three pressures are what keep patterns few: reuse is listed before invention is
 allowed, exact duplicates merge themselves, and anything left over is merged or promoted each
-round. The brief also lists core items waiting for the product; on a developer install it says
+round. The brief also lists core items waiting for the product; run from the clone it says
 to run `sisi promote` after folding, otherwise to export. A file containing only the required
 set-short/set-scope/set-pattern entries is acceptable when nothing else is ready to fold — a
 cleanup-only round, startable at once with `sisi cycle --now`. Reading lessons during a round cannot stale it: automatic retirement (a
@@ -234,7 +234,7 @@ when present: folded lessons no longer count toward the learned-notes limit, whi
 `sisi cycle apply FILE` checks the file before writing anything: every lesson id exists, the base
 version is still current, changed rules keep their id and their Why, named `sisi` commands and
 enforced programs exist, and the resulting rulebook is inside both budgets (lines and
-characters, printed by `sisi canon cost`) and no longer in characters than before
+characters, printed by `sisi doctor`) and no longer in characters than before
 unless `shortens` names what was removed.
 Rules are re-wrapped to 100 characters on apply. The base version covers only what a cycle may
 change (lesson content and status, short lines and topics, rules, notes, enforced checks), not

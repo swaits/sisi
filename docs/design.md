@@ -243,7 +243,7 @@ Other things the loop would improve, besides rules: recipes are tightened whenev
 set of checks; techniques are ranked by how often they catch real failures; checks that never fail are flagged
 (`sisi checks` does this); new models are scored on the task set before routing changes.
 
-**Owning the instruction surface.** `sisi audit` lists every source of instructions each tool loads
+**Owning the instruction surface.** Every source of instructions each tool loads
 (instruction files, plugins, skills) and reports where they contradict the rulebook. Contradictions the loop
 cannot remove itself would be put in the oracle queue.
 
@@ -281,14 +281,12 @@ product, so the product can be published.
 
 Any agent in any tool reads through the files or the CLI and writes through the CLI:
 
-- `sisi note`: record a failure now (older; `sisi retro` is preferred).
-- `sisi propose`: suggest a rule change (older; `sisi retro` is preferred).
 - `sisi learn`: record something the human said, in their words. It takes effect at once: user-tier
   statements are the owner's standing principles (`sisi oracle`), core statements are queued for the
   product, project statements are handed over to their project. Tiers follow the owner's two questions:
   does it apply to all projects where sisi may be used, and would it help every user who installs
   sisi? Both yes is a product change (`core`, in force at once through the overlay, written into the
-  source tree by `sisi promote` on a developer install once folded, the personal copy dropped when
+  source tree by `sisi promote` from the clone once folded, the personal copy dropped when
   the product contains it; on an ordinary install `sisi promote --export` writes a contribution file
   and nothing is ever sent automatically). The tool's own name never makes an item project-bound: how
   sisi itself should behave is core, wherever it was recorded.
@@ -315,7 +313,7 @@ Built and covered by tests:
   where nothing blocks.
 - The rulebook (`canon/core.md`), the minimum-rung floors, the verifier library and the recipes.
 - Retrospectives and lessons (`sisi retro`, `sisi lessons`), `sisi learn` live at once, time to delivery
-  (`sisi time`), `sisi audit`.
+  (`sisi time`).
 - Choosing the approach as a checked step: the contract design section, `sisi design`, the gate's
   design send-back on large changes, and request-time delivery of the standing principles for design
   or build requests. The rulebook's first rule states it and `sisi rule` reports its enforcement.
@@ -323,7 +321,7 @@ Built and covered by tests:
   first-class, merged in rounds, and promoted into the rulebook as strategic behaviours past a
   threshold; the digest and `sisi improve` show them first. Three tiers (`core`, `user`, `project`)
   replace the two-way scope, with older universal items tiered by the next round, and `sisi promote`
-  listing, writing (developer installs) or exporting core items.
+  listing, writing (from the clone) or exporting core items.
 - The lesson loop: immediate effects in the overlay (field notes, draft recipes, learned notes, `sisi backlog`),
   moment-of-use delivery with recorded showings, per-lesson measurement, the strength ladder with enforced
   checks, `sisi cycle` (due counter, brief, validated apply under lock and base version, exact revert, status
@@ -353,7 +351,7 @@ Designed, not built:
 ## Build order
 
 1. Store, CLI, wiring into each tool, contract format, `sisi verify`, the end-of-turn gate, the first
-   verifier-library entries, rulebook version 0, `sisi audit`. Built.
+   verifier-library entries, rulebook version 0. Built.
 2. Signals and scoreboard: transcript adapters, git survival, and a delegation ledger. Partly built (Claude Code
    transcripts, task set, scoreboard; no git survival signal).
 3. The conductor and the oracle queue. Not built.

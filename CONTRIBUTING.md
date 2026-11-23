@@ -1,6 +1,8 @@
 # Contributing
 
 Thanks for looking. sisi is small on purpose; this page says how to change it safely.
+Contributions are judged against [SPEC.md](SPEC.md) by requirement id: say in the change
+which requirement it serves, and expect review to check that claim first.
 
 ## Run the tests
 
