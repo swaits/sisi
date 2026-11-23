@@ -326,7 +326,7 @@ class PauseTests(UnitCase):
         self.assertEqual(c["pauses"][0]["what"], "the owner's decision")
         stop = json.dumps({"session_id": "p1", "cwd": self.proj, "hook_event_name": "Stop", "stop_hook_active": False})
         self.sisi("tick", stdin=json.dumps({"session_id": "p1", "cwd": self.proj, "hook_event_name": "SessionStart"}))
-        open(os.path.join(self.proj, "new.txt"), "w").write("x")  # a change after the pause
+        open(os.path.join(self.proj, "new.py"), "w").write("x = 1\n")  # a change after the pause
         self.assertIn("block", self.sisi("gate", stdin=stop).stdout)
         self.assertEqual(C.load(self.contract_path)["status"], "open")  # the wait ended
         self.assertTrue(C.load(self.contract_path)["pauses"][0]["until"])

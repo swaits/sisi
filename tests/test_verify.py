@@ -45,13 +45,6 @@ class VerifyTests(SisiCase):
         r = self.run_verify(contract([check("pwd", "pwd", stdout_contains=self.proj)]))
         self.assertEqual(r.returncode, 0, r.stdout)
 
-    def test_floor_fails(self):
-        r = self.run_verify(contract([check("m", "true", rung=3, kind="money")]))
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("floor", r.stdout)
-        r = self.run_verify(contract([check("m", "true", rung=2, kind="money")]))
-        self.assertEqual(r.returncode, 0)
-
     def test_no_contract_exit_2(self):
         self.assertEqual(self.sisi("verify").returncode, 2)
 

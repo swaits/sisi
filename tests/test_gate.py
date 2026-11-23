@@ -347,7 +347,8 @@ class FlowTests(GateBase):
         self.assertEqual(s.stop(), ("allow", None))  # said once: not repeated for the same tree
 
     def test_pause_is_silent_and_a_new_change_ends_the_wait(self):
-        """R-10.3-1: abuse: a pause with no change asks nothing; a change ends it."""
+        """R-10.3-1, R-14.2-1: abuse: a pause (it names what it waits for, such as an owner's authorization) asks
+        nothing while the tree is unchanged; a change ends it."""
         s = self.session()
         s.write("app.py", "x = 1\n")
         s.contract(contract([check("feature", "test -f ok.txt")]))
