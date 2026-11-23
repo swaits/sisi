@@ -219,11 +219,26 @@ def _transcript_stats(project, t0, t1):
     return agg
 
 
-def build_telemetry(c, project, results, t0, t1):
+def start_of(c, contract_path=None):
+    """(ISO UTC start, basis). A unit records `started` itself ("measured"). A contract written before the
+    unit record existed has none: the contract file's modification time stands in for it, and the basis
+    says "inferred" so nothing downstream reads it as measured. (None, None) when neither is known."""
+    if isinstance(c.get("started"), str) and c["started"]:
+        return c["started"], "measured"
+    try:
+        mt = os.stat(contract_path).st_mtime if contract_path else None
+    except OSError:
+        mt = None
+    if mt is None:
+        return None, None
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(mt)) + "Z", "inferred"
+
+
+def build_telemetry(c, project, results, t0, t1, t0_basis="measured"):
     """Every value classed. Sources: deliveries, results, pauses on the contract, the
     host transcript where a session record names one, git, and the delegation ledger."""
     tel = {}
-    tel["time_to_validated_completion_s"] = val(round(t1 - t0, 1), "measured") if t0 is not None else unavailable()
+    tel["time_to_validated_completion_s"] = val(round(t1 - t0, 1), t0_basis) if t0 is not None else unavailable()
     if results:
         tel["time_in_checks_s"] = val(round(sum(float(r["duration_s"]) for r in results
                                                 if isinstance(r.get("duration_s"), (int, float))), 3), "measured")
@@ -456,10 +471,11 @@ def decide_status(c, rows, abandon=None):
     return "delivered", block, unrun
 
 
-def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None, rows=None):
-    t0 = harvest.epoch(c["started"]) if isinstance(c.get("started"), str) else None
+def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None, rows=None, contract_path=None):
+    started, basis = start_of(c, contract_path)
+    t0 = harvest.epoch(started) if isinstance(started, str) else None
     rows = _unit_results(c, project, c.get("started")) if rows is None else rows
-    tel = build_telemetry(c, project, rows, t0, ended_epoch)
+    tel = build_telemetry(c, project, rows, t0, ended_epoch, basis or "measured")
     models = tel.pop("_models")
     delegation_rows = tel.pop("_delegation_rows")
     changed = tel.pop("_changed")
@@ -488,7 +504,7 @@ def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None, 
         "plan": c.get("plan") or [],
         "workers": delegation_rows,
         "models": models, "budgets": c.get("budgets"),
-        "started": c.get("started"), "ended": ended, "closed_at": ended, "telemetry": tel,
+        "started": started, "started_basis": basis, "ended": ended, "closed_at": ended, "telemetry": tel,
         "start_commit": c.get("base_head"),
         "closing_commit": gitutil.head(project) if gitutil.root(project) else None,
         "summary": c.get("summary"),
@@ -603,7 +619,8 @@ def close_unit(c, contract_path, project, abandon=None, now=None):
             return None, ("sisi: unit %s cannot close as delivered: %s. Fix and re-run `sisi verify`, "
                           "record a deviation with `sisi contract waive \"<reason>\"`, or close it with "
                           "`sisi unit close --abandon \"<reason>\"`." % (c["id"], bad)), False
-        rec = build_record(c, project, status, ended_epoch, abandon_reason=abandon, rows=rows)
+        rec = build_record(c, project, status, ended_epoch, abandon_reason=abandon, rows=rows,
+                           contract_path=contract_path)
         _, created = archive_record(rec, project)
         if created:
             _capture_case(rec)

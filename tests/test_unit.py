@@ -41,6 +41,40 @@ class UnitCase(SisiCase):
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg], cwd=self.proj, check=True)
 
 
+class OldContractAgeTests(UnitCase):
+    def old_contract(self, hours=3):
+        c = self.start()
+        c.pop("started", None)
+        C.save(self.contract_path, c)
+        t = time.time() - hours * 3600
+        os.utime(self.contract_path, (t, t))
+
+    def test_status_gives_an_age_to_a_contract_written_before_the_unit_record_existed(self):
+        """The contract file's modification time stands in for the start, and says it is inferred."""
+        self.old_contract(3)
+        r = self.sisi("status")
+        line = next(l for l in r.stdout.splitlines() if l.strip().startswith("open"))
+        self.assertNotIn("age ?", line)
+        self.assertIn("age 3h", line)
+        self.assertIn("inferred", line)
+
+    def test_a_measured_start_is_not_labelled_inferred(self):
+        self.start()
+        line = next(l for l in self.sisi("status").stdout.splitlines() if l.strip().startswith("open"))
+        self.assertNotIn("inferred", line)
+        self.assertNotIn("age ?", line)
+
+    def test_the_record_of_such_a_unit_says_inferred_never_measured(self):
+        self.old_contract(2)
+        self.finish_green()
+        self.assertEqual(self.sisi("unit", "close").returncode, 0)
+        rec = self.archive("proj")
+        self.assertEqual(rec["started_basis"], "inferred")
+        t = rec["telemetry"]["time_to_validated_completion_s"]
+        self.assertEqual(t.get("class") or t.get("basis") or t.get("kind"), "inferred", t)
+        self.assertGreaterEqual(t["value"], 2 * 3600 - 120)
+
+
 class RecordTests(UnitCase):
     def test_close_archives_all_fourteen_items(self):
         """R-10.2-1, R-10.2-2, R-10.2-3, R-10.2-4, R-10.2-5, R-10.2-6, R-10.2-7, R-10.2-8, R-10.2-9,

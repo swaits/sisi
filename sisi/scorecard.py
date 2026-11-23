@@ -369,7 +369,9 @@ def open_units(cwd=None):
     if not isinstance(c, dict) or not c.get("id") or c.get("status") == "closed" or C.is_unedited_skeleton(c):
         return out
     project = C.project_dir(p)
-    row = {"id": c["id"], "status": c.get("status", "open"), "age": _age(c.get("started")), "goal": c.get("goal") or ""}
+    started, basis = U.start_of(c, p)
+    row = {"id": c["id"], "status": c.get("status", "open"), "age": _age(started), "goal": c.get("goal") or "",
+           "age_basis": basis}
     if row["status"] == "paused":
         pz = next((x for x in reversed(c.get("pauses") or []) if isinstance(x, dict) and not x.get("until")), {})
         row["waiting_for"], row["paused_for"] = pz.get("what"), _age(pz.get("since"))
@@ -394,13 +396,17 @@ def _lowered_note(u):
                                                     (": " + str(rk["why"])) if rk.get("why") else "")
 
 
+def _basis_note(r):
+    return " (inferred from the contract file)" if r.get("age_basis") == "inferred" else ""
+
+
 def format_open(rows):
     lines = []
     for r in rows:
         if r["status"] == "paused":
-            lines.append("paused  %-24s age %s  waiting for: %s (for %s)" % (r["id"], r["age"], r.get("waiting_for") or "?", r.get("paused_for")))
+            lines.append("paused  %-24s age %s%s  waiting for: %s (for %s)" % (r["id"], r["age"], _basis_note(r), r.get("waiting_for") or "?", r.get("paused_for")))
         else:
-            lines.append("open    %-24s age %s  %s" % (r["id"], r["age"], r["goal"][:80]))
+            lines.append("open    %-24s age %s%s  %s" % (r["id"], r["age"], _basis_note(r), r["goal"][:80]))
         if r.get("lowered"):
             lines.append("          lowered: " + r["lowered"])
         if r.get("unverified"):
