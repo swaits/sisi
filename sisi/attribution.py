@@ -167,7 +167,7 @@ def parse_chunk(data, measured=False):
                         writing = True
                         files.append(".sisi/contract.json")
                     continue  # everything else was measured, not guessed
-                may = _shell_may_write(cmd)
+                may = shell_may_write(cmd)
                 if may is None:
                     corrupt += 1
                     edits += 1

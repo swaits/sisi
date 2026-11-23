@@ -67,7 +67,7 @@ def review_evidence(project, c, now=None):
     try:
         from . import workers
         dg = workers.delegations_for_project(os.path.basename(project.rstrip(os.sep)), t0,
-                                             time.time() if now is None else now)
+                                             (time.time() if now is None else now) + 1)  # a judgement rounds its time
     except Exception as e:
         store.log_error("assure-delegations", e)
         return []

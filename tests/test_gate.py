@@ -1,111 +1,847 @@
-import io, json, os, random, sys, unittest
+"""The end-of-turn gate: risk-set requirements, bounded send-backs, attribution, pauses, subagents.
+
+Tests cite requirement ids (docs/spec/requirements.json). The property tests run seeded random
+sequences of operations against a real git project and check invariants after every stop; scale them
+with SISI_TEST_ITERS."""
+import io, json, os, random, subprocess, sys, time, unittest
 from unittest import mock
 from support import *
-from sisi import gate, store
+from sisi import assure, attribution, contract as C, gate, learning, store, unit as U, workers
+
+
+def _tool_line(name, inp):
+    return {"type": "assistant", "timestamp": "2026-01-01T00:00:00.000Z",
+            "message": {"role": "assistant", "content": [{"type": "tool_use", "name": name, "input": inp}]}}
+
+
+def _human_line():
+    return {"type": "user", "timestamp": "2026-01-01T00:00:00.000Z",
+            "message": {"role": "user", "content": "do the work please"}}
+
+
+def full(**over):
+    """A contract that satisfies every requirement of every profile except independent evidence."""
+    c = contract([dict(check("works", "test -f ok.txt"), covers="the feature file is missing")],
+                 [dict(check("keeps", "test -f README.md"), covers="the readme is deleted")])
+    c.update(id="t", goal="make the feature work",
+             requirements=[{"id": "r1", "kind": "explicit", "text": "ok.txt exists when the feature is done", "decision": "now"}],
+             risk={"blast_radius": "only the feature file; nothing else reads it", "rollback": "git revert the commit"},
+             approach={"chosen": "write the file directly", "why": "the simplest thing that works",
+                       "alternatives": ["generate it from a template: more moving parts"]},
+             started=store.now(), status="open", pauses=[], deviations=[])
+    c.update(over)
+    return c
 
 
 class GateBase(SisiCase):
     sid = "sess-1"
 
+    def setUp(self):
+        super().setUp()
+        os.environ["SISI_RETRO_REQUIRED"] = "1"  # these tests are about the retro: turn it on
+        self.addCleanup(lambda: os.environ.__setitem__("SISI_RETRO_REQUIRED", "0"))
+        self.git_init()
+        self.put("README.md", "# project\n")
+        self.put("ok.txt", "ready\n")
+        self.commit_all()
+        self.tdir = os.path.join(self.tmp, "transcripts")
+        os.makedirs(self.tdir)
+
+    def put(self, rel, text="x\n", mode="w"):
+        p = os.path.join(self.proj, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, mode) as f:
+            f.write(text)
+        return p
+
+    def commit_all(self, msg="c"):
+        subprocess.run(["git", "add", "-A"], cwd=self.proj, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", msg], cwd=self.proj, check=True)
+
+    def session(self, sid=None):
+        return Sess(self, sid or self.sid)
+
     def call(self, cwd=None, sid=None, **extra):
-        """Run the gate in process as the hook would. Returns (action, message)."""
+        """Run the gate in process as the hook would, with no transcript (every tree change is this session's)."""
         payload = dict({"session_id": sid or self.sid, "cwd": cwd or self.proj, "hook_event_name": "Stop",
                         "stop_hook_active": False}, **extra)
         return gate.decide(payload)
 
-    def hook(self, payload=None, cwd=None):
+    def hook(self, payload=None, cwd=None, args=()):
         """Run the real hook command: JSON stdin, stdout, exit code."""
         p = dict({"session_id": self.sid, "cwd": self.proj, "hook_event_name": "Stop"}, **(payload or {}))
-        return self.sisi("gate", cwd=cwd, stdin=json.dumps(p))
+        return self.sisi("gate", *args, cwd=cwd, stdin=json.dumps(p))
 
-    def set_config(self, **gate_cfg):
-        os.makedirs(self.state, exist_ok=True)
-        with open(os.path.join(self.state, "config.json"), "w") as f:
-            json.dump({"gate": gate_cfg}, f)
+    def unit_state(self):
+        c = C.load(os.path.join(self.proj, C.REL))
+        c.setdefault("status", "open")
+        return c
+
+    def archives(self):
+        d = os.path.join(self.proj, ".sisi", "units")
+        return sorted(os.listdir(d)) if os.path.isdir(d) else []
+
+    def record_finding(self, n=1, cwd=None, sid=None):
+        r = self.sisi("retro",
+                      "--finding", "`cargo test` run %d took 4 minutes with no fuzz verifier in the project" % n,
+                      "--cause", "the recipe never named a fuzz verifier for parsers",
+                      "--impact", "time", "--disposition", "promote",
+                      "--change", "Add the fuzz verifier to the parser-or-codec recipe Checks, variant %d" % n,
+                      "--mechanism", "verification", "--expect", "parser work gets a fuzz check",
+                      "--validate", "run the recipe checks on a parser change", cwd=cwd,
+                      env={"SISI_SESSION_ID": sid or self.sid})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def lines(self, msg):
+        return len(str(msg).splitlines())
 
 
-class GateContractTests(GateBase):
-    def test_pass_allows_with_no_output(self):
-        self.write_contract(contract([check("ok", "true")]))
-        r = self.hook()
-        self.assertEqual((r.returncode, r.stdout), (0, ""))
+class Sess:
+    """One agent session in the test project: a Claude-Code-shaped transcript that records its edits,
+    the session-start hook, and the stop hook."""
 
-    def test_fail_blocks_with_claude_format(self):
-        self.write_contract(contract([check("bad", "echo boom-output >&2; exit 1")]))
-        r = self.hook()
-        self.assertEqual(r.returncode, 0)
+    def __init__(self, case, sid):
+        self.case, self.sid = case, sid
+        self.tp = os.path.join(case.tdir, sid + ".jsonl")
+        with open(self.tp, "w") as f:
+            f.write(json.dumps(_human_line()) + "\n")
+        case.sisi("tick", stdin=json.dumps({"session_id": sid, "cwd": case.proj, "source": "startup",
+                                            "transcript_path": self.tp}))
+
+    def _line(self, name, inp):
+        with open(self.tp, "a") as f:
+            f.write(json.dumps(_tool_line(name, inp)) + "\n")
+
+    def edit(self, rel, text="x\n"):
+        """The agent edits a file with its edit tool."""
+        p = self.case.put(rel, text, mode="a")
+        self._line("Edit", {"file_path": p})
+        return p
+
+    def write(self, rel, text):
+        p = self.case.put(rel, text)
+        self._line("Write", {"file_path": p})
+        return p
+
+    def remove(self, rel):
+        os.remove(os.path.join(self.case.proj, rel))
+        self._line("Bash", {"command": "rm " + rel})
+
+    def shell(self, command):
+        self._line("Bash", {"command": command})
+
+    def contract(self, c):
+        """The agent writes the contract file (a claim on the unit)."""
+        self.case.write_contract(c)
+        self._line("Write", {"file_path": os.path.join(self.case.proj, C.REL)})
+
+    def stop(self):
+        """('allow'|'block', message or None) from the real hook entry point."""
+        r = self.case.sisi("gate", stdin=json.dumps({"session_id": self.sid, "cwd": self.case.proj,
+                                                     "hook_event_name": "Stop", "transcript_path": self.tp}))
+        self.case.assertEqual(r.returncode, 0, r.stderr)
+        if not r.stdout.strip():
+            return "allow", None
         d = json.loads(r.stdout)
-        self.assertEqual(d["decision"], "block")
-        self.assertIn("bad", d["reason"])
-        self.assertIn("boom-output", d["reason"])
+        return ("block", d["reason"]) if d.get("decision") == "block" else ("allow", d.get("systemMessage"))
 
-    def test_timeout_and_floor_block(self):
-        self.write_contract(contract([check("slow", "sleep 5", timeout_s=0.2)]))
-        self.assertEqual(self.call()[0], "block")
-        self.write_contract(contract([check("m", "true", rung=3, kind="money")]))
-        a, msg = self.call(sid="other")
+
+# ======================================================================== requirements by profile
+
+class RequirementTests(GateBase):
+    """R-5.3-1..11: the gate enforces exactly what the profile's row of canon/risk.json requires."""
+
+    def test_the_table_is_monotone_in_the_profile(self):
+        """R-5.3-2: a higher profile never requires less (seeded random contracts)."""
+        rng = random.Random(7)
+        keys = ["requirements", "risk", "approach", "invariants"]
+        for _ in range(40 * ITERS):
+            c = full()
+            for k in keys:
+                if rng.random() < 0.5:
+                    c.pop(k, None) if k != "invariants" else c.update(invariants=[])
+            if rng.random() < 0.5:
+                c["checks"][0].pop("covers")
+            lows = [assure.missing(p, c, self.proj) for p in ("isolated", "logic", "integration", "data", "critical", "release")]
+            for a, b in zip(lows, lows[1:]):
+                self.assertTrue({m[0] for m in a} <= {m[0] for m in b}, (c, a, b))
+
+    def test_trivial_needs_nothing_and_isolated_needs_a_contract_with_a_check(self):
+        """R-5.3-4, R-5.3-5."""
+        self.assertEqual(assure.missing("trivial", None, self.proj), [])
+        miss = assure.missing("isolated", None, self.proj)
+        self.assertEqual(len(miss), 1)
+        self.assertIn("sisi contract init", miss[0][1])
+        self.assertEqual(assure.missing("isolated", contract([check("a", "false")]), self.proj), [])
+
+    def test_logic_needs_covers_on_every_check(self):
+        """R-5.3-6."""
+        c = contract([check("a", "false"), dict(check("b", "false"), covers="the parser drops a line")])
+        miss = assure.missing("logic", c, self.proj)
+        self.assertEqual(len(miss), 1)
+        self.assertIn("a", miss[0][0])
+        self.assertNotIn("(missing on a, b)", miss[0][0])
+        self.assertEqual(assure.missing("logic", full(), self.proj), [])
+
+    def test_integration_needs_invariants_requirements_a_risk_note_and_an_approach(self):
+        """R-5.3-7: each missing piece is named, with the field that supplies it."""
+        c = full(invariants=[], requirements=[], risk={}, approach=None)
+        text = " | ".join("%s -> %s" % m for m in assure.missing("integration", c, self.proj))
+        for field in ('"invariants"', '"requirements"', '"risk"', '"approach"'):
+            self.assertIn(field, text)
+        self.assertEqual(assure.missing("integration", full(), self.proj), [])
+
+    def test_data_critical_and_release_need_independent_evidence(self):
+        """R-5.3-8, R-5.3-9, R-5.3-10."""
+        for p in ("data", "critical", "release"):
+            miss = assure.missing(p, full(), self.proj)
+            self.assertEqual(len(miss), 1, p)
+            self.assertIn("independent", miss[0][0])
+        self.assertEqual(assure.missing("integration", full(), self.proj), [])
+
+    def test_the_table_is_data_not_code(self):
+        """R-5.3-1: a project that edits the table's row changes what the gate asks, with no code change."""
+        from sisi import risk
+        row = risk.requirements_for("logic")
+        self.assertTrue(row["covers"])
+        with mock.patch.object(risk, "requirements_for", return_value=dict(row, covers=False)):
+            self.assertEqual(assure.missing("logic", contract([check("a", "false")]), self.proj), [])
+
+    def test_a_declared_profile_raises_freely(self):
+        """R-5.3-1."""
+        p, info = assure.effective_profile("isolated", full(risk={"profile": "data"}))
+        self.assertEqual((p, info["lowered"]), ("data", False))
+
+    def test_floor_wins_over_a_trivial_declaration_without_a_reason(self):
+        """R-5.3-1, abuse: declares `trivial` on a migration with no `risk.why`: the floor wins."""
+        p, info = assure.effective_profile("data", full(risk={"profile": "trivial"}))
+        self.assertEqual((p, info["refused"], info["lowered"]), ("data", True, False))
+        for why in ("TODO", "n/a", "none", ""):
+            p, info = assure.effective_profile("data", full(risk={"profile": "trivial", "why": why}))
+            self.assertEqual(p, "data", why)
+
+    def test_lowering_with_a_reason_is_allowed_recorded_and_visible_in_status(self):
+        """R-5.3-1, abuse: with a reason the declaration stands; the record keeps floor, declared and reason."""
+        c = full(risk={"profile": "trivial", "why": "the migration only adds a comment to a table"})
+        p, info = assure.effective_profile("data", c)
+        self.assertEqual((p, info["lowered"]), ("trivial", True))
+        self.git_init_unit = None
+        self.put("migrations/001_comment.sql", "COMMENT ON TABLE t IS 'x';\n")
+        self.write_contract(c)
+        c_path = os.path.join(self.proj, C.REL)
+        rec = U.build_record(c, self.proj, "delivered", time.time(), rows=[])
+        self.assertEqual((rec["risk"]["floor"]["value"], rec["risk"]["declared"], rec["risk"]["lowered"]),
+                         ("data", "trivial", True))
+        self.assertEqual(rec["risk"]["why"], "the migration only adds a comment to a table")
+        out = self.sisi("status").stdout
+        self.assertIn("lowered: declared trivial below the floor data: the migration only adds a comment", out)
+        self.assertTrue(os.path.exists(c_path))
+
+    def test_placeholder_text_is_not_a_requirement_a_risk_note_or_an_approach(self):
+        """R-5.3-7, abuse: present but empty, or placeholder text, counts as missing."""
+        for junk in ("TODO", "n/a", "none", "TBD", "", "  ", "-", "ok", "TODO: fill in later"):
+            c = full(requirements=[{"id": "r1", "kind": "explicit", "text": junk, "decision": "now"}],
+                     risk={"blast_radius": junk, "rollback": junk},
+                     approach={"chosen": junk, "why": junk, "alternatives": [junk]})
+            text = " | ".join(m[0] for m in assure.missing("integration", c, self.proj))
+            for piece in ("requirement list", "risk note", "the approach"):
+                self.assertIn(piece, text, "%r: %s" % (junk, piece))
+        self.assertTrue(C.is_placeholder("N/A"))
+        self.assertFalse(C.is_placeholder("git revert the commit and rerun the migration"))
+
+    def test_an_approach_needs_an_alternative(self):
+        """R-5.3-7."""
+        c = full(approach={"chosen": "write the file directly", "why": "the simplest thing", "alternatives": []})
+        self.assertIn("the approach", " ".join(m[0] for m in assure.missing("integration", c, self.proj)))
+
+    def test_independent_flag_without_by_is_not_evidence(self):
+        """R-5.3-9, abuse: `independent: true` with no `by` (or a placeholder `by`)."""
+        results = [{"id": "works", "status": "passed"}]
+        for by in (None, "", "TODO", "n/a"):
+            ck = dict(check("works", "test -f ok.txt"), covers="the file is missing", independent=True)
+            if by is not None:
+                ck["by"] = by
+            c = full(checks=[ck])
+            self.assertEqual(assure.independent_evidence(self.proj, c, results), [], by)
+        ck = dict(check("works", "test -f ok.txt"), covers="the file is missing", independent=True,
+                  by="the reference parser in tools/ref.py")
+        c = full(checks=[ck])
+        self.assertEqual(len(assure.independent_evidence(self.proj, c, results)), 1)
+        self.assertEqual(assure.independent_evidence(self.proj, c, [{"id": "works", "status": "failed"}]), [])
+        self.assertEqual(assure.missing("data", c, self.proj, results), [])
+
+    def judged(self, **over):
+        row = {"kind": "attempt", "id": "a1", "ts": round(time.time()), "project": os.path.basename(self.proj),
+               "type": "review", "difficulty": 2, "worker": "reviewer-model", "outcome": "accepted", "check": "read"}
+        row.update(over)
+        workers.append_record(row)
+
+    def test_a_judged_review_in_the_window_is_independent_evidence(self):
+        """R-5.3-9."""
+        c = full(started=store.now())
+        self.assertEqual(len(assure.missing("data", c, self.proj)), 1)
+        self.judged()
+        self.assertEqual(assure.missing("data", c, self.proj), [])
+
+    def test_review_rows_that_do_not_count(self):
+        """R-5.3-9, abuse: outside the window, another project, rejected, checked with `none`, not a review."""
+        c = full(started=store.now())
+        for over in ({"ts": round(time.time()) - 7200}, {"project": "some-other-project"}, {"outcome": "rejected"},
+                     {"check": "none"}, {"check": None}, {"type": "impl"}):
+            self.judged(**over)
+        self.assertEqual(assure.review_evidence(self.proj, c), [])
+        self.assertEqual(len(assure.missing("data", c, self.proj)), 1)
+        self.judged(check="diffstat")  # stronger than none: counts
+        self.assertEqual(len(assure.review_evidence(self.proj, c)), 1)
+
+    def test_a_technique_stronger_than_examples(self):
+        """R-5.3-6."""
+        self.assertFalse(assure.stronger_technique(contract([check("a", "false", rung=3)])))
+        self.assertTrue(assure.stronger_technique(contract([check("a", "false", rung=2)])))
+        self.assertTrue(assure.stronger_technique(contract([check("a", "false", rung=4)], [check("i", "false", rung=1)])))
+
+
+# ======================================================================== the flow
+
+class FlowTests(GateBase):
+    def test_a_session_that_changed_nothing_passes_silently(self):
+        """R-17-3: no change, no check run, no message."""
+        self.write_contract(full(checks=[check("bad", "false")]))
+        s = self.session()
+        self.assertEqual(s.stop(), ("allow", None))
+        self.assertEqual(self.results(), [])
+
+    def test_documentation_only_passes_silently_even_with_a_failing_unit_open(self):
+        """R-5.3-4, R-17-3."""
+        self.write_contract(contract([check("bad", "false")]))
+        s = self.session()
+        s.edit("README.md", "more words\n")
+        self.assertEqual(s.stop(), ("allow", None))
+
+    def test_a_source_change_without_a_contract_is_sent_back_once_with_the_list(self):
+        """R-5.3-5, R-17-5."""
+        s = self.session()
+        s.write("app.py", "def f():\n    return 1\n")
+        a, msg = s.stop()
         self.assertEqual(a, "block")
-        self.assertIn("floor", msg)
+        self.assertIn("a contract for this isolated change", msg)
+        self.assertIn("sisi contract init", msg)
+        self.assertLessEqual(self.lines(msg), 25)
+        self.assertEqual(s.stop()[0], "block")  # still nothing: sent back again (and counted)
 
-    def test_invalid_contract_blocks(self):
-        self.write_contract({"id": "x"})
-        self.assertEqual(self.call()[0], "block")
-
-    def test_budget_makes_unfinished_checks_timeout(self):
-        self.set_config(budget_s=0.4)
-        self.write_contract(contract([check("a", "sleep 3", timeout_s=60), check("b", "true")]))
-        a, msg = self.call()
+    def test_failing_check_sends_back_then_green_offers_the_two_ways_on(self):
+        """R-10.3-4, R-10.3-6: failing is sent back with the failure; green offers retro or pause, once."""
+        s = self.session()
+        s.write("app.py", "x = 1\n")
+        s.contract(contract([check("feature", "test -f done.flag")]))
+        a, msg = s.stop()
         self.assertEqual(a, "block")
-        st = {r["check"]: r["status"] for r in self.results()}
-        self.assertEqual(st, {"a": "not-run", "b": "not-run"})  # a timed out, b never ran: neither passed
+        self.assertIn("feature", msg)
+        self.assertIn("Failing checks", msg)
+        s.write("done.flag", "ok\n")
+        a, msg = s.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("sisi retro", msg)
+        self.assertIn("sisi unit pause", msg)
+        self.assertLessEqual(self.lines(msg), 25)
+        self.assertEqual(s.stop(), ("allow", None))  # said once: not repeated for the same tree
 
-    def test_three_strikes_then_unverified_release_then_reset(self):
-        self.write_contract(contract([check("bad", "false")]))
-        self.assertEqual([self.call()[0] for _ in range(3)], ["block"] * 3)
-        a, msg = self.call()
-        self.assertEqual(a, "allow")
-        self.assertIn("UNVERIFIED", msg)
-        self.assertEqual(self.results()[-1]["status"], "unverified")
-        out = self.hook()  # after release the count restarts: blocks again
-        self.assertEqual(json.loads(out.stdout)["decision"], "block")
+    def test_pause_is_silent_and_a_new_change_ends_the_wait(self):
+        """R-10.3-1: abuse: a pause with no change asks nothing; a change ends it."""
+        s = self.session()
+        s.write("app.py", "x = 1\n")
+        s.contract(contract([check("feature", "test -f ok.txt")]))
+        self.assertEqual(s.stop()[0], "block")  # the offer
+        self.assertEqual(self.sisi("unit", "pause", "the reviewer").returncode, 0)
+        self.assertEqual(s.stop(), ("allow", None))
+        self.assertEqual(self.unit_state()["status"], "paused")
+        s.edit("app.py", "y = 2\n")
+        a, msg = s.stop()
+        self.assertEqual(self.unit_state()["status"], "open")  # the wait ended
+        self.assertEqual(a, "block")
+        self.assertIn("sisi retro", msg)
 
-    def test_unverified_release_is_printed(self):
-        self.write_contract(contract([check("bad", "false")]))
-        for _ in range(3):
-            self.hook()
-        r = self.hook()
-        self.assertIn("UNVERIFIED", json.loads(r.stdout)["systemMessage"])
+    def test_a_pause_is_never_a_way_to_hide(self):
+        """R-15-13, abuse: init refuses while a unit is open (or paused); status lists both with their age."""
+        s = self.session()
+        s.write("app.py", "x = 1\n")
+        s.contract(contract([check("feature", "test -f ok.txt")]) | {"started": store.now()})
+        self.sisi("unit", "pause", "waiting for ever")
+        r = self.sisi("contract", "init")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("still open", r.stdout)
+        out = self.sisi("status").stdout
+        self.assertRegex(out, r"paused\s+t\s+age \d+[mhd]\s+waiting for: waiting for ever")
+        c = self.unit_state()
+        c["status"] = "open"
+        C.save(os.path.join(self.proj, C.REL), c)
+        self.assertRegex(self.sisi("status").stdout, r"open\s+t\s+age \d+[mhd]")
 
-    def test_pass_resets_count(self):
-        self.write_contract(contract([check("c", "test -f %s/ok" % self.tmp)]))
-        self.call(); self.call()
-        open(os.path.join(self.tmp, "ok"), "w").close()
-        self.assertEqual(self.call()[0], "allow")
-        os.remove(os.path.join(self.tmp, "ok"))
-        self.assertEqual([self.call()[0] for _ in range(3)], ["block"] * 3)  # fresh three strikes
+    def test_a_recorded_retro_closes_and_archives_the_unit(self):
+        """R-10.3-5, R-10.3-7."""
+        s = self.session()
+        s.write("app.py", "x = 1\n")
+        s.contract(contract([check("feature", "test -f ok.txt")]))
+        self.assertEqual(s.stop()[0], "block")  # offer
+        self.record_finding()
+        self.assertEqual(s.stop(), ("allow", None))
+        self.assertEqual(self.unit_state()["status"], "closed")
+        self.assertEqual(self.archives(), ["t.json"])
+        self.assertEqual(s.stop(), ("allow", None))
 
-    def test_strikes_are_per_session(self):
-        self.write_contract(contract([check("bad", "false")]))
-        for _ in range(3):
-            self.call(sid="a")
-        self.assertEqual(self.call(sid="b")[0], "block")
+    def test_a_generic_finding_does_not_close_the_unit(self):
+        """R-10.3-7, abuse: the learning module refuses it, so the gate has nothing to close on."""
+        s = self.session()
+        s.write("app.py", "x = 1\n")
+        s.contract(contract([check("feature", "test -f ok.txt")]))
+        self.assertEqual(s.stop()[0], "block")
+        r = self.sisi("retro", "--finding", "it went well", "--cause", "no cause", "--impact", "time",
+                      "--disposition", "record", "--limits", "none", env={"SISI_SESSION_ID": self.sid})
+        self.assertEqual(learning.findings_for_unit(self.proj, "t"), [], r.stdout)
+        s.edit("app.py", "y = 2\n")
+        a, msg = s.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("sisi retro", msg)
+        self.assertEqual(self.unit_state()["status"], "open")
+        self.assertEqual(self.archives(), [])
 
-    def test_stop_hook_active_does_not_bypass(self):
-        self.write_contract(contract([check("bad", "false")]))
-        self.assertEqual(self.call(stop_hook_active=True)[0], "block")
+    def test_a_retro_recorded_after_a_quiet_stop_still_closes_the_unit(self):
+        """R-10.3-7: the offer was ignored once; the retro is recorded later with no edit."""
+        s = self.session()
+        s.write("app.py", "x = 1\n")
+        s.contract(contract([check("feature", "test -f ok.txt")]))
+        s.stop()
+        self.assertEqual(s.stop(), ("allow", None))  # offered once; not repeated; unit still open
+        self.assertEqual(self.unit_state()["status"], "open")
+        self.record_finding()
+        self.assertEqual(s.stop(), ("allow", None))
+        self.assertEqual(self.unit_state()["status"], "closed")
+
+    def test_a_trivial_unit_asks_nothing_unless_it_shows_an_anomaly(self):
+        """R-5.3-4: nothing is asked for a trivial change; two send-backs make the retro worth asking."""
+        self.write_contract(contract([check("feature", "test -f ok.txt")], ) | {"risk": {"profile": "trivial"}})
+        s = self.session()
+        s.contract(contract([check("feature", "test -f ok.txt")]) | {"risk": {"profile": "trivial"}})
+        s.edit("README.md", "words\n")
+        self.assertEqual(s.stop(), ("allow", None))  # quiet
+        st = store.load_session(self.sid)
+        st["sb_unit"] = 2  # two send-backs earlier in this unit
+        store.save_session(self.sid, st)
+        s.edit("README.md", "more words\n")
+        a, msg = s.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("sisi retro", msg)
+        self.assertIn("sent the agent back 2 times", msg)
+        self.assertEqual(s.stop(), ("allow", None))  # asked once
+
+    def test_declaring_trivial_on_a_migration_without_a_reason_does_not_lower_it(self):
+        """R-5.3-8, abuse: end to end through the gate."""
+        s = self.session()
+        s.write("migrations/001_users.sql", "CREATE TABLE users (id integer);\n")
+        s.contract(full(risk={"profile": "trivial", "blast_radius": "one table, nothing reads it yet",
+                              "rollback": "drop the table"}))
+        a, msg = s.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("declares 'trivial', but the change is 'data'", msg)
+        self.assertIn("independent evidence", msg)
+
+    def test_a_migration_with_a_reason_runs_at_the_lowered_profile(self):
+        """R-5.3-8, abuse."""
+        s = self.session()
+        s.write("migrations/001_users.sql", "COMMENT ON TABLE users IS 'people';\n")
+        s.contract(full(risk={"profile": "trivial", "why": "a comment on a table changes no data"}))
+        self.assertEqual(s.stop(), ("allow", None))  # trivial: nothing asked
+        self.assertIn("lowered", self.sisi("status").stdout)
+
+    def test_removing_a_failing_check_does_not_make_the_unit_read_as_delivered(self):
+        """R-10.3-3, R-15-6, abuse: the check fails, the agent deletes it, the unit is not plainly delivered."""
+        s = self.session()
+        s.write("app.py", "x = 1\n")
+        s.contract(contract([check("good", "test -f ok.txt"), check("hard", "test -f never.txt")]))
+        a, msg = s.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("hard", msg)
+        c = self.unit_state()
+        c["checks"] = [x for x in c["checks"] if x["id"] != "hard"]
+        s.contract(c)
+        self.assertEqual(s.stop()[0], "block")  # the offer
+        self.record_finding()
+        self.assertEqual(s.stop(), ("allow", None))
+        with open(os.path.join(self.proj, ".sisi", "units", "t.json")) as f:
+            rec = json.load(f)
+        failed = [r for r in rec["verification"] if r["check"] == "hard" and r["status"] == "failed"]
+        self.assertTrue(failed)  # the failed result is in the record
+        self.assertNotIn("hard", [x["id"] for x in rec["contract"]["checks"]])  # and so is the removal
+
+    def test_green_technique_note_is_given_once_and_never_blocks(self):
+        """R-5.3-6: a logic change with no check stronger than examples."""
+        s = self.session()
+        s.write("parser.py", "def parse(s):\n    return s.split()\n")
+        s.contract(full(risk={"profile": "logic", "blast_radius": "the parser only", "rollback": "revert"}))
+        a, msg = s.stop()
+        self.assertEqual(a, "block")  # the offer, carrying the note
+        self.assertIn("sisi verifiers for", msg)
+        s.edit("parser.py", "# more\n")
+        a, msg = s.stop()
+        self.assertNotIn("sisi verifiers for", msg or "")  # once
+        rec = U.build_record(self.unit_state(), self.proj, "delivered", time.time(), rows=[])
+        self.assertFalse(rec["stronger_technique"])
+
+    def test_waive_lets_a_change_without_a_contract_end_and_is_a_recorded_deviation(self):
+        """R-10.3-2: a waiver is a deviation, never a pass."""
+        s = self.session()
+        s.write("app.py", "x = 1\n")
+        self.assertEqual(s.stop()[0], "block")
+        self.assertEqual(self.sisi("contract", "waive", "a throwaway script").returncode, 0)
+        self.assertEqual(s.stop(), ("allow", None))
+        self.assertEqual(store.read("waivers")[0]["reason"], "a throwaway script")
 
     def test_disabled_allows(self):
-        self.set_config(enabled=False)
         self.write_contract(contract([check("bad", "false")]))
-        self.assertEqual(self.call()[0], "allow")
+        os.makedirs(self.state, exist_ok=True)
+        with open(os.path.join(self.state, "config.json"), "w") as f:
+            json.dump({"gate": {"enabled": False}}, f)
+        s = self.session()
+        s.write("app.py", "x = 1\n")
+        self.assertEqual(s.stop(), ("allow", None))
 
-    def test_contract_found_from_subdir_up_to_git_root(self):
-        self.git_init()
+    def test_not_a_git_repo_allows(self):
+        d = os.path.join(self.tmp, "plain")
+        os.makedirs(d)
+        self.assertEqual(self.call(cwd=d), ("allow", None))
+
+    def test_the_contract_is_found_from_a_subdirectory(self):
+        self.write_contract(contract([check("bad", "false")]) | {"risk": {"profile": "isolated"}})
+        os.makedirs(os.path.join(self.proj, "sub"))
+        a, msg = self.call(cwd=os.path.join(self.proj, "sub"))
+        self.assertEqual(a, "block")
+        self.assertIn("bad", msg)
+
+    def test_a_check_over_the_budget_is_reported_not_passed(self):
+        """R-15-5: a check that cannot finish in time is not-run, never passed."""
+        with open(os.path.join(self.tmp, "cfg"), "w"):
+            pass
+        os.makedirs(self.state, exist_ok=True)
+        with open(os.path.join(self.state, "config.json"), "w") as f:
+            json.dump({"gate": {"budget_s": 0.4}}, f)
+        self.write_contract(contract([check("a", "sleep 3", timeout_s=60), check("b", "test -f ok.txt")]) | {"risk": {"profile": "isolated"}})
+        a, msg = self.call()
+        self.assertEqual(a, "block")
+        self.assertEqual({r["check"]: r["status"] for r in self.results()}, {"a": "not-run", "b": "not-run"})
+
+
+# ======================================================================== bounded send-backs
+
+class SendBackTests(GateBase):
+    def setUp(self):
+        super().setUp()
+        self.s = self.session()
+        self.s.write("migrations/001_users.sql", "CREATE TABLE users (id integer);\n")
+        self.s.contract(full())  # everything but the independent evidence a migration needs
+
+    def test_the_migration_send_back_lists_what_is_missing_in_plain_words(self):
+        """R-17-5, R-5.3-8: one message, the missing evidence named with the command that supplies it."""
+        a, msg = self.s.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("this data change is not ready to hand over (send-back 1 of 3)", msg)
+        self.assertIn("independent evidence", msg)
+        self.assertIn("sisi delegate judge", msg)
+        self.assertIn('"independent": true', msg)
+        self.assertLessEqual(self.lines(msg), 25)
+
+    def test_without_a_contract_the_whole_list_comes_at_once(self):
+        """R-17-5: every missing piece in one message, within 25 lines."""
+        s = self.session("other")
+        self.put("src/db/schema.sql", "CREATE TABLE a (id integer);\n")
+        os.remove(os.path.join(self.proj, C.REL))
+        s.edit("src/db/schema.sql", "-- more\n")
+        a, msg = s.stop()
+        self.assertEqual(a, "block")
+        for piece in ("a contract", "covers", "invariants", "a requirement list", "a risk note", "the approach",
+                      "independent evidence"):
+            self.assertIn(piece, msg)
+        self.assertLessEqual(self.lines(msg), 25)
+
+    def test_three_send_backs_then_released_as_unverified_and_recorded(self):
+        """R-10.3-4, R-15-13, R-17-7."""
+        acts = [self.s.stop()[0] for _ in range(3)]
+        self.assertEqual(acts, ["block"] * 3)
+        a, msg = self.s.stop()
+        self.assertEqual(a, "allow")
+        self.assertIn("UNVERIFIED", msg)
+        self.assertIn("independent evidence", msg)
+        self.assertIn("Report the work as unverified", msg)
+        row = [r for r in self.results() if r.get("check") == "gate"][-1]
+        self.assertEqual(row["status"], "unverified")
+        self.assertIn("independent evidence", row["reason"])
+        c = self.unit_state()
+        self.assertIn("independent evidence", " ".join(c["unverified"]["why"]))
+        self.s.stop()
+        rec = U.build_record(c, self.proj, U.decide_status(c, [])[0], time.time(), rows=[])
+        self.assertEqual(rec["delivery_status"], "unverified")
+        self.assertIn("independent", " ".join(rec["released_unverified"]["why"]))
+        self.assertIn("released unverified by the gate", self.sisi("status").stdout)
+
+    def test_release_then_a_new_change_counts_afresh(self):
+        for _ in range(4):
+            self.s.stop()
+        self.s.edit("migrations/001_users.sql", "-- touch\n")
+        self.assertEqual(self.s.stop()[0], "block")
+
+    def test_a_waiver_is_a_deviation_and_never_green(self):
+        """R-10.3-3: waived units close as `deviation`."""
+        self.sisi("contract", "waive", "--check", "works", "the reviewer is on leave")
+        c = self.unit_state()
+        self.assertEqual(U.decide_status(c, [])[0], "deviation")
+
+    def test_independent_evidence_through_the_ledger_ends_the_send_backs(self):
+        """R-5.3-9."""
+        self.assertEqual(self.s.stop()[0], "block")
+        workers.append_record({"kind": "attempt", "id": "r1", "ts": round(time.time()), "project": os.path.basename(self.proj),
+                               "type": "review", "difficulty": 2, "worker": "reviewer-model",
+                               "outcome": "accepted", "check": "read"})
+        a, msg = self.s.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("sisi retro", msg)  # now only the offer remains
+        self.assertNotIn("independent evidence", msg)
+
+    def test_independent_evidence_through_a_named_passing_check(self):
+        """R-5.3-9."""
+        c = self.unit_state()
+        c["checks"][0].update(independent=True, by="the reference migration tool")
+        self.s.contract(c)
+        a, msg = self.s.stop()
+        self.assertIn("sisi retro", msg)
+
+    def test_independent_without_by_still_sends_back(self):
+        """R-5.3-9, abuse through the gate."""
+        c = self.unit_state()
+        c["checks"][0].update(independent=True)
+        self.s.contract(c)
+        a, msg = self.s.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("independent evidence", msg)
+
+
+# ======================================================================== other sessions, subagents
+
+class AttributionTests(GateBase):
+    """R-9-1, R-15-9: two sessions, one folder: the gate judges only this session's own edits."""
+
+    def test_another_sessions_uncommitted_edits_never_send_this_session_back(self):
+        """Abuse: B breaks the tree and edits a migration; A made no edit of its own."""
+        a, b = self.session("sess-a"), self.session("sess-b")
+        b.write("migrations/002_orders.sql", "CREATE TABLE orders (id integer);\n")
+        b.contract(contract([check("c", "false")]))
+        self.assertEqual(a.stop(), ("allow", None))
+        self.assertEqual(self.results(), [])  # nothing was even run for A
+        a.edit("README.md", "my own words\n")  # A's own change is documentation
+        self.assertEqual(a.stop(), ("allow", None))
+
+    def test_this_sessions_own_source_change_is_judged_on_its_own_paths(self):
+        a, b = self.session("sess-a"), self.session("sess-b")
+        b.write("migrations/002_orders.sql", "CREATE TABLE orders (id integer);\n")
+        a.write("app.py", "x = 1\n")
+        action, msg = a.stop()
+        self.assertEqual(action, "block")
+        self.assertIn("isolated change", msg)  # not 'data': B's migration is not A's work
+        self.assertNotIn("migrations", msg)
+
+    def test_shell_edits_count_and_read_only_shell_does_not(self):
+        a = self.session("sess-a")
+        a.shell("ls -la; git status --short; cat README.md")
+        self.put("app.py", "someone else wrote this\n")
+        self.assertEqual(a.stop(), ("allow", None))
+        a.shell("echo hi > out.py")
+        self.put("out.py", "hi\n")
+        self.assertEqual(a.stop()[0], "block")  # a command that may write: the change is this session's
+
+    def test_a_missing_or_corrupt_transcript_is_strict(self):
+        """R-15-5: when the gate cannot tell, the change is the session's."""
+        self.put("app.py", "x = 1\n")
+        for name, body in (("missing.jsonl", None), ("corrupt.jsonl", "not json at all\n{{{\n")):
+            tp = os.path.join(self.tdir, name)
+            if body:
+                with open(tp, "w") as f:
+                    f.write(body)
+            a, msg = gate.decide({"session_id": "s-" + name, "cwd": self.proj, "transcript_path": tp})
+            self.assertEqual(a, "block", name)
+
+    def test_only_the_new_tail_of_the_transcript_is_read(self):
+        s = self.session("sess-tail")
+        self.assertEqual(s.stop(), ("allow", None))
+        size = os.path.getsize(s.tp)
+        self.assertEqual(store.load_session("sess-tail")["attr_offset"], size)
+        with open(s.tp, "a") as f:
+            f.write(json.dumps({"type": "user", "message": {"role": "user", "content": "x" * 5000}}) + "\n")
+        s.write("app.py", "x = 1\n")
+        self.assertEqual(s.stop()[0], "block")
+        self.assertEqual(store.load_session("sess-tail")["attr_gen"], 1)  # counted once, not rescanned
+
+    def test_native_subagent_edits_are_the_parents_edits(self):
+        """R-9-1: the parent answers for what its subagents wrote."""
+        a = self.session("sess-a")
+        subdir = os.path.join(self.tdir, "sess-a", "subagents")
+        os.makedirs(subdir)
+        with open(os.path.join(subdir, "agent-x1.jsonl"), "w") as f:
+            f.write(json.dumps(_human_line()) + "\n")
+            f.write(json.dumps(_tool_line("Edit", {"file_path": os.path.join(self.proj, "app.py")})) + "\n")
+        self.put("app.py", "x = 1\n")
+        self.assertEqual(a.stop()[0], "block")
+
+    def test_shell_classifier(self):
+        for cmd in ("sed -i 's/a/b/' f.txt", "echo x > out.txt", "git apply p.diff", "python3 scripts/build.py",
+                    "sisi contract init", "python3 tests/run_parallel.py"):
+            self.assertTrue(attribution.shell_may_write(cmd), cmd)
+        for cmd in ("ls -la; git status; cat f.txt", "sisi verify", "grep -rn foo sisi/", "git commit -qm x",
+                    "gh run list", "sisi retro --aim speed --moment m"):
+            self.assertFalse(attribution.shell_may_write(cmd), cmd)
+        self.assertIsNone(attribution.shell_may_write("echo 'unterminated"))
+        self.assertIs(gate._shell_may_write, attribution.shell_may_write)  # watch.py reaches it here
+
+    def test_snapshot_ignores_commits_and_gitignored_files(self):
+        from sisi import gitutil
+        s0 = gitutil.snapshot(self.proj)
+        self.put("README.md", "changed\n", mode="a")
+        self.assertIn("README.md", gitutil.snapshot_diff(s0, gitutil.snapshot(self.proj)))
+        self.commit_all()
+        s1 = gitutil.snapshot(self.proj)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "e"],
+                       cwd=self.proj, check=True)
+        self.assertEqual(gitutil.snapshot_diff(s1, gitutil.snapshot(self.proj)), [])
+        self.put(".gitignore", "ignored.txt\n")
+        s2 = gitutil.snapshot(self.proj)
+        self.put("ignored.txt", "")
+        self.assertNotIn("ignored.txt", gitutil.snapshot_diff(s2, gitutil.snapshot(self.proj)))
+
+
+class WatchTests(GateBase):
+    """R-9-1: measured shell attribution: a command's real effect on the tree, not its text."""
+
+    def setUp(self):
+        super().setUp()
+        self.put("noop.py", "print('nothing written')\n")
+        self.put("gen.py", "open('generated.py', 'w').write('x = 1\\n')\n")
+        self.commit_all()
+
+    def watch(self, s, command, during=None, after=True):
+        s.shell(command)
+        base = {"session_id": s.sid, "cwd": self.proj, "transcript_path": s.tp,
+                "tool_name": "Bash", "tool_input": {"command": command}}
+        r = self.sisi_proc("watch", stdin=json.dumps(dict(base, hook_event_name="PreToolUse")))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        if during:
+            during()
+        if after:
+            r = self.sisi_proc("watch", stdin=json.dumps(dict(base, hook_event_name="PostToolUse")))
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def run_in_proj(self, *argv):
+        return subprocess.run(argv, cwd=self.proj, check=True, capture_output=True, text=True)
+
+    def test_an_orchestrator_that_only_runs_commands_never_edits(self):
+        a = self.session("orch")
+        self.assertEqual(a.stop(), ("allow", None))
+        for cmd, during in (("python3 noop.py", lambda: self.run_in_proj(sys.executable, "noop.py")),
+                            ("git commit -qm x", lambda: self.run_in_proj("git", "commit", "-q", "--allow-empty", "-m", "x")),
+                            ("gh run list", None)):
+            self.watch(a, cmd, during=during)
+        self.assertFalse(store.load_session("orch").get("attr_since_pass"))
+        self.put("app.py", "another session wrote this\n")
+        self.assertEqual(a.stop(), ("allow", None))
+
+    def test_a_command_that_writes_a_project_file_is_an_edit_of_that_path(self):
+        a = self.session("gen")
+        self.watch(a, "python3 gen.py", during=lambda: self.run_in_proj(sys.executable, "gen.py"))
+        self.assertIn("generated.py", store.load_session("gen").get("attr_since_pass", []))
+        self.put("app.py", "another session wrote this\n")
+        action, msg = a.stop()
+        self.assertEqual(action, "block")
+        self.assertIn("isolated change", msg)
+
+    def test_a_command_that_writes_only_outside_the_project_is_not_an_edit(self):
+        a = self.session("out")
+        outside = os.path.join(self.tmp, "outside.txt")
+        self.put("gen_out.py", "open(%r, 'w').write('elsewhere\\n')\n" % outside)
+        self.commit_all()
+        self.watch(a, "python3 gen_out.py", during=lambda: self.run_in_proj(sys.executable, "gen_out.py"))
+        self.assertTrue(os.path.exists(outside))
+        self.assertFalse(store.load_session("out").get("attr_since_pass"))
+        self.assertEqual(a.stop(), ("allow", None))
+
+    def test_a_missing_after_record_is_strict(self):
+        a = self.session("kill")
+        self.watch(a, "python3 gen.py", after=False)  # killed: no PostToolUse ever arrives
+        self.put("app.py", "x = 1\n")
+        self.assertEqual(a.stop()[0], "block")
+
+    def commit_notice(self, command):
+        return self.sisi_proc("watch", "--before", stdin=json.dumps(
+            {"session_id": "w", "cwd": self.proj, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+             "tool_input": {"command": command}})).stdout
+
+    def test_commit_time_notice_when_the_checks_have_not_passed_on_this_tree(self):
+        """R-5.6-1: said at `git commit`, once per commit, never a block."""
+        self.write_contract(contract([check("feature", "test -f ok.txt")]))
+        out = self.commit_notice("git commit -am wip")
+        d = json.loads(out)
+        self.assertIn("sisi verify", d["systemMessage"])
+        self.assertEqual(d["hookSpecificOutput"]["additionalContext"], d["systemMessage"])
+        self.assertIn("sisi verify", json.loads(self.commit_notice("cd x && git merge main"))["systemMessage"])
+        self.assertEqual(self.commit_notice("git status"), "")
+        self.assertEqual(self.sisi("verify").returncode, 0)
+        self.assertEqual(self.commit_notice("git commit -am wip"), "")  # passed on this very tree
+        self.put("app.py", "x = 1\n")
+        self.assertIn("sisi verify", self.commit_notice("git commit -am wip"))  # the tree moved on
+        os.remove(os.path.join(self.proj, C.REL))
+        self.assertEqual(self.commit_notice("git commit -am wip"), "")  # no unit: nothing to say
+
+
+class SubagentTests(GateBase):
+    """R-17-7: a subagent's last message is its report to its parent."""
+
+    def payload(self, **extra):
+        return dict({"session_id": "parent", "cwd": self.proj, "hook_event_name": "SubagentStop", "agent_id": "ag-1"}, **extra)
+
+    def test_a_subagent_stop_is_never_blocked_and_asks_for_nothing(self):
+        """Abuse: a subagent that edited source, with a failing contract and no retro."""
         self.write_contract(contract([check("bad", "false")]))
-        sub = os.path.join(self.proj, "x", "y")
-        os.makedirs(sub)
-        self.assertEqual(self.call(cwd=sub)[0], "block")
+        tp = os.path.join(self.tmp, "agent-ag-1.jsonl")
+        with open(tp, "w") as f:
+            f.write(json.dumps(_tool_line("Write", {"file_path": os.path.join(self.proj, "app.py")})) + "\n")
+        self.put("app.py", "x = 1\n")
+        pl = self.payload(agent_transcript_path=tp)
+        self.assertEqual(gate.decide_subagent(pl), ("allow", None))
+        self.assertEqual(gate.decide(pl), ("allow", None))  # even by the main entry
+        r = self.sisi("gate", "--subagent", stdin=json.dumps(pl))
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        r = self.sisi("gate", stdin=json.dumps(pl))
+        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        self.assertEqual(self.results(), [])
 
+    def test_what_the_subagent_observed_reaches_the_parents_gate(self):
+        """A subagent that wrote makes the parent's next stop a stop after an edit."""
+        tp = os.path.join(self.tmp, "agent-ag-1.jsonl")
+        with open(tp, "w") as f:
+            f.write(json.dumps(_tool_line("Write", {"file_path": os.path.join(self.proj, "app.py")})) + "\n")
+        parent = self.session("parent")
+        self.put("app.py", "x = 1\n")
+        gate.decide_subagent(self.payload(agent_transcript_path=tp))
+        row = store.read("subagents")[0]
+        self.assertEqual((row["session"], row["edited"]), ("parent", True))
+        a, msg = parent.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("isolated change", msg)
+
+    def test_a_session_marked_as_a_subagent_is_never_sent_back(self):
+        self.put("app.py", "x = 1\n")
+        st = store.load_session("child") or {}
+        st["subagent"] = True
+        store.save_session("child", st)
+        self.assertEqual(self.call(sid="child"), ("allow", None))
+
+
+# ======================================================================== fail open, trust
 
 class GateFailOpenTests(GateBase):
     def test_internal_error_allows_and_logs(self):
@@ -125,10 +861,8 @@ class GateFailOpenTests(GateBase):
         self.assertEqual((r.returncode, r.stdout), (0, ""))
 
     def test_garbage_stdin_allows(self):
-        r = self.sisi("gate", stdin="not json")
-        self.assertEqual((r.returncode, r.stdout), (0, ""))
-        r = self.sisi("gate", stdin="")
-        self.assertEqual((r.returncode, r.stdout), (0, ""))
+        self.assertEqual(self.sisi("gate", stdin="not json").stdout, "")
+        self.assertEqual(self.sisi("gate", stdin="").stdout, "")
 
     def test_corrupt_session_and_config_files(self):
         os.makedirs(os.path.join(self.state, "sessions"))
@@ -139,210 +873,29 @@ class GateFailOpenTests(GateBase):
         self.write_contract(contract([check("bad", "false")]))
         self.assertEqual(self.hook().returncode, 0)
 
-
-class GateNoContractTests(GateBase):
-    def start(self, sid=None):
-        self.sisi("tick", stdin=json.dumps({"session_id": sid or self.sid, "cwd": self.proj, "source": "startup"}))
-
-    def grow(self, n_lines=0, n_files=1):
-        for i in range(n_files):
-            with open(os.path.join(self.proj, "f%d.txt" % i), "w") as f:
-                f.write("x\n" * (n_lines // max(n_files, 1) + 1))
-
-    def test_not_a_git_repo_allows(self):
-        self.grow(500, 5)
-        self.assertEqual(self.call()[0], "allow")
-
-    def test_small_change_allows(self):
-        self.git_init(); self.start()
-        self.grow(10, 1)
-        self.assertEqual(self.call()[0], "allow")
-
-    def test_many_files_blocks(self):
-        self.git_init(); self.start()
-        self.grow(4, 5)
-        self.assertEqual(self.call()[0], "block")
-
-    def test_preexisting_dirt_does_not_count(self):
-        self.git_init()
-        self.grow(500, 6)
-        self.start()
-        self.assertEqual(self.call()[0], "allow")
-        with open(os.path.join(self.proj, "new.txt"), "w") as f:
-            f.write("y\n" * 100)
-        self.assertEqual(self.call()[0], "block")
-
-    def test_committed_growth_still_counts(self):
-        self.git_init(); self.start()
-        self.grow(100, 1)
-        subprocess.run(["git", "add", "-A"], cwd=self.proj, check=True)
-        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"], cwd=self.proj, check=True)
-        self.assertEqual(self.call()[0], "block")
-
-    def test_waive_allows_and_records(self):
-        self.git_init(); self.start()
-        self.grow(100, 1)
-        r = self.sisi("contract", "waive", "typo fix")
-        self.assertEqual(r.returncode, 0)
-        self.assertEqual(self.call()[0], "allow")
-        w = store.read("waivers")
-        self.assertEqual(w[0]["reason"], "typo fix")
-        self.assertIn("project", w[0])
-
-    def test_waiver_before_session_does_not_count(self):
-        self.git_init()
-        self.sisi("contract", "waive", "old")
-        w = store.read("waivers")
-        w[0]["ts"] = "2000-01-01T00:00:00Z"
-        os.remove(os.path.join(self.state, "waivers.jsonl"))
-        store.append("waivers", w[0])
-        self.start(); self.grow(100, 1)
-        self.assertEqual(self.call()[0], "block")
-
-    def test_contract_created_after_block_is_enforced(self):
-        self.git_init(); self.start(); self.grow(100, 1)
-        self.call()
-        self.write_contract(contract([check("bad", "false")]))
-        self.assertEqual(self.call()[0], "block")
-
-
-class GatePropertyTests(GateBase):
-    """The gate cannot be passed with a failing, timed-out or unrun check short of the 3-strike release."""
-
-    CMDS = [("true", 0, "passed")] * 3 + [("exit 1", 0, "failed"), ("exit 7", 7, "passed"), ("exit 7", 0, "failed")] \
-        + [("sleep 3", 0, "timeout")] * 1
-
-    def gen(self, rng):
-        checks, invs, expect_ok = [], [], True
-        floors = {"money": 2, "parsing": 2, "ui": None}
-        kinds = {}
-        for i in range(rng.randint(1, 5)):
-            kind = rng.choice(["general", "money", "parsing", "ui", "state-machine"])
-            if rng.random() < 0.2:
-                rung = rng.choice([5, 6])
-                checks.append(human("h%d" % i, rung, kind))
-                kinds.setdefault(kind, []).append(rung)
-                continue
-            cmd, exit_, status = rng.choice(self.CMDS)
-            rung = rng.randint(1, 4)
-            checks.append(check("c%d" % i, cmd, rung=rung, kind=kind, exit=exit_, timeout_s=0.08))
-            kinds.setdefault(kind, []).append(rung)
-            if status != "passed":
-                expect_ok = False
-        for i in range(rng.randint(0, 2)):
-            cmd, exit_, status = rng.choice(self.CMDS)
-            invs.append(check("i%d" % i, cmd, exit=exit_, timeout_s=0.08))
-            if status != "passed":
-                expect_ok = False
-        for kind, rungs in kinds.items():
-            if kind in ("money", "parsing", "state-machine") and min(rungs) > 2:
-                expect_ok = False
-        if not invs and not any("cmd" in c for c in checks):
-            expect_ok = False  # nothing runnable: the contract is invalid and must not pass
-        return contract(checks, invs), expect_ok
-
-    def test_generated_contracts(self):
-        seeds = [0, random.randrange(2**32)] + [random.randrange(2**32) for _ in range(ITERS - 1)]
-        for seed in seeds:
-            rng = random.Random(seed)
-            for n in range(4 * ITERS):
-                c, expect_ok = self.gen(rng)
-                sid = "p-%d-%d" % (seed, n)
-                self.write_contract(c)
-                with self.subTest(seed=seed, n=n, contract=c):
-                    first = self.call(sid=sid)[0]
-                    self.assertEqual(first, "allow" if expect_ok else "block")
-                    if not expect_ok:
-                        acts = [first] + [self.call(sid=sid)[0] for _ in range(2)]
-                        self.assertEqual(acts, ["block"] * 3)  # never passes early
-                        a, msg = self.call(sid=sid)
-                        self.assertEqual(a, "allow")
-                        self.assertIn("UNVERIFIED", msg)
-
-
-class GateUnchangedTreeTests(GateBase):
-    """Fix 1: a turn that changed nothing is not punished, and not re-checked."""
-
-    def setUp(self):
-        super().setUp()
-        self.git_init()
-        self.counter = os.path.join(self.tmp, "runs")
-
-    def counting(self, cmd="true"):
-        return check("c", "echo x >> %s; %s" % (self.counter, cmd))
-
-    def runs(self):
-        return len(open(self.counter).read().split()) if os.path.exists(self.counter) else 0
-
-    def tick(self):
-        self.sisi("tick", stdin=json.dumps({"session_id": self.sid, "cwd": self.proj, "source": "startup"}))
-
-    def edit(self, text="x"):
-        with open(os.path.join(self.proj, "work.txt"), "a") as f:
-            f.write(text + "\n")
-
-    def test_unchanged_since_baseline_allows_without_running(self):
-        self.write_contract(contract([self.counting("false")]))
-        self.tick()
-        self.assertEqual(self.call()[0], "allow")
-        self.assertEqual(self.runs(), 0)
-
-    def test_unchanged_since_last_allow_not_rerun(self):
-        self.write_contract(contract([self.counting()]))
-        self.tick()
-        self.edit()
-        self.assertEqual(self.call()[0], "allow")
-        self.assertEqual(self.runs(), 1)
-        self.assertEqual(self.call()[0], "allow")
-        self.assertEqual(self.runs(), 1)
-        self.edit()  # a change runs the checks again
-        self.call()
-        self.assertEqual(self.runs(), 2)
-
-    def test_unchanged_after_block_keeps_blocking_and_counts_strikes(self):
-        self.write_contract(contract([self.counting("false")]))
-        self.tick()
-        self.edit()
-        acts = [self.call() for _ in range(3)]
-        self.assertEqual([a for a, _ in acts], ["block"] * 3)
-        self.assertEqual(self.runs(), 1)  # only the first call ran the checks
-        self.assertIn("send-back 2 of 3", acts[1][1])
+    def test_an_unreadable_contract_is_reported_not_crashed_on(self):
+        os.makedirs(os.path.join(self.proj, ".sisi"))
+        with open(os.path.join(self.proj, C.REL), "w") as f:
+            f.write("{not json")
+        from sisi import trust
+        trust.add(self.proj)
+        self.put("app.py", "x = 1\n")
         a, msg = self.call()
-        self.assertEqual(a, "allow")
-        self.assertIn("UNVERIFIED", msg)
-        self.assertEqual(self.call()[0], "allow")  # released tree, still unchanged: allowed
-
-    def test_fixing_the_work_reruns(self):
-        marker = os.path.join(self.proj, "fixed")
-        self.write_contract(contract([check("c", "test -f %s" % marker)]))
-        self.tick()
-        self.edit()
-        self.assertEqual(self.call()[0], "block")
-        open(marker, "w").close()
-        self.assertEqual(self.call()[0], "allow")
-
-    def test_fixing_a_gitignored_contract_reruns(self):
-        with open(os.path.join(self.proj, ".git", "info", "exclude"), "a") as f:
-            f.write(".sisi/\n")
-        self.write_contract(contract([check("c", "false")]))
-        self.tick()
-        self.edit()
-        self.assertEqual(self.call()[0], "block")
-        self.write_contract(contract([check("c", "true")]))
-        self.assertEqual(self.call()[0], "allow")
+        self.assertEqual(a, "block")
+        self.assertIn("cannot read contract", msg)
 
 
 class GateTrustTests(GateBase):
-    """Fix 2: a contract that arrived with a clone is never executed without approval."""
+    """A contract that arrived with a clone is never executed without approval."""
 
     def setUp(self):
         super().setUp()
         self.marker = os.path.join(self.tmp, "ran")
-        self.write_contract(contract([check("evil", "touch %s; false" % self.marker)]), trusted=False)
+        self.write_contract(contract([check("evil", "touch %s; false" % self.marker)]) | {"risk": {"profile": "isolated"}},
+                            trusted=False)
 
     def test_gate_allows_with_one_notice_and_runs_nothing(self):
         r = self.hook()
-        self.assertEqual(r.returncode, 0)
         msg = json.loads(r.stdout)["systemMessage"]
         self.assertIn("untrusted", msg)
         self.assertIn("sisi contract trust", msg)
@@ -352,7 +905,6 @@ class GateTrustTests(GateBase):
     def test_verify_refuses_with_distinct_exit(self):
         r = self.sisi("verify")
         self.assertEqual(r.returncode, 3)
-        self.assertIn("untrusted", r.stdout)
         self.assertFalse(os.path.exists(self.marker))
 
     def test_trust_then_untrust(self):
@@ -364,574 +916,119 @@ class GateTrustTests(GateBase):
         self.assertEqual(self.sisi("verify").returncode, 3)
         self.assertFalse(os.path.exists(self.marker))
 
-    def test_init_trusts_the_project(self):
-        d = os.path.join(self.tmp, "other")
-        os.makedirs(d)
-        self.sisi("contract", "init", cwd=d)
-        self.assertEqual(self.sisi("verify", cwd=d).returncode, 1)  # ran (placeholder fails), not refused
 
-    def test_trust_follows_realpath(self):
-        link = os.path.join(self.tmp, "link")
-        os.symlink(self.proj, link)
-        self.sisi("contract", "trust", cwd=link)
-        self.assertEqual(self.sisi("verify").returncode, 1)
+# ======================================================================== seeded sequences
 
+class GateSequenceTests(GateBase):
+    """Seeded random sequences of operations against a real project; the invariants are checked after
+    every stop. A failing seed is printed with the operations that led to it."""
 
-class GateEmptyContractTests(GateBase):
-    """Fix 3: a contract with nothing runnable must not pass."""
+    OPS = ["edit_src", "edit_src", "edit_doc", "break", "fix", "stop", "stop", "retro", "pause", "other_edits", "other_breaks"]
 
-    def test_only_human_or_empty_is_invalid_everywhere(self):
-        for name, c in (("human only", contract([human("h5", 5), human("h6", 6)])), ("empty", contract([]))):
-            with self.subTest(name):
-                self.write_contract(c)
-                r = self.sisi("contract", "check")
-                self.assertEqual(r.returncode, 1)
-                self.assertIn("runnable", r.stdout)
-                self.assertEqual(self.sisi("verify").returncode, 1)
-                self.assertIn("runnable", self.sisi("verify").stdout)
-                self.assertEqual(self.call(sid=name)[0], "block")
+    def run_sequence(self, seed, steps=14):
+        rng = random.Random(seed)
+        proj_note = "seed %d" % seed
+        a = self.session("seq-a-%d" % seed)
+        b = self.session("seq-b-%d" % seed)
+        a.write("app.py", "x = 0\n")
+        a.contract(contract([check("feature", "test -f ok.txt")]))
+        log, last_action, consecutive_blocks, paused, n_retro = [], None, 0, False, 0
+        for step in range(steps):
+            op = rng.choice(self.OPS)
+            log.append(op)
+            if op == "edit_src":
+                a.edit("app.py", "x = %d\n" % step)
+                paused = False
+            elif op == "edit_doc":
+                a.edit("README.md", "line %d\n" % step)
+                paused = False
+            elif op == "break" and os.path.exists(os.path.join(self.proj, "ok.txt")):
+                a.remove("ok.txt")
+                paused = False
+            elif op == "fix":
+                a.write("ok.txt", "ready\n")
+                paused = False
+            elif op == "retro":
+                n_retro += 1
+                self.record_finding(n_retro, sid=a.sid)
+            elif op == "pause" and self.unit_state().get("status") == "open":
+                self.sisi("unit", "pause", "waiting for the reviewer %d" % step)
+                paused = True
+            elif op == "other_edits":
+                b.edit("other.py", "y = %d\n" % step)
+            elif op == "other_breaks":
+                b.write("migrations/%03d.sql" % step, "CREATE TABLE t%d (id integer);\n" % step)
+            if op != "stop":
+                continue
+            action, msg = a.stop()
+            where = "%s ops=%s" % (proj_note, log)
+            self.assertLessEqual(self.lines(msg), 25, where)
+            ok_now = os.path.exists(os.path.join(self.proj, "ok.txt"))
+            c = self.unit_state()
+            if action == "block":
+                consecutive_blocks += 1
+                self.assertLessEqual(consecutive_blocks, 3 + 4, where)  # bounded: offers are not counted
+            else:
+                consecutive_blocks = 0
+                if msg and "UNVERIFIED" in msg:
+                    last_action = "released"
+            # invariant: a unit is archived only after a retro was recorded for it
+            if c.get("status") == "closed":
+                self.assertTrue(learning.findings_for_unit(self.proj, "t"), where)
+                self.assertEqual(self.archives(), ["t.json"], where)
+                return
+            # invariant: no silent pass with a failing check and a source change pending,
+            # unless the unit is paused with no change since, or the gate released it as unverified
+            if action == "allow" and msg is None and not ok_now and c.get("status") == "open" \
+                    and not c.get("unverified"):
+                st = store.load_session(a.sid)
+                self.assertFalse(st.get("dirty"), where)  # then nothing of this session's was pending
+            # invariant: a stop right after a silent allow, with nothing in between, is silent again
+            if action == "allow" and msg is None:
+                self.assertEqual(a.stop(), ("allow", None), where)
 
-    def test_waive_is_the_way_out(self):
+    def test_seeded_sequences(self):
+        seeds = [0, 1, 2, random.randrange(2 ** 32)] + [random.randrange(2 ** 32) for _ in range(ITERS - 1)]
+        for seed in seeds:
+            with self.subTest(seed=seed):
+                self.setUp_again()
+                self.run_sequence(seed)
+
+    def setUp_again(self):
+        """A clean project and state for the next seed."""
+        import shutil
+        shutil.rmtree(self.proj, ignore_errors=True)
+        shutil.rmtree(self.state, ignore_errors=True)
+        shutil.rmtree(self.data, ignore_errors=True)
+        os.makedirs(self.proj)
         self.git_init()
-        self.write_contract(contract([human("h")]))
-        self.assertEqual(self.call()[0], "block")
+        self.put("README.md", "# project\n")
+        self.put("ok.txt", "ready\n")
+        self.commit_all()
 
-    def test_skeleton_is_honest_and_does_not_trap_question_turns(self):
-        self.git_init()
-        self.sisi("tick", stdin=json.dumps({"session_id": self.sid, "cwd": self.proj, "source": "startup"}))
-        r = self.sisi("contract", "init")
-        self.assertIn("SKELETON", r.stdout)
-        self.assertIn("real command", r.stdout)
-        self.assertEqual(self.sisi("verify").returncode, 1)
-        self.assertEqual(self.call()[0], "allow")  # nothing changed but the skeleton itself
-        with open(os.path.join(self.proj, "big.txt"), "w") as f:
-            f.write("x\n" * 100)
-        a, msg = self.call()
-        self.assertEqual(a, "block")  # growth rule applies while the contract is still a skeleton
-        self.assertIn("contract", msg)
-
-
-class GateGrowthTests(GateBase):
-    """Fix 4: growth without contract keeps blocking like a failing contract."""
-
-    def setUp(self):
-        super().setUp()
-        self.git_init()
-        self.sisi("tick", stdin=json.dumps({"session_id": self.sid, "cwd": self.proj, "source": "startup"}))
-
-    def grow(self, name, n):
-        with open(os.path.join(self.proj, name), "a") as f:
-            f.write("x\n" * n)
-
-    def test_blocks_up_to_three_then_unverified(self):
-        self.grow("a.txt", 100)
-        self.assertEqual([self.call()[0] for _ in range(3)], ["block"] * 3)
-        a, msg = self.call()
-        self.assertEqual(a, "allow")
-        self.assertIn("UNVERIFIED", msg)
-        self.assertEqual(self.results()[-1]["status"], "unverified")
-        self.grow("a.txt", 1)  # still over the threshold, still no contract: strikes start again
-        self.assertEqual(self.call()[0], "block")
-
-    def test_contract_ends_it(self):
-        self.grow("a.txt", 100)
-        self.assertEqual(self.call()[0], "block")
-        c = contract([check("c", "true")])
-        c["design"] = {
-            "implies": ["A change this size needs its approach recorded so the next agent can "
-                        "see why it went this way and what was ruled out."],
-            "provided": [{"what": "git already measures the change in this repository",
-                          "evidence": "command:git"}],
-            "alternatives": [
-                {"name": "keep blocking on growth alone", "cost": "no new code to write at all",
-                 "risk": "a contract can be gamed with checks that prove nothing real"},
-                {"name": "ask the human to approve large changes", "cost": "one prompt per change",
-                 "risk": "the human becomes the bottleneck for routine sizeable work"}],
-            "chosen": {"name": "contract with a checked design section",
-                       "why": "It is the option the owner would pick: the approach is recorded "
-                              "and checked mechanically instead of depending on goodwill."},
-            "objections": [],
-            "challenge": {"by": "a subagent on a different model",
-                          "recorded_at": "2026-01-01T00:00:00Z",
-                          "objections": ["The design section could become ceremony filled with filler text."],
-                          "changes": ["Required evidence that named existing things actually exist."]}}
-        self.write_contract(c)
-        self.assertEqual(self.call()[0], "allow")
-
-    def test_waiver_covers_tree_at_that_moment_only(self):
-        self.grow("a.txt", 100)
-        self.assertEqual(self.call()[0], "block")
-        self.assertEqual(self.sisi("contract", "waive", "generated file").returncode, 0)
-        self.assertEqual(self.call()[0], "allow")
-        self.grow("a.txt", 10)  # small growth after the waiver point
-        self.assertEqual(self.call()[0], "allow")
-        self.grow("a.txt", 100)  # big growth after the waiver point
-        self.assertEqual(self.call()[0], "block")
-        self.sisi("contract", "waive", "again")
-        self.assertEqual(self.call()[0], "allow")
-
-
-def _tool_line(name, inp):
-    return {"type": "assistant", "timestamp": "2026-01-01T00:00:00.000Z",
-            "message": {"role": "assistant", "content": [{"type": "tool_use", "name": name, "input": inp}]}}
-
-
-def _human_line():
-    return {"type": "user", "timestamp": "2026-01-01T00:00:00.000Z",
-            "message": {"role": "user", "content": "do the work please"}}
-
-
-class GateAttributionTests(GateBase):
-    """Two sessions, one folder: the gate judges only this session's own edits (scenarios a-e)."""
-
-    def setUp(self):
-        super().setUp()
-        os.environ["SISI_RETRO_REQUIRED"] = "1"
-        self.addCleanup(lambda: os.environ.__setitem__("SISI_RETRO_REQUIRED", "0"))
-        self.git_init()
-        self.marker = os.path.join(self.proj, "ok")
-        open(self.marker, "w").close()
-        with open(os.path.join(self.proj, "work.txt"), "w") as f:
-            f.write("base\n")
-        self.write_contract(contract([check("c", "test -f ok")]))
-        subprocess.run(["git", "add", "-A"], cwd=self.proj, check=True)
-        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"],
-                       cwd=self.proj, check=True)
-        self.tdir = os.path.join(self.tmp, "transcripts")
-        os.makedirs(self.tdir)
-
-    def transcript(self, name, lines=()):
-        p = os.path.join(self.tdir, name)
-        with open(p, "w") as f:
-            f.write(json.dumps(_human_line()) + "\n")
-            for ln in lines:
-                f.write(json.dumps(ln) + "\n")
-        return p
-
-    def append_line(self, path, line):
-        with open(path, "a") as f:
-            f.write((line if isinstance(line, str) else json.dumps(line)) + "\n")
-
-    def tick(self, sid, tp=None):
-        p = {"session_id": sid, "cwd": self.proj, "source": "startup"}
-        if tp:
-            p["transcript_path"] = tp
-        return self.sisi("tick", stdin=json.dumps(p))
-
-    def gate_proc(self, sid, tp=None):
-        p = {"session_id": sid, "cwd": self.proj, "hook_event_name": "Stop"}
-        if tp:
-            p["transcript_path"] = tp
-        return self.sisi_proc("gate", stdin=json.dumps(p), env={"SISI_RETRO_REQUIRED": "1"})
-
-    def edit_work(self, name="work.txt", text="more\n"):
-        with open(os.path.join(self.proj, name), "a") as f:
-            f.write(text)
-
-    def gate_unverified(self):
-        return [r for r in self.results() if r.get("check") == "gate" and r.get("status") == "unverified"]
-
-    def test_a_other_session_breaks_check_allows_once_per_tree_state(self):
-        ta = self.transcript("sess-a.jsonl")
-        tb = self.transcript("sess-b.jsonl")
-        self.tick("sess-a", ta); self.tick("sess-b", tb)
-        # B edits and breaks the check; A edited nothing at all.
-        self.append_line(tb, _tool_line("Edit", {"file_path": os.path.join(self.proj, "work.txt")}))
-        self.edit_work()
-        os.remove(self.marker)
-        r = self.gate_proc("sess-a", ta)
-        self.assertEqual(r.returncode, 0, r.stdout)
-        msg = json.loads(r.stdout)["systemMessage"]
-        self.assertIn("NOT satisfied", msg)
-        self.assertIn("UNVERIFIED", msg)
-        self.assertIn("work.txt", msg)
-        self.assertIn("sess-b", msg)  # identified from B's sibling transcript / session record
-        self.assertIn("Do not report this work as done", msg)
-        self.assertNotIn("Fix the work", msg)
-        self.assertNotIn("sisi retro", msg)  # A did no work: never asked for a retro
-        self.assertEqual(len(self.gate_unverified()), 1)
-        # Same tree again: allowed silently, no second note, no second unverified row.
-        r = self.gate_proc("sess-a", ta)
-        self.assertEqual((r.returncode, r.stdout), (0, ""))
-        self.assertEqual(len(self.gate_unverified()), 1)
-        # The tree moves again: one more note.
-        self.edit_work(text="even more\n")
-        r = self.gate_proc("sess-a", ta)
-        self.assertIn("NOT satisfied", json.loads(r.stdout)["systemMessage"])
-        self.assertEqual(len(self.gate_unverified()), 2)
-
-    def test_a_through_another_tools_hook(self):
-        # The same logic arrives through hookio: codex carries a transcript path, pi/opencode do not.
-        ta = self.transcript("sess-a.jsonl")
-        tb = self.transcript("sess-b.jsonl")
-        self.tick("sess-a", ta); self.tick("sess-b", tb)
-        self.append_line(tb, _tool_line("Edit", {"file_path": os.path.join(self.proj, "work.txt")}))
-        self.edit_work()
-        os.remove(self.marker)
-        p = {"session_id": "sess-a", "transcript_path": ta, "cwd": self.proj, "hook_event_name": "Stop"}
-        r = self.sisi("gate", "--tool", "codex", stdin=json.dumps(p))
-        self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertIn("NOT satisfied", json.loads(r.stdout)["systemMessage"])
-        p2 = {"session_id": "sess-pi", "cwd": self.proj}  # no transcript path: pre-attribution behaviour
-        r = self.sisi("gate", "--tool", "pi", stdin=json.dumps(p2))
-        self.assertEqual(r.returncode, 2)  # pi blocks by exit code, as before
-        self.assertIn("Fix the work", r.stdout)
-
-    def test_b_own_edit_then_other_breaks_is_sent_back(self):
-        ta = self.transcript("sess-a.jsonl")
-        tb = self.transcript("sess-b.jsonl")
-        self.tick("sess-a", ta); self.tick("sess-b", tb)
-        self.append_line(ta, _tool_line("Edit", {"file_path": os.path.join(self.proj, "work.txt")}))
-        self.edit_work()
-        self.append_line(tb, _tool_line("Edit", {"file_path": os.path.join(self.proj, "work.txt")}))
-        self.edit_work(text="b was here\n")
-        os.remove(self.marker)
-        r = self.gate_proc("sess-a", ta)
-        d = json.loads(r.stdout)
-        self.assertEqual(d["decision"], "block")
-        self.assertIn("Fix the work", d["reason"])
-
-    def test_c_native_subagent_edit_asks_parent_for_retro(self):
-        ta = self.transcript("sess-a.jsonl")
-        self.tick("sess-a", ta)
-        subdir = os.path.join(self.tdir, "sess-a", "subagents")
-        os.makedirs(subdir)
-        with open(os.path.join(subdir, "agent-x1.jsonl"), "w") as f:
-            f.write(json.dumps(_human_line()) + "\n")
-            f.write(json.dumps(_tool_line("Edit", {"file_path": os.path.join(self.proj, "work.txt")})) + "\n")
-        self.edit_work()
-        r = self.gate_proc("sess-a", ta)
-        d = json.loads(r.stdout)
-        self.assertEqual(d["decision"], "block")
-        self.assertIn("sisi retro", d["reason"])
-
-    def test_d_shell_edits_count_and_readonly_shell_does_not(self):
-        cmds = ["sed -i 's/base/changed/' %s" % os.path.join(self.proj, "work.txt"),
-                "echo hi > %s" % os.path.join(self.proj, "shell-out.txt"),
-                "git apply changes.diff"]
-        for i, cmd in enumerate(cmds):
-            sid = "shell-%d" % i
-            tp = self.transcript("%s.jsonl" % sid)
-            self.tick(sid, tp)
-            self.append_line(tp, _tool_line("Bash", {"command": cmd}))
-            self.edit_work(text="shell %d\n" % i)  # the file change the command made
-            r = self.gate_proc(sid, tp)
-            with self.subTest(cmd=cmd):
-                d = json.loads(r.stdout)
-                self.assertEqual(d["decision"], "block")
-                self.assertIn("sisi retro", d["reason"])  # treated as having edited: retro required
-        sid = "shell-ro"
-        tp = self.transcript("shell-ro.jsonl")
-        self.tick(sid, tp)
-        self.append_line(tp, _tool_line("Bash", {"command": "ls -la; git status --short; cat work.txt"}))
-        self.edit_work(text="someone else\n")  # tree changed, but not by this session
-        r = self.gate_proc(sid, tp)
-        self.assertEqual((r.returncode, r.stdout), (0, ""))  # passing check, no retro asked
-
-    def test_e_missing_or_corrupt_transcript_is_strict(self):
-        tb = self.transcript("sess-b.jsonl")
-        self.tick("sess-b", tb)
-        self.edit_work()
-        os.remove(self.marker)
-        missing = os.path.join(self.tdir, "no-such.jsonl")
-        r = self.gate_proc("sess-missing", missing)
-        self.assertEqual(json.loads(r.stdout)["decision"], "block")  # not waved through as another's work
-        bad = os.path.join(self.tdir, "corrupt.jsonl")
-        with open(bad, "w") as f:
-            f.write("not json at all\n{{{\n")
-        r = self.gate_proc("sess-corrupt", bad)
-        self.assertEqual(json.loads(r.stdout)["decision"], "block")
-        # and with the check passing again, a corrupt transcript still counts as edited for the retro
-        open(self.marker, "w").close()
-        r = self.gate_proc("sess-corrupt2", bad)
-        d = json.loads(r.stdout)
-        self.assertEqual(d["decision"], "block")
-        self.assertIn("sisi retro", d["reason"])
-
-    def test_shell_classifier(self):
-        self.assertTrue(gate._shell_may_write("sed -i 's/a/b/' f.txt"))
-        self.assertTrue(gate._shell_may_write("echo x > out.txt"))
-        self.assertTrue(gate._shell_may_write("git apply p.diff"))
-        self.assertTrue(gate._shell_may_write("python3 scripts/build.py"))
-        self.assertIsNone(gate._shell_may_write("echo 'unterminated"))
-        self.assertFalse(gate._shell_may_write("ls -la; git status; cat f.txt"))
-        self.assertFalse(gate._shell_may_write("sisi verify"))
-        self.assertFalse(gate._shell_may_write("grep -rn foo sisi/"))
-
-    def test_offset_reads_only_the_new_tail(self):
-        tp = self.transcript("sess-tail.jsonl")
-        self.tick("sess-tail", tp)
-        a, _ = gate.decide({"session_id": "sess-tail", "cwd": self.proj, "transcript_path": tp})
-        self.assertEqual(a, "allow")
-        size = os.path.getsize(tp)
-        self.assertEqual(store.load_session("sess-tail")["attr_offset"], size)
-        self.append_line(tp, {"type": "user", "message": {"role": "user", "content": "x" * 5000}})
-        self.append_line(tp, _tool_line("Edit", {"file_path": os.path.join(self.proj, "work.txt")}))
-        self.edit_work()
-        a, msg = gate.decide({"session_id": "sess-tail", "cwd": self.proj, "transcript_path": tp})
-        self.assertEqual(a, "block")  # the edit in the new tail was seen, retro is required
-        self.assertIn("sisi retro", msg)
-        self.assertEqual(store.load_session("sess-tail")["attr_gen"], 1)  # counted once, not rescanned
-
-
-class GateWatchTests(GateBase):
-    """Measured shell attribution: before/after tree snapshots, not command-text guesses."""
-
-    def setUp(self):
-        super().setUp()
-        os.environ["SISI_RETRO_REQUIRED"] = "1"
-        self.addCleanup(lambda: os.environ.__setitem__("SISI_RETRO_REQUIRED", "0"))
-        self.git_init()
-        self.marker = os.path.join(self.proj, "ok")
-        open(self.marker, "w").close()
-        with open(os.path.join(self.proj, "work.txt"), "w") as f:
-            f.write("base\n")
-        with open(os.path.join(self.proj, "noop.py"), "w") as f:
-            f.write("print('nothing written')\n")
-        with open(os.path.join(self.proj, "gen.py"), "w") as f:
-            f.write("open('generated.txt', 'w').write('made\\n')\n")
-        self.write_contract(contract([check("c", "test -f ok")]))
-        subprocess.run(["git", "add", "-A"], cwd=self.proj, check=True)
-        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"],
-                       cwd=self.proj, check=True)
-        self.tdir = os.path.join(self.tmp, "transcripts")
-        os.makedirs(self.tdir)
-
-    def transcript(self, name):
-        p = os.path.join(self.tdir, name)
-        with open(p, "w") as f:
-            f.write(json.dumps(_human_line()) + "\n")
-        return p
-
-    def append_line(self, path, line):
-        with open(path, "a") as f:
-            f.write(json.dumps(line) + "\n")
-
-    def tick(self, sid, tp):
-        return self.sisi("tick", stdin=json.dumps({"session_id": sid, "cwd": self.proj,
-                                                   "source": "startup", "transcript_path": tp}))
-
-    def gate_proc(self, sid, tp=None):
-        p = {"session_id": sid, "cwd": self.proj, "hook_event_name": "Stop"}
-        if tp:
-            p["transcript_path"] = tp
-        return self.sisi_proc("gate", stdin=json.dumps(p), env={"SISI_RETRO_REQUIRED": "1"})
-
-    def watch(self, sid, tp, command, during=None, after=True):
-        """Simulate the Pre/PostToolUse pair around the command's real effect. Returns nothing."""
-        self.append_line(tp, _tool_line("Bash", {"command": command}))
-        base = {"session_id": sid, "cwd": self.proj, "transcript_path": tp,
-                "tool_name": "Bash", "tool_input": {"command": command}}
-        r = self.sisi_proc("watch", stdin=json.dumps(dict(base, hook_event_name="PreToolUse")),
-                           env={"SISI_RETRO_REQUIRED": "1"})
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        if during is not None:
-            during()
-        if after:
-            r = self.sisi_proc("watch", stdin=json.dumps(dict(base, hook_event_name="PostToolUse")),
-                               env={"SISI_RETRO_REQUIRED": "1"})
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-
-    def run_in_proj(self, *argv):
-        return subprocess.run(argv, cwd=self.proj, check=True, capture_output=True, text=True)
-
-    def test_orchestrator_that_only_runs_commands_is_never_the_editor(self):
-        ta, tb = self.transcript("orch-a.jsonl"), self.transcript("sess-b.jsonl")
-        self.tick("orch-a", ta); self.tick("sess-b", tb)
-        self.assertEqual(self.gate_proc("orch-a", ta).stdout, "")  # passing stop: records the pass state
-        cmds = [("python3 noop.py", lambda: self.run_in_proj(sys.executable, "noop.py")),
-                ("git commit -qm x", lambda: self.run_in_proj("git", "commit", "-q", "--allow-empty", "-m", "x")),
-                ("gh run list", None),
-                ("sisi retro --aim speed --moment m", None),
-                ("python3 ~/.claude/orchestrator/orch.py log --type impl", None)]
-        for cmd, during in cmds:
-            self.watch("orch-a", ta, cmd, during=during)
-        self.assertFalse(store.load_session("orch-a").get("attr_since_pass"))
-        # Another session edits and breaks the check.
-        self.append_line(tb, _tool_line("Edit", {"file_path": os.path.join(self.proj, "work.txt")}))
-        with open(os.path.join(self.proj, "work.txt"), "a") as f:
-            f.write("worker edit\n")
-        os.remove(self.marker)
-        r = self.gate_proc("orch-a", ta)
-        msg = json.loads(r.stdout)["systemMessage"]
-        self.assertIn("NOT satisfied", msg)
-        self.assertIn("work.txt", msg)
-        self.assertNotIn("Fix the work", msg)
-        self.assertNotIn("sisi retro", msg)
-        self.assertEqual(len([x for x in self.results() if x.get("status") == "unverified"]), 1)
-        self.assertEqual(self.gate_proc("orch-a", ta).stdout, "")  # second stop: silent
-
-    def test_command_that_writes_a_project_file_is_an_edit_of_that_path(self):
-        tp = self.transcript("gen-a.jsonl")
-        self.tick("gen-a", tp)
-        self.assertEqual(self.gate_proc("gen-a", tp).stdout, "")
-        self.watch("gen-a", tp, "python3 gen.py", during=lambda: self.run_in_proj(sys.executable, "gen.py"))
-        self.assertIn("generated.txt", store.load_session("gen-a").get("attr_since_pass", []))
-        tb = self.transcript("sess-b.jsonl")
-        self.tick("sess-b", tb)
-        self.append_line(tb, _tool_line("Edit", {"file_path": os.path.join(self.proj, "work.txt")}))
-        with open(os.path.join(self.proj, "work.txt"), "a") as f:
-            f.write("worker edit\n")
-        os.remove(self.marker)
-        d = json.loads(self.gate_proc("gen-a", tp).stdout)
-        self.assertEqual(d["decision"], "block")  # a path it is attributed with changed since the pass
-        self.assertIn("Fix the work", d["reason"])
-        open(self.marker, "w").close()  # checks pass again, and this session edited: retro required
-        d = json.loads(self.gate_proc("gen-a", tp).stdout)
-        self.assertEqual(d["decision"], "block")
-        self.assertIn("sisi retro", d["reason"])
-
-    def test_command_that_writes_only_outside_the_project_is_not_an_edit(self):
-        tp = self.transcript("out-a.jsonl")
-        self.tick("out-a", tp)
-        self.assertEqual(self.gate_proc("out-a", tp).stdout, "")
-        outside = os.path.join(self.tmp, "outside.txt")
-        gen = os.path.join(self.proj, "gen_out.py")
-        with open(gen, "w") as f:
-            f.write("open(%r, 'w').write('elsewhere\\n')\n" % outside)
-        self.watch("out-a", tp, "python3 gen_out.py", during=lambda: self.run_in_proj(sys.executable, "gen_out.py"))
-        self.assertTrue(os.path.exists(outside))
-        self.assertFalse(store.load_session("out-a").get("attr_since_pass"))
-        self.assertEqual(self.gate_proc("out-a", tp).stdout, "")  # no retro asked
-
-    def test_other_agents_write_inside_the_window_is_attributed_to_this_session(self):
-        tp = self.transcript("win-a.jsonl")
-        self.tick("win-a", tp)
-        self.assertEqual(self.gate_proc("win-a", tp).stdout, "")
-
-        def during():
-            with open(os.path.join(self.proj, "work.txt"), "a") as f:
-                f.write("written by another agent mid-command\n")
-            os.remove(self.marker)
-
-        self.watch("win-a", tp, "python3 noop.py", during=during)
-        self.assertIn("work.txt", store.load_session("win-a").get("attr_since_pass", []))
-        d = json.loads(self.gate_proc("win-a", tp).stdout)
-        self.assertEqual(d["decision"], "block")  # documented strict error: the window is this session's
-        self.assertIn("Fix the work", d["reason"])
-
-    def test_missing_after_record_is_strict(self):
-        tp = self.transcript("kill-a.jsonl")
-        self.tick("kill-a", tp)
-        self.assertEqual(self.gate_proc("kill-a", tp).stdout, "")
-        self.watch("kill-a", tp, "python3 gen.py", after=False)  # killed: no PostToolUse ever arrives
-        with open(os.path.join(self.proj, "work.txt"), "a") as f:
-            f.write("worker edit\n")
-        os.remove(self.marker)
-        d = json.loads(self.gate_proc("kill-a", tp).stdout)
-        self.assertEqual(d["decision"], "block")
-        self.assertIn("Fix the work", d["reason"])
-        tp2 = self.transcript("kill-b.jsonl")
-        self.tick("kill-b", tp2)
-        open(self.marker, "w").close()  # tree passes again
-        self.watch("kill-b", tp2, "python3 gen.py", after=False)
-        d = json.loads(self.gate_proc("kill-b", tp2).stdout)
-        self.assertEqual(d["decision"], "block")
-        self.assertIn("sisi retro", d["reason"])  # strict for the retro too
-
-    def test_snapshot_and_classifier(self):
-        from sisi import gitutil
-        s0 = gitutil.snapshot(self.proj)
-        with open(os.path.join(self.proj, "work.txt"), "a") as f:
-            f.write("changed\n")
-        self.assertIn("work.txt", gitutil.snapshot_diff(s0, gitutil.snapshot(self.proj)))
-        subprocess.run(["git", "add", "-A"], cwd=self.proj, check=True)
-        s1 = gitutil.snapshot(self.proj)
-        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "c"],
-                       cwd=self.proj, check=True)
-        self.assertEqual(gitutil.snapshot_diff(s1, gitutil.snapshot(self.proj)), [])  # commit: .git only
-        with open(os.path.join(self.proj, ".gitignore"), "w") as f:
-            f.write("ignored.txt\n")
-        s2 = gitutil.snapshot(self.proj)
-        open(os.path.join(self.proj, "ignored.txt"), "w").close()
-        self.assertNotIn("ignored.txt", gitutil.snapshot_diff(s2, gitutil.snapshot(self.proj)))
-        self.assertFalse(gate._shell_may_write("git commit -qm x"))
-        self.assertFalse(gate._shell_may_write("gh run list"))
-        self.assertFalse(gate._shell_may_write("sisi retro --aim speed --moment m"))
-        self.assertFalse(gate._shell_may_write("sisi verify"))
-        self.assertTrue(gate._shell_may_write("sisi contract init"))
-        self.assertTrue(gate._shell_may_write("python3 ~/.claude/orchestrator/orch.py log --type impl"))
-        self.assertTrue(gate._shell_may_write("python3 tests/run_parallel.py"))
-
-
-class GateSingleSessionEquivalenceTests(GateBase):
-    """(f) One session only: with a transcript that records its own edits, every decision matches
-    the pre-attribution gate (the same decide() called with no transcript path) on a twin project."""
-
-    def twin(self, name):
-        d = os.path.join(self.tmp, name)
-        os.makedirs(d)
-        self.git_init(d)
-        with open(os.path.join(d, "work.txt"), "w") as f:
-            f.write("base\n")
-        open(os.path.join(d, "ok"), "w").close()
-        self.write_contract(contract([check("c", "test -f ok")]), d=d)
-        return d
-
-    def retro_for(self, proj, sid, n):
-        r = self.sisi("retro",
-                      "--finding", "`cargo test` twin run %d took 4 minutes with no fuzz verifier in project" % n,
-                      "--cause", "the recipe never named a fuzz verifier for parsers",
-                      "--impact", "time", "--disposition", "promote",
-                      "--change", "Add the fuzz verifier to the parser-or-codec recipe Checks, twin variant %d" % n,
-                      "--mechanism", "verification", "--expect", "parser work gets a fuzz check",
-                      "--validate", "run the recipe checks on a parser change",
-                      cwd=proj, env={"SISI_SESSION_ID": sid})
-        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-
-    def test_seeded_sequences_match_the_reference(self):
-        os.environ["SISI_RETRO_REQUIRED"] = "1"
-        self.addCleanup(lambda: os.environ.__setitem__("SISI_RETRO_REQUIRED", "0"))
-        ref_proj, new_proj = self.twin("refproj"), self.twin("newproj")
-        tp = os.path.join(self.tmp, "twin-new.jsonl")
-        with open(tp, "w") as f:
-            f.write(json.dumps(_human_line()) + "\n")
-        self.sisi("tick", stdin=json.dumps({"session_id": "twin-ref", "cwd": ref_proj, "source": "startup"}))
-        self.sisi("tick", stdin=json.dumps({"session_id": "twin-new", "cwd": new_proj, "source": "startup",
-                                            "transcript_path": tp}))
-        n_retro = [0]
-
-        def both(fn):
-            fn(ref_proj)
-            fn(new_proj)
-
-        def append_both(text):
-            for p in (ref_proj, new_proj):
-                with open(os.path.join(p, "work.txt"), "a") as f:
-                    f.write(text)
-
-        def stop_pair(step):
-            a_ref, m_ref = gate.decide({"session_id": "twin-ref", "cwd": ref_proj})
-            a_new, m_new = gate.decide({"session_id": "twin-new", "cwd": new_proj, "transcript_path": tp})
-            self.assertEqual(a_new, a_ref, "step %r" % (step,))
-            self.assertEqual(("sisi retro" in (m_new or "")), ("sisi retro" in (m_ref or "")), "step %r" % (step,))
-            self.assertEqual(("Fix the work" in (m_new or "")), ("Fix the work" in (m_ref or "")), "step %r" % (step,))
-
-        for seed in (0, 1, 2):
-            rng = random.Random(seed)
-            for step in range(12):
-                op = rng.choice(["edit", "edit", "break", "fix", "verify", "retro"])
-                if op == "edit":
-                    append_both("s%d-%d\n" % (seed, step))
-                    with open(tp, "a") as f:
-                        f.write(json.dumps(_tool_line("Edit", {"file_path": os.path.join(new_proj, "work.txt")})) + "\n")
-                elif op == "break":
-                    both(lambda p: os.path.exists(os.path.join(p, "ok")) and os.remove(os.path.join(p, "ok")))
-                    append_both("break\n")
-                    with open(tp, "a") as f:
-                        f.write(json.dumps(_tool_line("Edit", {"file_path": os.path.join(new_proj, "work.txt")})) + "\n")
-                elif op == "fix":
-                    both(lambda p: open(os.path.join(p, "ok"), "w").close())
-                    with open(tp, "a") as f:
-                        f.write(json.dumps(_tool_line("Write", {"file_path": os.path.join(new_proj, "ok")})) + "\n")
-                elif op == "verify":
-                    self.sisi("verify", cwd=ref_proj)
-                    self.sisi("verify", cwd=new_proj)
-                elif op == "retro":
-                    n_retro[0] += 1
-                    self.retro_for(ref_proj, "twin-ref", n_retro[0])
-                    self.retro_for(new_proj, "twin-new", n_retro[0])
-                stop_pair((seed, step, op))
+    def test_another_sessions_work_never_touches_this_sessions_stops(self):
+        """R-15-9: for any sequence of B's edits and breakages, A (which does nothing) is never sent back."""
+        for seed in range(3 * ITERS):
+            with self.subTest(seed=seed):
+                self.setUp_again()
+                rng = random.Random(seed)
+                a, b = self.session("a%d" % seed), self.session("b%d" % seed)
+                self.assertEqual(a.stop(), ("allow", None))
+                for step in range(8):
+                    op = rng.choice(["src", "doc", "migration", "break", "contract", "secret"])
+                    if op == "src":
+                        b.edit("b%d.py" % step, "y = 1\n")
+                    elif op == "doc":
+                        b.edit("README.md", "b %d\n" % step)
+                    elif op == "migration":
+                        b.write("migrations/%03d.sql" % step, "CREATE TABLE x (id integer);\n")
+                    elif op == "break" and os.path.exists(os.path.join(self.proj, "ok.txt")):
+                        b.remove("ok.txt")
+                    elif op == "contract" and not os.path.exists(os.path.join(self.proj, C.REL)):
+                        b.contract(contract([check("c", "false")]))
+                    elif op == "secret":
+                        b.write("config/secrets.env", "PASSWORD=hunter2\n")
+                    self.assertEqual(a.stop(), ("allow", None), "seed %d step %d %s" % (seed, step, op))
 
 
 if __name__ == "__main__":

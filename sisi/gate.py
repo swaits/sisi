@@ -60,25 +60,26 @@ def _new_waiver(project, sess):
 
 # ---------------------------------------------------------------- who changed what
 
-def _absorb_subagents(sess, sid):
+def _absorb_subagents(sess, sid, top):
     """Edits a subagent reported at its own stop count as this session's edits (hosts that keep the
     subagent's transcript elsewhere are covered this way)."""
     seen = int(sess.get("sub_seen_ns", 0) or 0)
-    top = max(seen, 0)
+    newest = seen
     for r in store.read("subagents"):
         if r.get("session") != sid or int(r.get("ns", 0)) <= seen:
             continue
-        top = max(top, int(r["ns"]))
+        newest = max(newest, int(r["ns"]))
         if not r.get("edited"):
             continue
         sess["attr_gen"] = int(sess.get("attr_gen", 0) or 0) + 1
         since = sess.setdefault("attr_since_pass", [])
         for f in r.get("files") or []:
-            if f not in since:
-                since.append(f)
+            rel = os.path.relpath(f, top) if top and os.path.isabs(f) else f
+            if rel not in since:
+                since.append(rel)
         if not r.get("files") and "*subagent*" not in since:
             since.append("*subagent*")
-    sess["sub_seen_ns"] = top
+    sess["sub_seen_ns"] = newest
 
 
 def _note_own_paths(sess, attr, top):
@@ -281,7 +282,7 @@ def _decide(payload):
                 attr["unknown"] = True  # a shell command with a before but no after: strict
         except Exception as e:
             store.log_error("gate-watch-pending", e)
-        _absorb_subagents(sess, sid)
+        _absorb_subagents(sess, sid, top)
         _note_own_paths(sess, attr, top)
     fp = gitutil.fingerprint(cwd, [path]) if top else None
     if attr is not None:
@@ -315,7 +316,7 @@ def _decide(payload):
             c, path = None, None  # the unit is archived; new work stands or falls on its own
             sess["req_contract"] = False
         elif isinstance(c, dict) and c.get("status") == "paused":
-            if not sess.get("dirty") or top is None or c.get("pause_fp") == fp:
+            if not sess.get("dirty") or top is None or c.get("pause_fp") == gitutil.fingerprint(cwd):
                 return stop.allow(cwd, settle=bool(sess.get("dirty")))  # a recorded wait, no new change
             U.resume(c, path)  # the tree changed since the pause: the wait is over
             stop.refresh(cwd, path)
@@ -428,7 +429,7 @@ def _late_close(stop, cwd, c, path, project):
     """This session changed nothing, but a retro was recorded for the open unit it evaluated before:
     the unit closes now rather than waiting for the next change."""
     s = stop.sess
-    if c is not None and path and c.get("status") == "open" and s.get("last_unit") == c.get("id") \
+    if c is not None and path and c.get("status", "open") == "open" and s.get("last_unit") == c.get("id") \
             and not c.get("unverified"):
         try:
             from . import learning
