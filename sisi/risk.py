@@ -319,6 +319,7 @@ def main(args=()):
     print("risk floor: %s" % floor)
     for r in reasons:
         print("  - %s" % r)
+    print("(the floor is a minimum worked out from paths alone, not a verdict: judge the change itself too)")
     print("declared: %s" % (declared or "none (no .sisi/contract.json risk.profile)"))
     print("requires: contract=%s, checks=%s, requirement model=%s, risk note=%s, "
           "independent evidence=%s, retro=%s"

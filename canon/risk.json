@@ -76,5 +76,6 @@
     {"keyword": "payment", "profile": "critical", "reason": "diff moves money"},
     {"keyword": "mutex", "profile": "critical", "reason": "diff uses a concurrency primitive"},
     {"keyword": "release candidate", "profile": "release", "reason": "diff prepares a release"}
-  ]
+  ],
+  "measured": {"blind_agreement": ["73 of 89", "89 of 106"], "note": "A floor computed from paths alone agreed with careful independent labels about five times in six, and under-rated roughly one data-or-critical path in six. That is why the contract's declared profile and the agent's own judgement sit above the floor, and why a unit records the floor beside the declared profile."}
 }
