@@ -401,10 +401,11 @@ def _parse_time(value):
         return None
 
 
-def record_down(keys, reason, note=None, now=None, retry_after_s=None, until_ts=None):
+def record_down(keys, reason, note=None, now=None, retry_after_s=None, until_ts=None, provider=None):
     """Record unavailability under one or more keys (a worker, its tool, its plan prefix).
     Unavailability is kept apart from judged work: it never counts against quality. Without an
-    explicit `until_ts`, the wait before the next try widens with each repeat failure."""
+    explicit `until_ts`, the wait before the next try widens with each repeat failure. The key equal to
+    `provider` is marked as a provider's: it reaches that provider's workers only (routing.provider_of)."""
     now = time.time() if now is None else now
     avail = read_availability()
     for key in keys:
@@ -416,6 +417,8 @@ def record_down(keys, reason, note=None, now=None, retry_after_s=None, until_ts=
         entry["reason"] = reason
         if note:
             entry["note"] = note
+        if provider and key == str(provider).strip().lower():
+            entry["scope"] = "provider"
         if until_ts is not None:
             entry["retry_at"] = float(until_ts)
         else:
@@ -789,7 +792,8 @@ def notes_for(candidates_by_worker, chosen, passed, notes=None, limit=5):
 
 
 DATA_FILES = ("delegations.jsonl", "worker-availability.json", "worker-prices.json",
-              "model-strength.json", "worker-prefs.json", "worker-notes.json", "worker-drivers.json")
+              "model-strength.json", "worker-prefs.json", "worker-notes.json", "worker-drivers.json",
+              "worker-providers.json", "worker-vouches.json")
 
 
 def _data_state():
@@ -1153,11 +1157,19 @@ def _append_transcript(path, heading, cmd, out, err, rc):
                 % (heading, " ".join(str(c)[:200] for c in cmd), rc, out or "", err or ""))
 
 
+def _down_provider(cand):
+    """The provider of a worker (the part of its id before the first slash) when it differs from its tool: a
+    tool that carries several providers has a login, a plan and an allowance for each."""
+    prov = routing.provider_of(cand.get("worker"))
+    return prov if prov and prov != str(cand.get("tool") or "").lower() else None
+
+
 def _down_keys(cand, reason):
     keys = [cand["worker"]]
     model = str(cand.get("model") or "")
+    prov = _down_provider(cand)
     if reason == "auth" and cand.get("tool"):
-        keys.append(cand["tool"])
+        keys.append(prov or cand["tool"])  # one provider's login, or the tool's own when it has no providers
     if reason == "limit" and "/" in model:
         keys.append(model.split("/", 1)[0])
     return keys
@@ -1229,10 +1241,13 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
                          % (cand["worker"], timeout, transcript))
             return None, None, notes
         _append_transcript(transcript, cand["worker"], cmd, out, err, rc)
-        failure = classify_failure(out + "\n" + err, rc, _D.extra_signatures(driver))
+        failure = (_D.provider_failure(cand, out + "\n" + err)
+                   or classify_failure(out + "\n" + err, rc, _D.extra_signatures(driver)))
         if failure is not None:
             reason, note, retry = failure
-            record_down(_down_keys(cand, reason), reason, note, retry_after_s=retry)
+            record_down(_down_keys(cand, reason), reason, note, retry_after_s=retry,
+                        until_ts=_D.limit_until(cand) if reason == "limit" else None,
+                        provider=_down_provider(cand) or (str(cand.get("model")).split("/", 1)[0] if "/" in str(cand.get("model")) else None))
             mark_discovery_stale()
             notes.append("%s is unavailable (%s: %s); trying the next choice" % (cand["worker"], reason, note))
             cand = None
@@ -1417,6 +1432,8 @@ def cmd_workers(args=()):
         return _cmd_up(args[1:])
     if args[:1] == ["import"]:
         return _cmd_import(args[1:])
+    if args[:1] in (["plan"], ["vouch"], ["allowance"], ["signature"]):
+        return _D.cmd_provider(args)
     if args[:1] == ["learn"]:
         return _D.cmd_learn(args[1:])
     if args[:1] == ["forget"]:
@@ -1424,6 +1441,7 @@ def cmd_workers(args=()):
     migrate_standing_facts()
     disc = discover(force="--refresh" in args)
     disc = dict(disc, tools=_D.merge_tools(disc.get("tools") or []))
+    _D.refresh_allowances(force=True)  # a defined allowance probe is read now: `sisi workers` was asked
     records = read_records()
     avail = read_availability()
     prices = load_prices()
@@ -1497,6 +1515,8 @@ def cmd_workers(args=()):
                                     (" (%s)" % entry["why"]) if entry.get("why") else ""))
     for n in load_notes():
         print("Note (information for the agent): %s" % note_line(n))
+    for ln in _D.vouch_lines():
+        print(ln)
     line = facts_line()
     if line:
         print(line)
@@ -1542,7 +1562,9 @@ def cmd_route(args=()):
         return 1
     kind, difficulty = setup
     records = read_records()
-    candidates, cold, excluded = routable_candidates(build_candidates(), records)
+    everything = build_candidates()
+    _D.apply_allowances(everything)  # a defined allowance probe older than a few minutes is read again
+    candidates, cold, excluded = routable_candidates(everything, records)
     prefs = effective_prefs(kind, difficulty, os.getcwd())
     everyone = candidates
     candidates, limited = apply_limits(candidates, prefs)
@@ -1642,6 +1664,7 @@ def cmd_delegate(args=()):
         print("sisi delegate: not a folder: %s" % cwd, file=sys.stderr)
         return 1
     candidates = build_candidates()
+    spent = _D.apply_allowances(candidates)
     explicit = None
     worker = _opt(args, "--worker")
     if worker:
@@ -1649,7 +1672,10 @@ def cmd_delegate(args=()):
         if explicit is None:
             print("sisi delegate: no such worker found here: %s (see `sisi workers`)" % worker, file=sys.stderr)
             return 1
-    else:
+        if routing.provider_of(explicit["worker"]) in spent:  # its allowance is read as spent: another worker, as after a limit
+            print("sisi: %s has no allowance left until its reset; choosing another worker" % explicit["worker"])
+            explicit = None
+    if explicit is None:
         candidates, _cold, _excluded = routable_candidates(candidates, read_records())
     rec, final, notes = run_delegation(candidates, kind, difficulty, prompt, cwd,
                                        explicit=explicit, review_of=_opt(args, "--review-of"),

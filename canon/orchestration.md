@@ -96,6 +96,9 @@ present; nothing here names one. Read on demand: `sisi delegate guide`.
   Either way a new worker is unproven: routine work only, a free or flat one tried more
   often, every result checked with at least the tests or a read of the diff, until its
   judged record decides.
+- One tool can carry several providers, each with its own plan, allowance and failure phrases
+  (`sisi workers plan|allowance|signature`). The owner can vouch for a worker he checked himself
+  (`sisi workers vouch`): capable up to that difficulty on his word until its own record decides.
 - Orchestration legwork is delegable like any other legwork: discovery,
   price and benchmark research, routing lookups, first-pass review, and
   summarising the record can all go to a fast, cheap worker. The judgement

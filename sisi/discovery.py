@@ -16,12 +16,12 @@ checked a level more carefully, and explored more often when it costs nothing ex
 Every hook entry point fails open. A driver file is untrusted input written by an agent: validated field by
 field and run without a shell.
 """
-import json, os, re, time
+import json, os, re, shlex, time
 
 from . import paths, store
 
 DEFAULTS = {"path_refresh_s": 6 * 3600, "path_every_starts": 25, "drop_after_listings": 3,
-            "catalogue_over": 8, "smoke_timeout_s": 120}
+            "catalogue_over": 8, "smoke_timeout_s": 120, "allowance_cache_s": 300, "allowance_timeout_s": 8}
 MAX_NAMED = 5
 SMOKE_PROMPT = ("Reply with exactly this one word and nothing else: %s. "
                 "Do not read, write, create or run anything.")
@@ -582,12 +582,12 @@ def tool_lines(t):
     if t.get("learned"):
         info = t["learned"]
         return ["  learned by %s on %s (%s); `sisi workers forget %s` removes it"
-                % (info.get("by") or "an unknown worker", _day(info.get("at")), info.get("state"), t["name"])]
+                % (info.get("by") or "an unknown worker", _day(info.get("at")), info.get("state"), t["name"])] + provider_lines(t)
     if t.get("host"):
         h = t["host"]
         return ["  reached through the host's cross-provider delegation (first seen %s); new workers are unproven: "
-                "routine work only until judged" % _day(h.get("first_seen"))]
-    return []
+                "routine work only until judged" % _day(h.get("first_seen"))] + provider_lines(t)
+    return provider_lines(t)
 
 
 # ---------------------------------------------------------------- running a learned tool once
@@ -789,37 +789,60 @@ def waiting_drivers():
     return {n: r for n, r in load_drivers().items() if r.get("state") == "waiting-owner"}
 
 
-def approve_hook(args):
-    """Called first by `sisi approve`. Handles the ids `drv-NAME` and adds the waiting drivers to the
-    listing. Returns an exit code when it handled the call, None to let the cycle's approvals go on."""
+def _owner_may_decide(lines):
+    """True when this is the owner's terminal (or the config lets an agent relay a decision); else prints why not."""
     import sys
-    from . import cycle, learning
-    waiting = waiting_drivers()
+    from . import cycle
+    if cycle._stdin_is_tty() or cycle.relay_allowed():
+        return True
+    print("\n".join(lines), file=sys.stderr)
+    print("sisi approve: refused. A decision must be made by the owner in a terminal: this was run without one "
+          "(an agent, a script, a pipe). Show the owner the text above and give them the line to type.", file=sys.stderr)
+    return False
+
+
+def approve_hook(args):
+    """Called first by `sisi approve`. Handles the ids `drv-NAME` (a learned driver) and `probe-PROVIDER` (an
+    allowance probe) and adds both kinds waiting for the owner to the listing. Returns an exit code when it
+    handled the call, None to let the cycle's approvals go on."""
+    import sys
+    from . import learning
+    waiting, probes = waiting_drivers(), waiting_probes()
     if not args:
-        if not waiting:
+        if not waiting and not probes:
             return None
         for n, r in sorted(waiting.items()):
-            print("\n".join(describe_driver(n, r)))
-            print()
+            print("\n".join(describe_driver(n, r)) + "\n")
+        for n, d in sorted(probes.items()):
+            print("\n".join(describe_probe(n, d)) + "\n")
         if learning.load_pending():
             return None
-        print("The owner decides, in a terminal: sisi approve drv-NAME --yes | --no")
+        print("The owner decides, in a terminal: sisi approve drv-NAME|probe-PROVIDER --yes | --no")
         return 0
-    if not args[0].startswith("drv-"):
+    if not (args[0].startswith("drv-") or args[0].startswith("probe-")):
         return None
-    name = args[0][4:]
+    kind, name = args[0].split("-", 1)
+    held = waiting if kind == "drv" else probes
     yes = "--yes" in args
-    if name not in waiting:
-        print("sisi approve: no driver %r waits for a decision" % name, file=sys.stderr)
+    if name not in held:
+        print("sisi approve: nothing named %r waits for a decision" % args[0], file=sys.stderr)
         return 2
     if not yes and "--no" not in args:
-        print("usage: sisi approve drv-NAME --yes | --no", file=sys.stderr)
+        print("usage: sisi approve drv-NAME|probe-PROVIDER --yes | --no", file=sys.stderr)
         return 2
-    if not cycle._stdin_is_tty() and not cycle.relay_allowed():
-        print("\n".join(describe_driver(name, waiting[name])), file=sys.stderr)
-        print("sisi approve: refused. A decision must be made by the owner in a terminal: this was run without one "
-              "(an agent, a script, a pipe). Show the owner the command above and give them the line to type.", file=sys.stderr)
+    if not _owner_may_decide(describe_driver(name, held[name]) if kind == "drv" else describe_probe(name, held[name])):
         return 2
+    if kind == "probe":
+        provs = load_providers()
+        if not yes:
+            provs[name].pop("allowance", None)
+            save_providers(provs)
+            print("probe-%s refused; the probe was removed" % name)
+            return 0
+        provs[name]["allowance"]["state"] = "usable"
+        save_providers(provs)
+        print("probe-%s approved; it is read when `sisi workers` is asked and when routing needs it" % name)
+        return 0
     if not yes:
         forget(name)
         print("drv-%s refused; the driver was removed" % name)
@@ -963,18 +986,40 @@ def annotate(cands, records, tools):
     """Mark the candidates that came from a learned driver or from the host: unproven until they have
     judged attempts (routing.MIN_ATTEMPTS), and a candidate to try (`unproven_ok`) when the tool's own
     default model, or when its provider lists no more than discovery.catalogue_over models. An unknown
-    plan counts as per-use. A host worker is started by the host, so its mechanism says how."""
+    plan counts as per-use. A host worker is started by the host, so its mechanism says how. Also for every
+    candidate: the plan its provider has (a provider fact; a model's own price fact still wins), and the
+    owner's vouch, which lifts an unproven worker to the vouched difficulty until it has its own record."""
     marked = {t["name"]: t for t in tools if t.get("learned") or t.get("host")}
-    if not marked:
+    providers, vouches = load_providers(), load_vouches()
+    if not (marked or providers or vouches):
         return cands
     from . import routing
     counts = judged_counts(records)
     cap = conf()["catalogue_over"]
+    prices = None
     for c in cands:
+        n = counts.get(c["worker"].lower(), 0)
+        prov = routing.provider_of(c["worker"])
+        pf = providers.get(prov) if prov else None
+        if pf and pf.get("plan"):
+            if prices is None:
+                from . import workers
+                prices = workers.load_prices()
+            from . import workers as _w
+            if not _w._price_for(prices, c.get("tool"), c.get("model"), c["worker"]).get("plan"):
+                c["plan"] = "per-use" if pf["plan"] == "per-use" else "flat"
+        if c.get("plan") == "free":
+            c["plan"] = "flat"
+        v = vouches.get(c["worker"].lower())
+        if v and n < routing.MIN_ATTEMPTS:  # once it has its own thick record, the record decides
+            level = min(int(v.get("up_to") or 0), 2 if v.get("relayed") else 3)
+            if level > 0:
+                c["vouch"] = {"level": level, "why": v.get("why"), "date": v.get("date"), "relayed": bool(v.get("relayed"))}
+                c["unproven"] = True
+                c["unproven_ok"] = True
         t = marked.get(c.get("tool"))
         if t is None:
             continue
-        n = counts.get(c["worker"].lower(), 0)
         c["unproven"] = n < routing.MIN_ATTEMPTS
         if c["unproven"]:
             c["plan"] = c.get("plan") or "per-use"
@@ -1002,3 +1047,594 @@ UNPROVEN_LINE = ("unproven: check this result with at least the tests or a read 
 
 def unproven_lines(cand):
     return [UNPROVEN_LINE] if cand and cand.get("unproven") else []
+
+
+# ---------------------------------------------------------------- providers: plan, allowance, failure phrases; the owner's vouch
+# One tool can carry several providers (the part of a worker id before the first slash), each with its own
+# plan, allowance and failure phrases. They are facts in the user store, set by command (R-12-1, R-7.2-3).
+
+_PROVIDER = re.compile(r"^[a-z0-9][a-z0-9._-]{0,60}$")
+PLANS = ("flat", "free", "per-use")
+SIGNATURE_CLASSES = ("auth", "limit", "missing", "error")
+
+
+def providers_path():
+    return paths.data_file("worker-providers.json")
+
+
+def load_providers():
+    d = _load(providers_path()).get("providers")
+    return {k: v for k, v in d.items() if isinstance(v, dict)} if isinstance(d, dict) else {}
+
+
+def save_providers(providers):
+    _save(providers_path(), {"providers": providers})
+
+
+def vouches_path():
+    return paths.data_file("worker-vouches.json")
+
+
+def load_vouches():
+    d = _load(vouches_path()).get("vouches")
+    return {k: v for k, v in d.items() if isinstance(v, dict)} if isinstance(d, dict) else {}
+
+
+def save_vouches(vouches):
+    _save(vouches_path(), {"vouches": vouches})
+
+
+# ---- a small path language over JSON: name, .name, [n], [*], [key=value], or `re:REGEX` over raw text
+
+_PATH_TOKEN = re.compile(r"\.?([A-Za-z_][\w-]*)|\[([^\]]*)\]")
+
+
+def path_values(obj, path):
+    """The values a path finds in parsed JSON (or in raw text, for a path starting `re:`: the first group of every match)."""
+    path = str(path or "")
+    if path.startswith("re:"):
+        text = obj if isinstance(obj, str) else json.dumps(obj)
+        return [m.group(1) for m in re.finditer(path[3:], text[-200000:]) if m.groups()]
+    cur, pos = [obj], 0
+    for m in _PATH_TOKEN.finditer(path):
+        if m.start() != pos:
+            raise ValueError("cannot read the path at %r" % path[pos:pos + 10])
+        pos = m.end()
+        name, br = m.group(1), m.group(2)
+        nxt = []
+        for item in cur:
+            if name is not None:
+                if isinstance(item, dict) and name in item:
+                    nxt.append(item[name])
+            elif br == "*":
+                nxt.extend(item if isinstance(item, list) else [])
+            elif br.isdigit():
+                if isinstance(item, list) and int(br) < len(item):
+                    nxt.append(item[int(br)])
+            elif "=" in br:
+                key, want = br.split("=", 1)
+                for x in (item if isinstance(item, list) else [item]):
+                    got = x.get(key) if isinstance(x, dict) else None
+                    got = "true" if got is True else "false" if got is False else got
+                    if got is not None and str(got) == want:
+                        nxt.append(x)
+        cur = nxt
+    if pos != len(path) or not path:
+        raise ValueError("cannot read the path %r" % path[:40])
+    return cur
+
+
+def time_value(v):
+    """Epoch seconds from a number (seconds or milliseconds) or a date text, else None."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, str) and re.match(r"^\d+(\.\d+)?$", v.strip()):
+        v = float(v)
+    if isinstance(v, (int, float)):
+        return float(v) / 1000.0 if v > 1e11 else float(v)
+    if isinstance(v, str):
+        from . import workers
+        return workers._parse_time(v)
+    return None
+
+
+def _json_in(text):
+    """The first JSON object a tool's output holds (the whole text, a line, or the outermost braces), or None."""
+    text = (text or "").strip()
+    tries = [text] + [ln.strip() for ln in text.splitlines() if ln.strip().startswith("{")]
+    if "{" in text and "}" in text:
+        tries.append(text[text.index("{"):text.rindex("}") + 1])
+    for cand in tries:
+        try:
+            d = json.loads(cand)
+            if isinstance(d, (dict, list)):
+                return d
+        except ValueError:
+            pass
+    return None
+
+
+# ---- commands: plan, vouch, allowance, signature
+
+
+def _flags(args, valued, boolean=()):
+    """(positionals, {flag: value}, {boolean flags set}, unknown flags) from an argument list."""
+    pos, vals, bools, unknown = [], {}, set(), []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in valued and i + 1 < len(args):
+            vals[a] = args[i + 1]
+            i += 2
+            continue
+        if a in boolean:
+            bools.add(a)
+        elif a.startswith("--"):
+            unknown.append(a)
+        else:
+            pos.append(a)
+        i += 1
+    return pos, vals, bools, unknown
+
+
+PROVIDER_USAGE = (
+    "usage: sisi workers plan PROVIDER flat|free|per-use --source S [--note TEXT]   how routing costs the provider's workers\n"
+    "       sisi workers vouch WORKER --up-to 1|2|3 --why \"TEXT\" | --remove   the owner's word that a worker handles up to that difficulty\n"
+    "       sisi workers allowance PROVIDER --url URL --header 'Name={secret}' --secret-from-command CMD --secret-path PATH\n"
+    "               --remaining-path PATH --reset-path PATH [--total-path PATH]  (or --command CMD, no secret) | --remove\n"
+    "       sisi workers signature PROVIDER --match 'TEXT or re:REGEX' --class auth|limit|missing|error [--until-path PATH] | --remove")
+
+
+def cmd_provider(args):
+    sub, rest = args[0], list(args[1:])
+    try:
+        return {"plan": _cmd_plan, "vouch": _cmd_vouch, "allowance": _cmd_allowance, "signature": _cmd_signature}[sub](rest)
+    except (ValueError, re.error) as e:
+        print("sisi workers %s: %s" % (sub, e))
+        return 1
+
+
+def _need_provider(name):
+    if not isinstance(name, str) or not _PROVIDER.match(name.lower()):
+        raise ValueError("a provider is the part of a worker id before its first slash (letters, digits, dot, dash)")
+    return name.lower()
+
+
+def _cmd_plan(args):
+    pos, v, b, bad = _flags(args, ("--note", "--source"), ("--remove",))
+    if bad or not pos:
+        print(PROVIDER_USAGE)
+        return 1
+    prov = _need_provider(pos[0])
+    provs = load_providers()
+    if "--remove" in b:
+        if prov in provs:
+            for k in ("plan", "note", "source", "date"):
+                provs[prov].pop(k, None)
+            save_providers(provs)
+        print("plan fact for %s removed" % prov)
+        return 0
+    if len(pos) != 2 or pos[1] not in PLANS or not v.get("--source"):
+        raise ValueError("a plan is flat, free or per-use, and a fact needs its --source (nothing recorded)")
+    entry = provs.setdefault(prov, {})
+    entry.update(plan=pos[1], source=v["--source"][:200], date=time.strftime("%Y-%m-%d"))
+    if v.get("--note"):
+        entry["note"] = v["--note"][:300]
+    save_providers(provs)
+    print("recorded the plan of provider %s: %s%s (from %s). %s" % (
+        prov, pos[1], " (%s)" % entry["note"] if entry.get("note") else "", entry["source"],
+        "A flat or free plan with allowance left costs nothing extra per task; a model's own price fact is a "
+        "relative cost inside the plan." if pos[1] != "per-use" else "Billed per use."))
+    return 0
+
+
+def _cmd_vouch(args):
+    pos, v, b, bad = _flags(args, ("--up-to", "--why"), ("--remove",))
+    vouches = load_vouches()
+    if bad or not pos:
+        for ln in vouch_lines():
+            print(ln)
+        if not vouches:
+            print(PROVIDER_USAGE.split("\n")[1])
+        return 0 if not bad else 1
+    worker = pos[0].lower()
+    if "--remove" in b:
+        vouches.pop(worker, None)
+        save_vouches(vouches)
+        print("vouch for %s removed" % worker)
+        return 0
+    up = v.get("--up-to")
+    if up not in ("1", "2", "3") or not (v.get("--why") or "").strip():
+        raise ValueError("--up-to wants 1, 2 or 3, and --why wants the owner's own words, quoted")
+    from . import learning
+    origin = learning.statement_origin(v["--why"])
+    relayed = origin != "typed by the owner"
+    vouches[worker] = {"up_to": int(up), "why": v["--why"].strip()[:400], "origin": origin, "relayed": relayed,
+                       "date": time.strftime("%Y-%m-%d")}
+    save_vouches(vouches)
+    print("vouched for %s up to difficulty %s (%s)%s" % (
+        worker, up, origin, ": counted only up to difficulty 2, because the quoted words were not found in a message "
+        "the owner typed" if relayed and int(up) > 2 else ""))
+    print("It is treated as capable up to that difficulty (`sisi route --explain` says \"the owner's word\"), checked a level "
+          "more carefully, until it has its own judged record; a thick bad record overrides it.")
+    return 0
+
+
+def vouch_lines():
+    out = []
+    counts = None
+    for w, v in sorted(load_vouches().items()):
+        if counts is None:
+            from . import workers
+            counts = judged_counts(workers.read_records())
+        from . import routing
+        ignored = counts.get(w, 0) >= routing.MIN_ATTEMPTS
+        out.append("Vouched: %s up to difficulty %s by the owner's word (%s, %s: %s)%s" % (
+            w, v.get("up_to"), v.get("origin") or "origin unknown", v.get("date") or "no date",
+            (v.get("why") or "")[:100], "; ignored now: its own record decides" if ignored else
+            ("; counted up to difficulty 2 only" if v.get("relayed") and int(v.get("up_to") or 0) > 2 else "")))
+    return out
+
+
+def _url_ok(url):
+    from urllib.parse import urlsplit
+    sp = urlsplit(url)
+    return (sp.scheme == "https" or (sp.scheme == "http" and sp.hostname in ("localhost", "127.0.0.1", "::1"))) \
+        and bool(sp.hostname) and "{secret}" not in url and not sp.username
+
+
+def _cmd_allowance(args):
+    valued = ("--url", "--header", "--secret-from-command", "--secret-path", "--remaining-path", "--reset-path",
+              "--total-path", "--command")
+    pos, v, b, bad = _flags(args, valued, ("--remove",))
+    provs = load_providers()
+    if bad or not pos:
+        for p, e in sorted(provs.items()):
+            if e.get("allowance"):
+                print("\n".join(describe_probe(p, e["allowance"])))
+        print(PROVIDER_USAGE.split("\n")[2])
+        return 0 if not bad else 1
+    prov = _need_provider(pos[0])
+    if "--remove" in b:
+        provs.get(prov, {}).pop("allowance", None)
+        save_providers(provs)
+        print("allowance probe for %s removed" % prov)
+        return 0
+    for need in ("--remaining-path", "--reset-path"):
+        if not v.get(need):
+            raise ValueError("%s is required" % need)
+    defn = {"remaining_path": v["--remaining-path"], "reset_path": v["--reset-path"]}
+    paths_to_check = [defn["remaining_path"], defn["reset_path"]]
+    if v.get("--total-path"):
+        defn["total_path"] = v["--total-path"]
+        paths_to_check.append(v["--total-path"])
+    if v.get("--command"):
+        if v.get("--url") or v.get("--secret-from-command"):
+            raise ValueError("--command (a tool that prints its own allowance) takes no --url or secret")
+        if not shlex.split(v["--command"]):
+            raise ValueError("--command is empty")
+        defn["command"] = v["--command"]
+    else:
+        if not v.get("--url") or not _url_ok(v["--url"]):
+            raise ValueError("--url must be an https address (no key inside it); a plain http address only for this machine")
+        header = v.get("--header") or ""
+        name, _eq, value = header.partition("=")
+        if not re.match(r"^[A-Za-z][A-Za-z0-9-]{0,40}$", name) or "{secret}" not in value or "\n" in value:
+            raise ValueError("--header is Name={secret} (the key is put where {secret} stands, at probe time)")
+        if not v.get("--secret-from-command") or not shlex.split(v["--secret-from-command"]) or not v.get("--secret-path"):
+            raise ValueError("--secret-from-command and --secret-path say where the key comes from; it is never stored")
+        defn.update(url=v["--url"], header=header, secret_command=v["--secret-from-command"], secret_path=v["--secret-path"])
+        paths_to_check.append(v["--secret-path"])
+    for pth in paths_to_check:
+        if pth.startswith("re:"):
+            re.compile(pth[3:])
+        else:
+            path_values({}, pth)  # raises ValueError for a path it cannot read
+    from . import cycle
+    defn["state"] = "usable" if cycle._stdin_is_tty() else "waiting-owner"
+    defn["defined"] = time.strftime("%Y-%m-%d")
+    provs.setdefault(prov, {})["allowance"] = defn
+    save_providers(provs)
+    print("\n".join(describe_probe(prov, defn)))
+    if defn["state"] != "usable":
+        print("The probe is stored but not used until the owner decides, in a terminal: sisi approve probe-%s --yes | --no" % prov)
+    return 0
+
+
+def waiting_probes():
+    return {p: e["allowance"] for p, e in load_providers().items()
+            if isinstance(e.get("allowance"), dict) and e["allowance"].get("state") == "waiting-owner"}
+
+
+def describe_probe(prov, d):
+    lines = ["%sprobe-%s: an allowance probe for provider %s" % ("" if d.get("state") == "usable" else "WAITING FOR THE OWNER: ", prov, prov)]
+    if d.get("command"):
+        lines.append("  runs (an argument list, no shell): %s" % d["command"])
+    else:
+        lines += ["  sends one GET to %s with the header %s" % (d["url"], d["header"].partition("=")[0]),
+                  "  the key is read when the probe runs, by running (no shell): %s, taking %s" % (d["secret_command"], d["secret_path"]),
+                  "  the key is used for that one request and is never stored or printed; a redirect is never followed"]
+    lines.append("  reads remaining from %s and the reset time from %s%s" % (
+        d["remaining_path"], d["reset_path"], ", total from %s" % d["total_path"] if d.get("total_path") else ""))
+    return lines
+
+
+def _cmd_signature(args):
+    pos, v, b, bad = _flags(args, ("--match", "--class", "--until-path"), ("--remove",))
+    if bad or not pos:
+        for p, e in sorted(load_providers().items()):
+            for sg in e.get("signatures") or []:
+                print("%s: %r is %s%s" % (p, sg["match"], sg["class"], " (reset from %s)" % sg["until_path"] if sg.get("until_path") else ""))
+        print(PROVIDER_USAGE.split("\n")[4])
+        return 0 if not bad else 1
+    prov = _need_provider(pos[0])
+    provs = load_providers()
+    entry = provs.setdefault(prov, {})
+    sigs = [x for x in entry.get("signatures") or [] if isinstance(x, dict)]
+    match = (v.get("--match") or "").strip()
+    if not 4 <= len(match) <= 120:
+        raise ValueError("--match is a phrase or re:REGEX of 4 to 120 characters")
+    if "--remove" in b:
+        entry["signatures"] = [x for x in sigs if x["match"] != match]
+        save_providers(provs)
+        print("signature removed")
+        return 0
+    if v.get("--class") not in SIGNATURE_CLASSES:
+        raise ValueError("--class is auth, limit, missing or error")
+    if match.startswith("re:"):
+        re.compile(match[3:])
+    sig = {"match": match, "class": v["--class"]}
+    if v.get("--until-path"):
+        if v["--until-path"].startswith("re:"):
+            re.compile(v["--until-path"][3:])
+        else:
+            path_values({}, v["--until-path"])
+        sig["until_path"] = v["--until-path"]
+    entry["signatures"] = [x for x in sigs if x["match"] != match] + [sig]
+    save_providers(provs)
+    print("provider %s: output matching %r is now classified %s, before the built-in phrases" % (prov, match, sig["class"]))
+    return 0
+
+
+# ---- failures by a provider's own phrases
+
+
+def provider_failure(cand, text):
+    """(reason, note, retry_after_s) when one of the worker's provider's recorded phrases is in the output, else None.
+    Consulted before the built-in classifier: a provider's own error code can be an auth problem and not a limit."""
+    from . import routing
+    prov = routing.provider_of(cand.get("worker"))
+    sigs = (load_providers().get(prov) or {}).get("signatures") if prov else None
+    low = (text or "").lower()
+    for sg in sigs or []:
+        m = sg.get("match") or ""
+        try:
+            hit = bool(re.search(m[3:], text or "")) if m.startswith("re:") else m.lower() in low
+        except re.error:
+            hit = False
+        if not hit:
+            continue
+        retry = None
+        if sg.get("until_path"):
+            try:
+                found = path_values(_json_in(text) if not sg["until_path"].startswith("re:") else text, sg["until_path"])
+                at = next((t for t in (time_value(x) for x in found) if t), None)
+                retry = max(60.0, at - time.time()) if at else None
+            except ValueError:
+                pass
+        return sg["class"], "%s's own failure phrase %r" % (prov, m[:60]), retry
+    return None
+
+
+# ---- allowance probes
+
+
+class ProbeError(Exception):
+    """Carries a message that is safe to show: never text from the tool or server, never the key."""
+
+
+def _secret_of(d):
+    import subprocess
+    try:
+        r = subprocess.run(shlex.split(d["secret_command"]), capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        raise ProbeError("the secret command could not be run")
+    if r.returncode != 0:
+        raise ProbeError("the secret command exited with status %d" % r.returncode)
+    out = r.stdout or ""
+    try:
+        found = path_values(_json_in(out) if not d["secret_path"].startswith("re:") else out, d["secret_path"])
+    except ValueError:
+        raise ProbeError("the secret path cannot be read")
+    key = next((x for x in found if isinstance(x, str) and 8 <= len(x) <= 4096 and x.isprintable()), None)
+    if key is None:
+        raise ProbeError("the secret path found no key in the command's output")
+    return key
+
+
+def _fetch(d, secret):
+    """The text a probe reads: a tool's own output, or one GET (no redirects: the handler's redirect_request answers
+    None, so a 3xx is an error; a short timeout; a size limit)."""
+    import subprocess
+    if d.get("command"):
+        try:
+            r = subprocess.run(shlex.split(d["command"]), capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise ProbeError("the allowance command could not be run")
+        if r.returncode != 0:
+            raise ProbeError("the allowance command exited with status %d" % r.returncode)
+        return r.stdout or ""
+    import urllib.error, urllib.request
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **k):
+            return None  # a redirect would carry the key to a place the owner never named
+
+    name, _eq, value = d["header"].partition("=")
+    req = urllib.request.Request(d["url"], headers={name: value.replace("{secret}", secret), "Accept": "application/json",
+                                                    "User-Agent": "sisi-allowance-probe"})
+    try:
+        with urllib.request.build_opener(NoRedirect).open(req, timeout=conf()["allowance_timeout_s"]) as resp:
+            return resp.read(1000000).decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        raise ProbeError("the server answered HTTP %d%s" % (e.code, " (a redirect, which is never followed)" if 300 <= e.code < 400 else ""))
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise ProbeError("the request failed (%s)" % type(e).__name__)
+
+
+def probe_once(d):
+    """One reading from a probe definition: [{remaining, reset, total}] windows. Raises ProbeError."""
+    secret = _secret_of(d) if d.get("secret_command") else ""
+    text = _fetch(d, secret)
+    obj = _json_in(text)
+    src = obj if obj is not None else text
+    try:
+        rem = path_values(src, d["remaining_path"])
+        rst = path_values(src, d["reset_path"])
+        tot = path_values(src, d["total_path"]) if d.get("total_path") else []
+    except ValueError:
+        raise ProbeError("a path of the probe cannot be read")
+    wins = []
+    for i, x in enumerate(rem):
+        try:
+            left = float(x)
+        except (TypeError, ValueError):
+            continue
+        total = None
+        if i < len(tot) and isinstance(tot[i], (int, float)) and not isinstance(tot[i], bool) and tot[i] > 0:
+            total = float(tot[i])
+        wins.append({"remaining": left, "reset": time_value(rst[i]) if i < len(rst) else None, "total": total})
+    if not wins:
+        raise ProbeError("the answer held no number at the remaining path")
+    return wins
+
+
+def allowance_cache():
+    return _state_file("allowance.json")
+
+
+def read_allowance(prov, d, now, force=False):
+    """The cached or fresh reading for a provider: {"at", "ok", "windows", "error"}. A probe that fails changes
+    nothing: the last good windows stay, with the error beside them."""
+    cache = _load(allowance_cache())
+    last = cache.get(prov) if isinstance(cache.get(prov), dict) else {}
+    if not force and last and now - float(last.get("at") or 0) < conf()["allowance_cache_s"]:
+        return last
+    new = {"at": now, "ok": True, "windows": last.get("windows") or []}
+    try:
+        new["windows"] = probe_once(d)
+    except ProbeError as e:
+        new.update(ok=False, error=str(e))
+    except Exception as e:  # never let a probe hold a command up
+        new.update(ok=False, error="the probe failed (%s)" % type(e).__name__)
+    cache[prov] = new
+    try:
+        _save(allowance_cache(), cache)
+    except OSError:
+        pass
+    return new
+
+
+def allowance_state(reading):
+    """{"left", "pct", "exhausted", "until"} from a reading's windows: the smallest remaining decides whether
+    service is out; service returns when every exhausted window has reset, so the latest of those resets."""
+    wins = reading.get("windows") or []
+    if not wins:
+        return None
+    spent = [w for w in wins if w["remaining"] <= 0]
+    pcts = [100.0 * w["remaining"] / w["total"] for w in wins if w.get("total")]
+    until = None
+    if spent and all(w.get("reset") for w in spent):
+        until = max(w["reset"] for w in spent)
+    return {"left": min(w["remaining"] for w in wins), "pct": min(pcts) if pcts else None,
+            "exhausted": bool(spent), "until": until}
+
+
+def _probes():
+    return {p: e["allowance"] for p, e in load_providers().items()
+            if isinstance(e.get("allowance"), dict) and e["allowance"].get("state") == "usable"}
+
+
+def routing_provider(c):
+    from . import routing
+    return routing.provider_of(c.get("worker"))
+
+
+def apply_allowances(cands, now=None, force=False):
+    """Read each defined probe (when its cached reading is old), set the candidates' allowance, and mark a provider
+    whose allowance is spent as down until the reset it reports. Returns the set of providers that are spent now."""
+    probes = _probes()
+    spent = set()
+    if not probes:
+        return spent
+    from . import workers
+    now = time.time() if now is None else now
+    for prov, d in probes.items():
+        reading = read_allowance(prov, d, now, force)
+        st = allowance_state(reading) if reading.get("ok") else None
+        if st is None:
+            continue
+        note = "allowance probe: nothing left%s" % (" until %s" % workers._when(st["until"]) if st["until"] else "")
+        down = workers.read_availability().get(prov)
+        if st["exhausted"]:
+            spent.add(prov)
+            if not (down and float(down.get("retry_at") or 0) > now):
+                workers.record_down([prov], "limit", note, now=now, until_ts=st["until"] or now + 900, provider=prov)
+        elif down and str(down.get("note") or "").startswith("allowance probe"):
+            workers.clear_down(prov)
+        for c in cands:
+            if routing_provider(c) == prov:
+                c["allowance_pct_left"] = 0.0 if st["exhausted"] else st["pct"]
+    return spent
+
+
+def refresh_allowances(force=False):
+    return apply_allowances([], force=force)
+
+
+def limit_until(cand):
+    """When a provider that just reported a limit is back, by its own probe (read now), or None."""
+    prov = routing_provider(cand)
+    d = _probes().get(prov) if prov else None
+    if d is None:
+        return None
+    st = allowance_state(read_allowance(prov, d, time.time(), True))
+    return st["until"] if st and st["exhausted"] else None
+
+
+def provider_lines(t):
+    """`sisi workers` lines under a tool for each of its providers that has a fact: plan, allowance, phrases, models."""
+    provs = load_providers()
+    if not provs:
+        return []
+    from . import routing
+    names = {routing.provider_of(m) for m in t.get("models") or [] if routing.provider_of(m)}
+    out = []
+    for prov in sorted(names & set(provs)):
+        e = provs[prov]
+        bits = []
+        if e.get("plan"):
+            bits.append("%s plan%s (%s, %s)" % ("flat-rate" if e["plan"] in ("flat", "free") else "per-use",
+                                              " - %s" % e["note"] if e.get("note") else "", e.get("source") or "no source", e.get("date") or "no date"))
+        out.append("  provider %s: %s" % (prov, "; ".join(bits) or "facts recorded"))
+        d = e.get("allowance")
+        if d and d.get("state") == "usable":
+            r = _load(allowance_cache()).get(prov) or {}
+            st = allowance_state(r) if r else None
+            if st:
+                resets = [w["reset"] for w in r["windows"] if w.get("reset")]
+                out.append("    allowance left: %s%s%s%s" % (
+                    ("%g%% (smallest window)" % st["pct"]) if st["pct"] is not None else ("%g (smallest window)" % st["left"]),
+                    (", NONE LEFT, back %s" % time.strftime("%Y-%m-%d %H:%M", time.localtime(st["until"])) if st["until"] else ", none left")
+                    if st["exhausted"] else "",
+                    "; next reset %s" % time.strftime("%Y-%m-%d %H:%M", time.localtime(min(resets))) if resets else "",
+                    "; the last probe failed, this is the reading before it (%s)" % r["error"] if not r.get("ok") else ""))
+            elif r.get("error"):
+                out.append("    allowance: the probe failed (%s); nothing is assumed" % r["error"])
+        elif d:
+            out.append("    allowance probe waits for the owner: `sisi approve probe-%s`" % prov)
+        for sg in e.get("signatures") or []:
+            out.append("    failure phrase %r is classified %s" % (sg["match"], sg["class"]))
+        mods = [m.split("/", 1)[1] for m in t.get("models") or [] if routing.provider_of(m) == prov]
+        out.append("    models: %s" % ", ".join(mods[:12] + (["... and %d more" % (len(mods) - 12)] if len(mods) > 12 else [])))
+    return out
