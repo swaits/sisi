@@ -528,7 +528,7 @@ def _why_not(a, difficulty, basis, cheaper):
 def retry_choice(candidates, records, availability, kind, difficulty, rejected, rejections,
                  now=0.0, exclude=(), avoid=None, prefer=None, floors=None, review_of=None):
     """Who gets a task again after `rejected` (a worker id) was rejected `rejections` times in this chain.
-    The first retry goes back to the same worker while it is still usable. After that: the cheapest
+    The first retry goes back to the same worker while it is still usable and has no poor record. After that: the cheapest
     capable worker whose evidence is strictly better than the rejected one's, or, when there is none,
     the strongest known usable worker other than it (and only the rejected one itself when nobody
     else is usable). Returns {"choice", "step", "assessments", "basis", ...}; step is "same", "better",
@@ -541,7 +541,7 @@ def retry_choice(candidates, records, availability, kind, difficulty, rejected, 
            "assessments": assessments, "best_standing": best, "kind": kind, "difficulty": difficulty,
            "rejected": rejected, "rejections": rejections}
     mine = next((c for c in eligible if c["worker"] == rejected), None)
-    if int(rejections or 0) <= 1 and mine is not None:
+    if int(rejections or 0) <= 1 and mine is not None and not assessments[rejected]["bad"]:
         out.update(choice=mine, step="same")
         return out
     others = [c for c in eligible if c["worker"] != rejected and not assessments[c["worker"]]["bad"]]

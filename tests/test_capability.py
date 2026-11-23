@@ -402,5 +402,114 @@ class ExplainCliTests(SisiCase):
         self.assertEqual(easy.stdout.splitlines()[0], "wk-weak")
 
 
+def retry(cands, records, difficulty, rejected, rejections, **kw):
+    return routing.retry_choice(cands, records, {}, KIND, difficulty, rejected, rejections, now=1000.0, **kw)
+
+
+class RetryLadderTests(unittest.TestCase):
+    """The pure ladder behind `sisi route --retry-of`: the same worker for the first retry, then the cheapest capable
+    worker with strictly better evidence, else the strongest known. R-7.2-2, R-7.3-1 (retries cost)."""
+
+    def fleet(self):
+        return [cand("r-1", cost=4.0, standing=64.0), cand("s-1", cost=8.0, standing=66.0),
+                cand("t-1", cost=6.0, standing=65.0), cand("u-1", cost=0.5, standing=40.0)]
+
+    def test_the_first_retry_goes_back_to_the_same_worker(self):
+        r = retry(self.fleet(), [], 2, "t/r-1", 1)
+        self.assertEqual((r["choice"]["worker"], r["step"]), ("t/r-1", "same"))
+
+    def test_the_first_retry_moves_on_when_the_worker_is_not_usable(self):
+        cands = self.fleet()
+        cands[0]["usable"] = False
+        r = retry(cands, [], 2, "t/r-1", 1)
+        self.assertEqual(r["step"], "better")
+        self.assertNotEqual(r["choice"]["worker"], "t/r-1")
+
+    def test_later_retries_take_the_cheapest_capable_worker_with_better_evidence(self):
+        r = retry(self.fleet(), [], 2, "t/r-1", 2)
+        self.assertEqual((r["choice"]["worker"], r["step"]), ("t/t-1", "better"))   # 65 beats 64; 66 costs more; 40 is weaker
+        r3 = retry(self.fleet(), [], 2, "t/t-1", 3)
+        self.assertEqual((r3["choice"]["worker"], r3["step"]), ("t/s-1", "better"))
+
+    def test_a_judged_proof_is_better_than_a_benchmark_and_a_benchmark_never_beats_a_proof(self):
+        cands = [cand("r-1", cost=4.0, standing=64.0), cand("p-1", cost=9.0, standing=10.0), cand("h-1", cost=5.0, standing=100.0)]
+        recs = attempts("t/p-1", KIND, 2, 9, 1)
+        self.assertEqual(retry(cands[:2], recs, 2, "t/r-1", 2)["choice"]["worker"], "t/p-1")
+        # r-1 has the proof now: h-1's standing 100 is not 'better' than 7 of 10 accepted; the two scales do not meet
+        recs2 = attempts("t/r-1", KIND, 2, 7, 3)
+        r = retry([c for c in cands if c["worker"] != "t/p-1"], recs2, 2, "t/r-1", 2)
+        self.assertEqual((r["choice"]["worker"], r["step"]), ("t/h-1", "strongest"))
+
+    def test_a_higher_accepted_rate_in_the_same_kind_of_evidence_is_better(self):
+        cands = [cand("r-1", cost=4.0), cand("a-1", cost=3.0), cand("b-1", cost=2.0), cand("c-1", cost=9.0)]
+        recs = (attempts("t/r-1", KIND, 2, 8, 2) + attempts("t/a-1", KIND, 2, 8, 2)     # equal: not better
+                + attempts("t/b-1", KIND, 2, 7, 3) + attempts("t/c-1", KIND, 2, 10, 0))   # lower, higher
+        r = retry(cands, recs, 2, "t/r-1", 2)
+        self.assertEqual((r["choice"]["worker"], r["step"]), ("t/c-1", "better"))
+
+    def test_when_nobody_has_better_evidence_the_strongest_known_other_is_taken(self):
+        cands = [cand("top-1", cost=9.0, standing=90.0), cand("a-1", cost=2.0, standing=70.0), cand("b-1", cost=1.0, standing=60.0)]
+        r = retry(cands, [], 3, "t/top-1", 2)
+        self.assertEqual((r["choice"]["worker"], r["step"]), ("t/a-1", "strongest"))
+
+    def test_the_rejected_worker_alone_is_returned_as_the_only_option(self):
+        r = retry([cand("r-1", cost=4.0, standing=64.0)], [], 2, "t/r-1", 3)
+        self.assertEqual((r["choice"]["worker"], r["step"]), ("t/r-1", "only"))
+        self.assertIsNone(retry([cand("r-1", usable=False)], [], 2, "t/r-1", 3)["choice"])
+
+    def test_a_worker_with_a_poor_record_is_never_on_the_ladder(self):
+        cands = [cand("r-1", cost=4.0, standing=60.0), cand("bad-1", cost=1.0, standing=99.0), cand("ok-1", cost=9.0, standing=61.0)]
+        recs = attempts("t/bad-1", KIND, 2, 2, 8)
+        r = retry(cands, recs, 2, "t/r-1", 2)
+        self.assertEqual(r["choice"]["worker"], "t/ok-1")
+
+    def test_the_ladder_keeps_the_users_constraints_and_other_workers_that_are_down(self):
+        cands = self.fleet()
+        r = routing.retry_choice(cands, [], {"t": {"retry_at": 5000.0, "reason": "limit"}}, KIND, 2, "t/r-1", 2, now=1000.0)
+        self.assertIsNone(r["choice"])
+        avoided = retry(cands, [], 2, "t/r-1", 2, avoid=[{"pattern": "t-1", "why": "mine"}])
+        self.assertEqual(avoided["choice"]["worker"], "t/s-1")
+        tried = retry(cands, [], 2, "t/r-1", 2, exclude=["t/t-1"])
+        self.assertEqual(tried["choice"]["worker"], "t/s-1")
+
+    def test_the_ladder_over_generated_worlds(self):
+        """The step names what happened: better means capable, strictly stronger, and the cheapest such; strongest
+        means no capable worker was stronger and the pick has the greatest strength among the rest."""
+        rng = random.Random(8128)
+        steps = set()
+        for _ in range(300 * ITERS):
+            cands, recs = gen_world(rng)
+            d = rng.choice([1, 2, 3])
+            rejected = rng.choice(cands)["worker"]
+            n = rng.choice([1, 2, 3])
+            r = retry(cands, recs, d, rejected, n)
+            steps.add(r["step"])
+            if r["choice"] is None:
+                continue
+            a = r["assessments"]
+            w = r["choice"]["worker"]
+            self.assertFalse(a[w]["bad"] and r["step"] != "only", (w, r["step"]))
+            if r["step"] == "same":
+                self.assertEqual((w, n), (rejected, 1))
+                self.assertFalse(a[w]["bad"])
+                continue
+            if r["step"] == "only":
+                self.assertEqual(w, rejected)
+                continue
+            self.assertNotEqual(w, rejected)
+            rejected_strength = routing.strength(a[rejected])
+            stronger = [c for c in cands if a[c["worker"]]["capable"] and c["worker"] != rejected
+                        and routing.strength(a[c["worker"]]) > rejected_strength]
+            if r["step"] == "better":
+                self.assertTrue(a[w]["capable"] and routing.strength(a[w]) > rejected_strength)
+                price = lambda c: (routing._price_tier(c), c["cost"] if c.get("cost") is not None else float("inf"))
+                self.assertTrue(all(price(c) >= price(r["choice"]) for c in stronger))
+            else:
+                self.assertEqual(stronger, [])
+                others = [x for x in a if x != rejected and not a[x]["bad"]]
+                self.assertEqual(routing.strength(a[w]), max(routing.strength(a[x]) for x in others))
+        self.assertTrue({"same", "better", "strongest"} <= steps, steps)
+
+
 if __name__ == "__main__":
     unittest.main()
