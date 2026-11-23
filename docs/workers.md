@@ -72,6 +72,23 @@ through to the next choice, and quality is untouched. Poor work is a rejected ju
 never marks a worker down. No approval- or sandbox-switching flag is passed unless the config
 allows it per tool (`workers.allow_bypass`).
 
+## Orchestration the hooks enforce
+
+`sisi route` records the session's routing decision (kind, difficulty guess, pick). A delegation started with
+the host's own tool is written to the ledger by the hooks as a pending run with that kind and difficulty, and
+completed when it returns; `sisi delegate judge ID --outcome O --check C` then needs nothing else. A worker
+other than the router's pick is recorded as an override, and `sisi workers` ends with one line on how often
+and how they turned out. After a rejection `sisi delegate judge` prints `sisi route --retry-of ID`: the same
+worker with a better brief first, a stronger one after a second rejection.
+
+When a worker fails for a reason that is not about its work (a quota, limit, login or connection failure,
+arriving as a delegation result or as a host notice), the hooks record it down until the reset time in the
+message, mark its pending run `superseded` and hand the agent the router's next worker. The agent is told to
+fall back at once with the same brief and neither ask the person nor report it. `sisi delegate` itself says
+the same when only host-native workers remain. Models discovery finds that it had not seen are named once at
+session start as unproven. Settings under `orchestrate`: `direct_calls`, `direct_chars`, `extension`,
+`route_window_min`. Mechanics: [design.md](design.md) section 9.
+
 ## Stored, and when facts go stale
 
 In the user store: `workers.json` (discovery cache), `delegations.jsonl` (the ledger),
