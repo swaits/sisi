@@ -65,3 +65,13 @@ delivery for good.
 Please report security problems privately, using a private security advisory on the GitHub repository
 (github.com/swaits/sisi, "Security" tab, "Report a vulnerability"). Do not open a public issue for something
 that could be exploited. Include the version (`sisi --version`), what you did, and what happened.
+
+## What these mechanisms do and do not guarantee
+
+The trust list guarantees only that an untrusted project's contract does not run; it does not
+make a trusted contract safe. Protected rules guarantee that a cycle or overlay cannot change
+them; they do not stop someone who can write the product folder. Owner approval guarantees
+that a consequential change waits and that a decision without a terminal is refused unless
+relayed approval is allowed in config; it does not prove who was at the terminal. The
+delivery ledger guarantees that only rows sisi's own commands wrote, as written, are
+delivered; it does not prove the content of a row is true.
