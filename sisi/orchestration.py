@@ -203,6 +203,35 @@ def _project(m, cwd):
     return m["project"]
 
 
+NOTIFICATION = "<task-notification>"
+
+
+def _tag(text, name):
+    m = re.search(r"<%s>(.*?)</%s>" % (name, name), text, re.S)
+    return m.group(1).strip() if m else None
+
+
+def _task_done(m, text):
+    """A host's notice that a background worker finished: complete the run it started."""
+    from . import workers
+    use_id, task_id = _tag(text, "tool-use-id"), _tag(text, "task-id")
+    key = use_id if use_id in m["pending"] else next(
+        (k for k, v in m["pending"].items() if task_id and v.get("agent") == task_id), None)
+    if key is None:
+        return
+    ent = m["pending"].pop(key)
+    now = time.time()
+    tokens = _tag(text, "subagent_tokens")
+    ms = _tag(text, "duration_ms")
+    minutes = round(float(ms) / 60000.0, 2) if ms and ms.replace(".", "", 1).isdigit() else round((now - ent["t0"]) / 60.0, 2)
+    ok = (_tag(text, "status") or "completed") == "completed"
+    workers.append_record({"kind": "run-end", "run_id": ent["run"], "ts": round(now), "ended": round(now),
+                           "minutes": minutes, "tokens": int(tokens) if tokens and tokens.isdigit() else None,
+                           "tokens_class": "measured" if tokens and tokens.isdigit() else "unavailable",
+                           "model": ent.get("model"), "status": "waiting" if ok else "failed"})
+    _event(m, m.get("sid"), "delegation-done", run=ent["run"])
+
+
 def brief_line():
     from . import brief
     return brief.template().splitlines()[0].strip().lower()
@@ -212,6 +241,9 @@ def new_turn(sid, cwd=None, prompt=None):
     """A prompt reached the session: the meter for the turn starts again. The first prompt of a session
     that opens with the brief template's line makes it a worker for good."""
     with Meter(sid) as m:
+        if isinstance(prompt, str) and prompt.lstrip().startswith(NOTIFICATION):
+            _task_done(m, prompt)  # the host reporting a background worker: not a new request, no new budget
+            return m
         m["turn"] += 1
         m.update(calls=0, chars=0, ext=0, refusals=0, fails={}, ext_log=[], same_model_ok=False)
         m["prompts"] += 1
@@ -323,9 +355,43 @@ def _is_worker(payload, sess, m):
     return bool(m.get("worker") or sess.get("subagent") or workers.is_subagent_payload(payload))
 
 
-def _own_model(payload, sess):
+def _transcript_model(path):
+    """The model the main thread last answered with, from the tail of the host's transcript (a session-start
+    payload need not carry it). None when it cannot be read."""
+    try:
+        path = os.path.expanduser(path)
+        with open(path, "rb") as f:
+            f.seek(max(0, os.path.getsize(path) - 200000))
+            tail = f.read().decode("utf-8", "replace")
+    except (OSError, TypeError):
+        return None
+    for line in reversed(tail.splitlines()):
+        if '"assistant"' not in line:
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        msg = d.get("message") if isinstance(d, dict) else None
+        model = msg.get("model") if isinstance(msg, dict) else None
+        if isinstance(model, str) and model and not model.startswith("<") and not d.get("isSidechain"):
+            return model
+    return None
+
+
+def _own_model(payload, sess, m=None):
     v = payload.get("model")
-    return v if isinstance(v, str) and v else sess.get("model")
+    if isinstance(v, str) and v:
+        return v
+    if sess.get("model"):
+        return sess["model"]
+    if m is not None and m.get("model"):
+        return m["model"]
+    tp = payload.get("transcript_path") or sess.get("transcript_path")
+    model = _transcript_model(tp) if tp else None
+    if model and m is not None:
+        m["model"] = model
+    return model
 
 
 def before(payload, host=None):
@@ -373,7 +439,7 @@ def before(payload, host=None):
         limit = c["direct_calls"] + m["ext"] * c["extension"]
         chars_limit = c["direct_chars"] * limit / float(c["direct_calls"])
         if m["calls"] >= limit or m["chars"] >= chars_limit:
-            own = _own_model(payload, sess)
+            own = _own_model(payload, sess, m)
             picks = _picks(project, own)
             if not any(p[0] for p in picks):
                 m["calls"] += 1
@@ -393,7 +459,7 @@ def _before_delegation(payload, hd, tool, inp, host, sid, sess, m, c, cwd):
     model = _dig(inp, spec.get("model", "model"))
     model = model.strip() if isinstance(model, str) else ""
     text = _dig(inp, spec.get("brief", "prompt"))
-    own = _own_model(payload, sess)
+    own = _own_model(payload, sess, m)
     problem = None
     if not model:
         problem = "this delegation names no model, so the subagent would run on this session's own model%s" \
@@ -484,19 +550,25 @@ def after(payload, host=None):
 def _after_delegation(payload, ev, sid, m):
     from . import workers
     key = payload.get("tool_use_id") if isinstance(payload.get("tool_use_id"), str) else "last"
-    ent = m["pending"].pop(key, None)
+    ent = m["pending"].get(key)
     if ent is None and m["pending"]:
-        ent = m["pending"].pop(sorted(m["pending"], key=lambda k: m["pending"][k]["t0"])[-1])
+        key = sorted(m["pending"], key=lambda k: m["pending"][k]["t0"])[-1]
+        ent = m["pending"][key]
     if ent is None:
         return {}
     now = time.time()
     resp = next((payload[k] for k in _RESP_KEYS if payload.get(k) is not None), None)
+    if isinstance(resp, dict) and (resp.get("isAsync") or resp.get("status") == "async_launched"):
+        # the worker was only launched: it is finished when the host's notice arrives (new_turn), not now
+        m["pending"][key] = dict(ent, agent=resp.get("agentId"), model=resp.get("resolvedModel"))
+        return {}
     tokens, _cost = workers.extract_usage(json.dumps(resp) if resp is not None else "")
     minutes = round((now - ent["t0"]) / 60.0, 2)
     if isinstance(resp, dict):
         ms = resp.get("totalDurationMs", resp.get("total_duration_ms"))
         if isinstance(ms, (int, float)) and not isinstance(ms, bool):
             minutes = round(ms / 60000.0, 2)
+    m["pending"].pop(key, None)
     failed = "failure" in str(ev or "").lower()
     try:
         workers.append_record({"kind": "run-end", "run_id": ent["run"], "ts": round(now), "ended": round(now),
