@@ -466,9 +466,9 @@ def decide_status(c, rows, abandon=None):
     return "delivered", block, unrun
 
 
-def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None):
+def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None, rows=None):
     t0 = harvest.epoch(c["started"]) if isinstance(c.get("started"), str) else None
-    rows = _unit_results(c, project, c.get("started"))
+    rows = _unit_results(c, project, c.get("started")) if rows is None else rows
     tel = build_telemetry(c, project, rows, t0, ended_epoch)
     models = tel.pop("_models")
     delegation_rows = tel.pop("_delegation_rows")
@@ -581,6 +581,7 @@ def close_unit(c, contract_path, project, abandon=None, now=None):
     abandonment accounts for it. Safe to repeat after a crash at any step: an archive that
     exists is kept as it stands and the remaining steps are completed."""
     ended_epoch = time.time() if now is None else now
+    rows = _unit_results(c, project, c.get("started"))  # under the id the results were recorded with
     path = archive_path(project, c["id"])
     if os.path.exists(path):
         try:
@@ -599,7 +600,6 @@ def close_unit(c, contract_path, project, abandon=None, now=None):
     else:
         rec = None
     if rec is None:
-        rows = _unit_results(c, project, c.get("started"))
         status, block, _ = decide_status(c, rows, abandon)
         if status is None:
             bad = ", ".join("%s (%s%s)" % (r["id"], r["status"], ": " + r["reason"] if r.get("reason") else "")
@@ -607,7 +607,7 @@ def close_unit(c, contract_path, project, abandon=None, now=None):
             return None, ("sisi: unit %s cannot close as delivered: %s. Fix and re-run `sisi verify`, "
                           "record a deviation with `sisi contract waive \"<reason>\"`, or close it with "
                           "`sisi unit close --abandon \"<reason>\"`." % (c["id"], bad)), False
-        rec = build_record(c, project, status, ended_epoch, abandon_reason=abandon)
+        rec = build_record(c, project, status, ended_epoch, abandon_reason=abandon, rows=rows)
         _, created = archive_record(rec, project)
         if created:
             _capture_case(rec)

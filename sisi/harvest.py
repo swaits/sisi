@@ -256,9 +256,10 @@ def transcript_stats(path, t0=None, t1=None):
                 if not isinstance(d, dict):
                     continue
                 ts = epoch(d["timestamp"]) if isinstance(d.get("timestamp"), str) else None
-                if ts is not None and ((t0 is not None and ts < t0) or (t1 is not None and ts > t1)):
-                    continue
+                outside = ts is not None and ((t0 is not None and ts < t0) or (t1 is not None and ts > t1))
                 typ = d.get("type")
+                if outside and typ != "user":
+                    continue
                 if typ == "assistant":
                     m = d.get("message") or {}
                     u = m.get("usage") if isinstance(m, dict) else None
@@ -284,10 +285,13 @@ def transcript_stats(path, t0=None, t1=None):
                 elif typ == "user":
                     text = typed_text(d)[0]
                     if text is not None:
-                        if not first and is_correction(text):
-                            corrections += 1
+                        # the transcript's first typed message is a request, never a correction,
+                        # whether or not it falls inside the window
+                        if not outside:
+                            if not first and is_correction(text):
+                                corrections += 1
+                            human += 1
                         first = False
-                        human += 1
                 elif typ == "attachment":
                     a = d.get("attachment") or {}
                     if a.get("type") == "queued_command" and a.get("commandMode") == "prompt" and not a.get("isMeta"):
