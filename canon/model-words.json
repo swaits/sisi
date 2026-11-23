@@ -1,0 +1,5 @@
+{
+ "about": "Words that appear in model ids. They are data, not code: edit this file when a maker invents a new tier word. A tier word names the class of a model inside its line (it comes before or after the version number; no tier word means the line's standard model). An ignored word is neither the line nor the class (a stage, a price label, a style). A word in neither list that follows the version is a word this file does not know, so the class of that model is reported as unknown until the lead agent records it with `sisi workers fact WORKER --class NAME --source S`.",
+ "tiers": ["air", "base", "code", "coder", "fast", "flash", "full", "highspeed", "large", "lite", "max", "medium", "micro", "mini", "nano", "plus", "pro", "small", "tiny", "turbo", "ultra"],
+ "ignore": ["beta", "chat", "contributor", "default", "exp", "experimental", "free", "instruct", "latest", "new", "preview", "rc", "stable", "thinking"]
+}
