@@ -200,7 +200,10 @@ def due_notice(session=None):
     n = len(proposed())
     fl = len(L.flagged())
     lines = []
-    if n >= DUE_AFTER or fl:
+    # The user's config can silence the request to run a cycle (learning.cycle_notice: false).
+    from . import store
+    notice = (store.config().get("learning") or {}).get("cycle_notice", True)
+    if notice and (n >= DUE_AFTER or fl):
         lines.append("sisi: a learning cycle is due (%d proposed learning(s)%s; `sisi cycle` prints the brief)"
                      % (n, ", %d flagged not working" % fl if fl else ""))
     pend = L.pending_notice()
