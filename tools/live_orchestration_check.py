@@ -23,13 +23,22 @@ asked to delegate a small task to the cheapest worker. It asserts that the provi
 parsed time, that the session went on to use another worker, that it never called the question dialog, and that
 its final message to the person says nothing about the provider, a quota, a limit or a fallback.
 
-Exit status 0 only when everything holds. Options: --keep (leave the temporary folder), --model NAME, --max-usd N,
---only 1|2 (run one scenario).
+A third scenario proves the two guards together: the temporary project has NO open unit and the task is a small
+behaviour change that needs more than six tool calls. A witness hook records, before every tool call, whether a valid
+unit stood behind the session and a hash of every project file. It asserts that no project file changed before a valid
+unit existed, that the agent was told so in at most twelve lines, and that the order it experienced was one of the two
+the rules allow: refused its first edit and wrote a valid contract before editing, or refused by the meter and then,
+when it tried to delegate the build, refused for the missing contract with the contract's message (not the meter's).
+
+Exit status 0 only when everything holds. Options: --keep (leave the temporary folder), --model NAME (the main
+thread's model; scenario 2 passed only some runs with the least expensive one, so say which), --max-usd N,
+--only 1|2|3 (run one scenario).
 """
 import argparse, hashlib, json, os, shutil, subprocess, sys, tempfile, time
 
 REPO = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
 MAIN_MODEL = "haiku"                     # the host's least expensive model, the main thread
 WORKERS = (("sonnet", 3), ("opus", 15))  # fixture workers (names the host's subagent tool accepts) and a price each
@@ -40,6 +49,10 @@ PROMPT2 = ("This project is in the current directory. Have a worker do one small
            "the brief template (save the brief as brief.md), and `sisi delegate --kind research --difficulty 1 --brief brief.md` "
            "runs a brief on a command-line worker. The listing must come from a worker, not from your own commands. "
            "The list is what I want back: reply with it.")
+PROMPT3 = ("This project is in the current directory. Every function in src/ should return one more than it does now: "
+           "f1 returns x + 1 today and should return x + 2, f2 returns x + 2 and should return x + 3, and so on for all "
+           "fourteen modules (mod07 has a bug of its own, leave it as it is). Make the change, then tell me which files "
+           "you changed. Nobody is available to answer questions during this run.")
 PROMPT = ("This project is in the current directory. Find and fix the bug (a test in tests/ fails), then tell me "
           "what each file in src/ does, one line per file.")
 
@@ -71,7 +84,7 @@ def fixture_ledger(data):
     os.makedirs(data, exist_ok=True)
     rows = []
     for w, _price in WORKERS:
-        for kind in ("research", "implementation"):
+        for kind in ("research", "impl"):
             rows.append({"kind": "attempt", "id": "%s%s" % (w[:3], kind[:2]), "run_id": None, "ts": 1, "project": "fixture",
                          "type": kind, "difficulty": 1, "worker": w, "outcome": "accepted", "check": "read"})
     with open(os.path.join(data, "delegations.jsonl"), "w") as f:
@@ -262,6 +275,17 @@ def scenario_orchestration(args):
             failures.append("(c) the session delegated but the ledger holds no run record")
         if routed_then_delegated and not [e for e in evs if e.get("ev") == "route"]:
             failures.append("(c) the session ran `sisi route` but no routing decision was recorded")
+        from sisi import unitguard
+        kinds = unitguard.ledger_kinds()
+        typed = [r for r in runs if r.get("kind") == "run" and r.get("origin") == "hook"]
+        if routed_then_delegated and typed and not all(r.get("type") in kinds for r in typed):
+            failures.append("(c) a delegated run was recorded with a kind that is not the ledger's: %s"
+                            % [r.get("type") for r in typed])
+        refused_kind = [i for i, c in enumerate(calls) if "sisi route" in bash_cmd(c) and results.get(c[0], ("", False))[1]
+                        and "not one the ledger knows" in results[c[0]][0]]
+        report.append("kinds the agent passed to `sisi route`: %s (refused as not the ledger's: %d)" % (
+            ", ".join(sorted({m for c in calls for m in __import__("re").findall(r"--kind[ =](\S+)", bash_cmd(c))})) or "none",
+            len(refused_kind)))
         if direct and not routed_then_delegated and not exts:
             failures.append("(c) the session ran `sisi unit direct` but no extension was recorded "
                             "(its reasons may have been refused as generic)")
@@ -320,12 +344,108 @@ def scenario_fallback(args):
     return failures, report, w
 
 
+def settings_with_witness(w):
+    """The installed settings with a witness hook ahead of sisi's before-tool hook: before every call it records
+    whether a valid, session-bound unit stood behind the session and a hash of every project file."""
+    import live_contract_check as LC
+    witness = os.path.join(w["tmp"], "witness.py")
+    with open(witness, "w") as f:
+        f.write(LC.WITNESS % {"repo": REPO})
+    path = os.path.join(w["tmp"], "home", ".claude", "settings.json")
+    with open(path) as f:
+        st = json.load(f)
+    pre = st["hooks"]["PreToolUse"][0]["hooks"]
+    pre.insert(0, {"type": "command", "command": "%s %s" % (sys.executable, witness), "timeout": 30})
+    with open(path, "w") as f:
+        json.dump(st, f, indent=1)
+    w["env"].update(LIVE_PROJECT=w["proj"], LIVE_WITNESS=os.path.join(w["tmp"], "witness.log"))
+
+
+def refusal_blocks(calls, results):
+    """Every refusal sisi made, in the order the agent saw them: (call index, kind, text). `contract` is the
+    contract guard's message, `meter` the direct-work budget's, `delegation` the delegation guard's."""
+    out = []
+    for i, c in enumerate(calls):
+        text, is_err = results.get(c[0], ("", False))
+        if "sisi refused" in text and "contract" in text:
+            out.append((i, "contract", text))
+        elif "direct tool calls" in text and "sisi: " in text:
+            out.append((i, "meter", text))
+        elif "names no model" in text or "names this session's own model" in text or "ask the router before delegating" in text:
+            out.append((i, "delegation", text))
+    return out
+
+
+def refusal_lines(text):
+    """The refusal's own lines: from the line that opens with sisi's name to the end of the message."""
+    lines = text.splitlines()
+    start = next((i for i, ln in enumerate(lines) if ln.lstrip().startswith("sisi")), 0)
+    return lines[start:]
+
+
+def scenario_combined(args):
+    """Both guards in one real session, from a project with no open unit (items 1 and 2 of the merge)."""
+    w = setup("sisi-live-3-")
+    if w is None:
+        return ["install failed"], [], None
+    fixture_ledger(w["data"])
+    settings_with_witness(w)
+    import live_contract_check as LC
+    base = LC.project_hashes(w["proj"])
+    rc, err, secs = run_agent(args, w["tmp"], w["proj"], w["env"], w["log"], prompt=PROMPT3)
+    calls, results, events = parse(w["log"])
+    failures, report = [], []
+    rows = LC.witness_rows(w["tmp"])
+    final = LC.project_hashes(w["proj"])
+    seq_after = [r["hashes"] for r in rows[1:]] + [final]
+    bad, first_change = [], None
+    for row, after in zip(rows, seq_after):
+        if after != row["hashes"]:
+            first_change = first_change or row
+            if row["state"] != "ok":
+                bad.append("%s changed project files while the unit state was %s" % (row["tool"], row["state"]))
+    if not rows:
+        failures.append("(h1) the witness recorded nothing, so nothing can be said about the order")
+    if bad:
+        failures.append("(h1) a project file changed before a valid unit existed: " + "; ".join(bad))
+    if base != (rows[0]["hashes"] if rows else base):
+        failures.append("(h1) the project changed before the first tool call")
+    blocks = refusal_blocks(calls, results)
+    too_long = [(i, kind, len(refusal_lines(t))) for i, kind, t in blocks if len(refusal_lines(t)) > 12]
+    if too_long:
+        failures.append("(h2) a refusal longer than 12 lines: %s" % too_long)
+    fc = [i for i, c in enumerate(calls) if LC.file_changing({"id": c[0], "name": c[1], "input": c[2]}, w["proj"])]
+    first_fc = fc[0] if fc else None
+    meter_first = [b for b in blocks if b[1] == "meter" and (first_fc is None or b[0] < first_fc)]
+    after_meter = [b for b in blocks if meter_first and b[0] > meter_first[0][0] and calls[b[0]][1] in ("Agent", "Task")]
+    path_a = first_fc is not None and any(b[0] == first_fc and b[1] == "contract" for b in blocks)
+    path_b = bool(meter_first) and any(b[1] == "contract" for b in after_meter)
+    if not (path_a or path_b):
+        failures.append("(h3) neither allowed order was seen: the first edit was not refused for the contract, and no delegation "
+                        "after a meter refusal was refused for the contract (first file-changing call: %s)"
+                        % (calls[first_fc][1] if first_fc is not None else "none"))
+    chk = subprocess.run([sys.executable, os.path.join(REPO, "bin", "sisi"), "contract", "check"], cwd=w["proj"],
+                         env=w["env"], capture_output=True, text=True)
+    changed = final != base
+    report.append("scenario 3: the order the agent experienced (call number, who refused, first line):")
+    for i, kind, t in blocks:
+        report.append("  #%d %s %s -> %s" % (i + 1, calls[i][1], kind, (refusal_lines(t) or [""])[0][:150]))
+    report.append("refusal texts the agent saw, in order:")
+    for i, kind, t in blocks:
+        report.append("--- #%d (%s, %d lines)\n%s" % (i + 1, kind, len(refusal_lines(t)), "\n".join(refusal_lines(t))))
+    report.append("path: %s; project changed at the end: %s; the contract check at the end: rc %d; witness rows %d; first change by %s"
+                  % ("A (edit refused, contract written first)" if path_a else ("B (meter, then the delegation refused for the contract)" if path_b else "neither"),
+                     changed, chk.returncode, len(rows), first_change["tool"] if first_change else "nobody"))
+    report.append("scenario 3: %d tool calls; host exit status %s; %.0fs" % (len(calls), rc, secs))
+    return failures, report, w
+
+
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--model", default=MAIN_MODEL)
     ap.add_argument("--max-usd", type=float, default=1.0)
-    ap.add_argument("--only", choices=("1", "2"))
+    ap.add_argument("--only", choices=("1", "2", "3"))
     args = ap.parse_args(argv)
     if shutil.which("claude") is None:
         print("live check: the host's command-line tool (claude) is not installed here; nothing was run")
@@ -333,7 +453,7 @@ def main(argv):
     real = real_data_dir()
     before_real = snapshot(real)
     failures, report, worlds = [], [], []
-    for n, fn in (("1", scenario_orchestration), ("2", scenario_fallback)):
+    for n, fn in (("1", scenario_orchestration), ("2", scenario_fallback), ("3", scenario_combined)):
         if args.only in (None, n):
             f, r, w = fn(args)
             failures += f
@@ -350,7 +470,7 @@ def main(argv):
         print("\nLIVE CHECK FAILED:\n  " + "\n  ".join(failures))
         print("temporary folders kept: %s" % ", ".join(w["tmp"] for w in worlds if w))
         return 1
-    print("\nLIVE CHECK PASSED (a, b, c, d, g)")
+    print("\nLIVE CHECK PASSED (%s)" % ("a, b, c, d, g, h" if args.only is None else "scenario " + args.only))
     for w in worlds:
         if w and args.keep:
             print("temporary folder kept: %s" % w["tmp"])
