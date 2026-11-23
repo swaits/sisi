@@ -683,7 +683,8 @@ def classify(tool, payload, cmd):
     t = tool or ""
     if t in _list("edit_tools") or any(w in t.lower() for w in _list("edit_name_words")):
         return "edit"
-    if t in _list("delegation_tools"):
+    from . import orchestration
+    if orchestration.is_delegation(store.tool() or "claude-code", t):
         return "delegate"
     if watch.is_shell(t, cmd):
         return "shell"
@@ -918,12 +919,12 @@ def after(payload):
 
 
 def _after(payload):
-    from . import watch
+    from . import watch, workerid
     tool, cmd, _ev, cwd, sid = watch.extract(payload)
     sid = sid or "cwd-" + cwd
     sess = store.load_session(sid)
-    if not sess:
-        return
+    if not sess or workerid.session_is_worker(payload, sid, cwd):
+        return  # a worker's changes are its parent's to answer for, never bookkept as this session's
     dirty = False
     top = git_top(cwd)
     if sess.get("ug_will_bind"):

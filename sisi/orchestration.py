@@ -17,7 +17,7 @@ canon/orchestration-tools.json. Per-session state is in <state>/sessions/<id>.me
 every counted event is also appended to <state>/orchestration.jsonl for the unit record. Every entry point
 fails open (the caller wraps it): an error here must never hold up the user's tool.
 """
-import fcntl, json, os, re, shlex, time
+import fcntl, fnmatch, json, os, re, shlex, time
 
 from . import paths, store, workerid
 
@@ -87,11 +87,55 @@ def _dig(obj, dotted):
     return obj
 
 
+def _matches(entry, tool):
+    """A data entry is an exact tool name or a shell-style pattern (`*delegate_task`), case-insensitive."""
+    e, t = str(entry).lower(), str(tool or "").lower()
+    return e == t or (any(c in e for c in "*?[") and fnmatch.fnmatchcase(t, e))
+
+
 def delegation_spec(hd, tool):
-    for name, spec in (hd.get("delegation") or {}).items():
-        if str(name).lower() == str(tool or "").lower():
-            return spec if isinstance(spec, dict) else {}
+    """The listed delegation entry for this tool (exact names first, then patterns), else None."""
+    items = list((hd.get("delegation") or {}).items())
+    for exact in (True, False):
+        for name, spec in items:
+            if (str(name).lower() == str(tool or "").lower()) == exact and _matches(name, tool):
+                return spec if isinstance(spec, dict) else {}
     return None
+
+
+_WORDS = {}
+
+
+def _name_words():
+    if not _WORDS:  # a failed read is not remembered
+        try:
+            with open(paths.canon("tool-name-words.json"), encoding="utf-8") as f:
+                d = json.load(f)
+            _WORDS.update({k: [str(w).lower() for w in v if isinstance(w, str)] for k, v in d.items() if isinstance(v, list)})
+        except (OSError, ValueError):
+            return {}
+    return _WORDS
+
+
+def name_kind(tool):
+    """"delegation" or "control" when an unlisted tool's NAME says what it is (canon/tool-name-words.json), else None."""
+    t = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(tool or ""))
+    padded = "_" + "_".join(w for w in re.split(r"[^a-z0-9]+", t.lower()) if w) + "_"
+    words = _name_words()
+    for kind in ("delegation", "control"):
+        if any("_" + w.strip("_") + "_" in padded for w in words.get(kind, ())):
+            return kind
+    return None
+
+
+def is_delegation(host, tool):
+    """Does this tool start a worker: listed in the host's data (name or pattern), or named like one."""
+    return delegation_spec(host_data(host), tool) is not None or (
+        not _listed_exempt(host_data(host), tool) and name_kind(tool) == "delegation")
+
+
+def _listed_exempt(hd, tool):
+    return any(_matches(n, tool) for names in (hd.get("exempt") or {}).values() for n in names or [])
 
 
 def _segments(cmd):
@@ -145,12 +189,13 @@ def classify(host, tool, inp, cmd):
     hd = host_data(host)
     if delegation_spec(hd, tool) is not None:
         return "delegation"
-    if str(tool or "").lower() in _exempt_names(hd):
+    if _listed_exempt(hd, tool):
         return "exempt"
     from . import watch
-    if watch.is_shell(tool, cmd) and runs_sisi(cmd):
-        return "exempt"
-    return "direct"
+    if watch.is_shell(tool, cmd):
+        return "exempt" if runs_sisi(cmd) else "direct"
+    kind = name_kind(tool)  # an unlisted tool: its name says whether it starts a worker or only controls one
+    return "delegation" if kind == "delegation" else "exempt" if kind == "control" else "direct"
 
 
 # ---------------------------------------------------------------- the per-session meter
@@ -573,7 +618,10 @@ def _dialog_guard(payload, host, sid, cwd):
 
 
 def _before_delegation(payload, hd, tool, inp, host, sid, sess, m, c, cwd):
-    spec = delegation_spec(hd, tool) or {}
+    spec = delegation_spec(hd, tool)
+    if spec is None:
+        return {}  # only named like a delegation tool: the data does not say where its model sits, so it is never
+        # counted, refused or recorded as a run here
     model = _dig(inp, spec.get("model", "model"))
     model = model.strip() if isinstance(model, str) else ""
     text = _dig(inp, spec.get("brief", "prompt"))
