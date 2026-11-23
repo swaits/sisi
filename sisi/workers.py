@@ -1789,6 +1789,9 @@ def _cmd_import(args):
     if not os.path.isfile(args[0]):
         print("sisi: no such ledger file: %s" % args[0], file=sys.stderr)
         return 1
+    if not any(r.get("kind") in ("attempt", "run", "amend", "down", "up") for r in read_records(args[0])):
+        print("sisi: warning: %s contains no ledger rows (no line with a kind of attempt, run, amend, "
+              "down or up); is it the right file?" % args[0], file=sys.stderr)
     before, after, added = import_ledger(args[0])
     print("imported %d rows from %s (before: %d, after: %d); the original file is unchanged"
           % (added, args[0], before, after))

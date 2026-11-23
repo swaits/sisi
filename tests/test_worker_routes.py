@@ -177,6 +177,20 @@ class StoreHistoryTests(RouteCase):
         self.assertNotIn("oracle.md", shown)
 
 
+class ImportWarningTests(RouteCase):
+    def test_import_of_a_file_without_ledger_rows_warns(self):
+        """R-7.2-3: importing the wrong file is said out loud, not reported as a quiet success."""
+        src = os.path.join(self.tmp, "not-a-ledger.jsonl")
+        open(src, "w").write('{"hello": "world"}\nnot json\n')
+        r = self.sisi("workers", "import", src, env=self.env())
+        self.assertIn("contains no ledger rows", r.stderr)
+        good = os.path.join(self.tmp, "ledger.jsonl")
+        open(good, "w").write(json.dumps({"kind": "attempt", "id": "a1", "ts": 1760000000, "worker": "wk-x",
+                                          "type": "read", "difficulty": 1, "outcome": "accepted"}) + "\n")
+        ok = self.sisi("workers", "import", good, env=self.env())
+        self.assertNotIn("no ledger rows", ok.stderr)
+
+
 class SessionStartTests(RouteCase):
     def tick(self, sid, model="mystery-9", source="startup"):
         return self.sisi("tick", stdin=json.dumps({"session_id": sid, "cwd": self.proj, "source": source,

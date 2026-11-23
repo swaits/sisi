@@ -386,6 +386,24 @@ class UpdateTests(PersonalCase):
         self.assertIn("backup:", r.stdout)
         self.assertIn("rulebook rebuilt", r.stdout)
 
+    def test_update_keeps_a_bounded_number_of_its_own_backups(self):
+        """R-3.2-4: the update step keeps at most N of its own snapshots, never one it did not
+        make, and never the newest."""
+        pdata.ensure()
+        json.dump({"backups": {"keep_update": 2}}, open(os.path.join(self.data, "config.json"), "w"))
+        foreign = os.path.join(self.data, "backups", "20200101T000000-update")  # someone else's, same look
+        os.makedirs(foreign)
+        for _ in range(4):
+            self.ok("update")
+        bk = os.path.join(self.data, "backups")
+        mine = sorted(d for d in os.listdir(bk) if os.path.exists(os.path.join(bk, d, ".made-by-sisi-update")))
+        self.assertEqual(len(mine), 2, os.listdir(bk))
+        self.assertTrue(os.path.isdir(foreign))
+        json.dump({"backups": {"keep_update": 0}}, open(os.path.join(self.data, "config.json"), "w"))
+        self.ok("update")
+        mine = [d for d in os.listdir(bk) if os.path.exists(os.path.join(bk, d, ".made-by-sisi-update"))]
+        self.assertEqual(len(mine), 1)  # never fewer than the newest one
+
 
 def _seed_legacy_db(path, lessons, proj):
     """A pre-rebuild retro.db: the sqlite lesson store the migration reads."""
@@ -476,6 +494,18 @@ class MigrationTests(PersonalCase):
         self.assertEqual(len(self.git_log()), n)
         self.assertEqual(self.lessons_of(os.path.join(self.data, "retro.db")), before)
         self.assertEqual(self.ok("lessons", "--json").stdout.count('"id": "L-'), 2)
+
+    def test_a_due_cycle_stays_due_after_migration(self):
+        """R-3.1-2: five open lessons made a cycle due in the old store; migrated, they still do."""
+        os.makedirs(os.path.join(self.state, "backups"))
+        _seed_legacy_db(os.path.join(self.state, "retro.db"),
+                        [dict(aim="speed", moment="moment %d" % i, cause="cause %d" % i, change_kind="rule",
+                              change="Change number %d to the way of working" % i, target=None) for i in range(5)],
+                        self.proj)
+        self.ok("update", "--post")
+        out = self.ok("cycle", "due").stdout
+        self.assertIn("a learning cycle is due", out)
+        self.assertIn("5 proposed", out)
 
     def test_old_layout_keeps_working_before_migration(self):
         self.legacy_state()
