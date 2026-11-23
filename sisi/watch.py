@@ -219,6 +219,9 @@ def main(args=()):
         payload = gate._read_payload()
         _tool, _cmd, ev, _cwd, _sid = extract(payload)
         if "--before" in args or ev in BEFORE_EVENTS:
+            from . import unitguard
+            if unitguard.before(payload):  # refused (rule 3: no valid unit): the call must not run, nothing to measure
+                return 0
             before(payload)
             try:
                 line = commit_notice(payload)
@@ -230,6 +233,8 @@ def main(args=()):
                 store.log_error("watch-commit-notice", e)
         elif "--after" in args or ev in AFTER_EVENTS:
             after(payload)
+            from . import unitguard
+            unitguard.after(payload)
     except Exception as e:  # fail open: a tool call must never be held up by measurement
         store.log_error("watch", e)
     return 0

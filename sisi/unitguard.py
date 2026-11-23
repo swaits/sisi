@@ -24,7 +24,7 @@ refusal) and `after(payload)`. For the gate and `sisi unit pause`: `bound_fresh`
 """
 import fnmatch, hashlib, json, os, re, shlex, sys, time
 
-from . import assure, contract as C, gitutil, paths as P, risk, store, trust
+from . import assure, contract as C, paths as P, risk, store
 
 CLAIM_RE = re.compile(r"\bsisi\b[^\n;&|]*?\b(?:contract\s+init|unit\s+(?:continue|resume|park))\b")
 MAX_LINES = 12
@@ -207,9 +207,34 @@ def age_text(epoch):
     return "%d days ago" % round(s / 86400)
 
 
-def open_unit(cwd):
+def git_top(cwd):
+    """The repository root above cwd, found by looking for `.git` (no process started: this runs before every
+    counted tool call). None outside a repository."""
+    d = os.path.abspath(cwd)
+    while True:
+        if os.path.exists(os.path.join(d, ".git")):
+            return d
+        up = os.path.dirname(d)
+        if up == d:
+            return None
+        d = up
+
+
+def find_contract(cwd, top):
+    """Nearest .sisi/contract.json from cwd up to the repository root (what C.find does, without asking git)."""
+    d = os.path.abspath(cwd)
+    while True:
+        p = os.path.join(d, C.REL)
+        if os.path.isfile(p):
+            return p
+        if d == top or os.path.dirname(d) == d:
+            return None
+        d = os.path.dirname(d)
+
+
+def open_unit(cwd, top=None):
     """(contract, path, project) of the open unit (not closed) found from cwd, else (None, None, None)."""
-    p = C.find(cwd)
+    p = find_contract(cwd, top or git_top(cwd))
     if not p:
         return None, None, None
     try:
@@ -256,8 +281,39 @@ def _is_sisi(rel):
     return r == ".sisi" or r.startswith(".sisi/")
 
 
+def _floor_sig(project):
+    """Which risk tables are in force: a change to any of them makes every remembered floor stale."""
+    parts = []
+    for f in (P.canon("risk.json"), P.data_file("risk.json"), P.overlay_dir("risk-adjustments.json"),
+              os.path.join(project, ".sisi", "risk.json")):
+        try:
+            st = os.stat(f)
+            parts.append("%s:%d:%d" % (f, st.st_mtime_ns, st.st_size))
+        except OSError:
+            parts.append(f + ":-")
+    return hashlib.sha1("|".join(parts).encode()).hexdigest()[:16]
+
+
 def floor_of(rels, project):
-    prof, reasons = risk.assess([r for r in rels if r], patterns=risk.load_patterns(project))
+    """(floor, reasons) of these paths by `risk.assess`. Matching a path against the whole table takes tens of
+    milliseconds, so an answer is remembered (per table version) for the next call that asks about the same paths."""
+    clean = sorted({r for r in rels if r})
+    key, sig = "\n".join(clean), _floor_sig(project)
+    cache_path = os.path.join(P.state(), "unitguard-floor.json")
+    cache = _load(cache_path)
+    if cache.get("sig") != sig:
+        cache = {"sig": sig, "floors": {}}
+    hit = cache["floors"].get(key)
+    if hit:
+        return hit[0], hit[1]
+    prof, reasons = risk.assess(clean, patterns=risk.load_patterns(project))
+    if len(cache["floors"]) > 300:
+        cache["floors"] = {}
+    cache["floors"][key] = [prof, reasons]
+    try:
+        _save(cache_path, cache)
+    except OSError:
+        pass
     return prof, reasons
 
 
@@ -357,7 +413,7 @@ def _profile_needs(profile):
 
 def refusal_text(v, what, floor_reasons=None):
     profile = v["profile"]
-    lines = ["sisi refused: %s; that is a %s change and there is no valid unit for this work (rule 3: the contract comes first)."
+    lines = ["sisi refused: %s. The risk profile is `%s` and there is no valid unit for this work (rule 3: the contract comes first)."
              % (what, profile)]
     c = v.get("unit")
     if v["state"] == "none":
@@ -583,7 +639,7 @@ def _before(payload):
     sess = store.load_session(sid)
     if sess.get("subagent"):
         return False
-    top = gitutil.root(cwd)
+    top = git_top(cwd)
     if top is None:
         return False  # nothing to measure outside a repository
     rels, outside = [], False
@@ -606,7 +662,7 @@ def _before(payload):
         return False
     if kind == "edit" and not rels:
         return False  # only outside the project
-    c, cpath, project = open_unit(cwd)
+    c, cpath, project = open_unit(cwd, top)
     project = project or top
     if any(_is_contract_target(r) for r in rels):
         return _guard_contract_write(sid, sess, c, project, cwd, kind)
@@ -626,6 +682,7 @@ def _before(payload):
         store.save_session(sid, sess)
         return False
     v = verdict(sid, sess, cwd, floor, c, cpath, project)
+    v.setdefault("project", project)
     if v["state"] == "ok":
         _cover(sess)
         store.save_session(sid, sess)
@@ -634,8 +691,9 @@ def _before(payload):
     if kind == "delegate":
         what = "delegating this work to a worker"
     else:
-        shown = (rels[0] if rels else paths_all[0])
-        what = ("this call would change `%s`" % shown) if rels else ("earlier changes (`%s`) were made with no unit" % paths_all[0])
+        focus = next((x for x in paths_all if floor_of([x], project)[0] != "trivial"), paths_all[0])
+        what = ("this call would change `%s`" % focus) if focus in rels else \
+            ("this session already changed `%s` with no unit behind it" % focus)
     msg = refusal_text(v, what)
     if kind == "delegate":
         msg = msg.replace("Then retry the call.", "The contract is where the worker's brief takes its acceptance from. Then retry.")
@@ -680,11 +738,11 @@ def _after(payload):
     if not sess:
         return
     dirty = False
-    top = gitutil.root(cwd)
+    top = git_top(cwd)
     if sess.get("ug_will_bind"):
         project = sess.pop("ug_will_bind")
         dirty = True
-        c, _p, proj = open_unit(project)
+        c, _p, proj = open_unit(project, project)
         if c is not None:
             bind(sid, proj, c, "wrote")
             sess = store.load_session(sid)

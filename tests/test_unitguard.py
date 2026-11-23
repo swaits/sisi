@@ -229,5 +229,246 @@ class BindingTests(GuardCase):
         self.assertIn("no parked unit", r.stdout)
 
 
+class RefusalTests(GuardCase):
+    """Item 2: the first building step is refused without a valid unit for this work (R-9-1, R-5.3-1)."""
+
+    def refused(self, msg, *needles):
+        self.assertIsNotNone(msg, "the call was let through")
+        self.assertLessEqual(len(msg.splitlines()), 12, msg)
+        for n in needles:
+            self.assertIn(n, msg)
+        return msg
+
+    def foreign_unit(self, ago_s=3 * 86400, goal="redo the old report"):
+        c = good_contract(goal=goal, id="old-report")
+        self.write_contract(c)
+        self.age_unit(c, ago_s, sid="someone-else")
+        return C.load(self.contract_path)
+
+    # ---- no unit at all
+    def test_a_source_edit_with_no_unit_is_refused_naming_what_to_run(self):
+        msg = self.refused(self.edit(), "sisi contract init", "src/app.py", "isolated", "rule 3")
+        self.assertIn("goal", msg)
+        self.assertIn("Then retry", msg)
+
+    def test_the_refusal_is_stored_with_what_and_when(self):
+        self.edit()
+        (r,) = self.refusals()
+        self.assertEqual((r["state"], r["unit"], r["session"]), ("none", None, "me"))
+        self.assertIn("src/app.py", r["what"])
+        self.assertRegex(r["ts"], r"^\d{4}-\d\d-\d\dT")
+
+    def test_a_trivial_change_is_never_refused(self):
+        self.assertIsNone(self.edit("README.md"))
+        self.assertIsNone(self.edit("docs/notes.md"))
+        self.assertEqual(self.refusals(), [])
+
+    def test_writes_under_dot_sisi_and_outside_the_project_are_never_refused(self):
+        self.assertIsNone(self.before("Write", {"file_path": os.path.join(self.proj, ".sisi", "risk.json"), "content": "{}"}))
+        self.assertIsNone(self.before("Write", {"file_path": os.path.join(self.tmp, "elsewhere", "x.py"), "content": "x"}))
+        self.assertIsNone(self.bash("echo x > %s" % os.path.join(self.tmp, "elsewhere.py")))
+        self.assertIsNone(self.bash("echo x > .sisi/notes.py"))
+        self.assertEqual(self.refusals(), [])
+
+    def test_reading_tools_and_read_only_commands_are_not_counted(self):
+        self.assertIsNone(self.before("Read", {"file_path": os.path.join(self.proj, SRC)}))
+        self.assertIsNone(self.before("Grep", {"pattern": "greet"}))
+        self.assertIsNone(self.bash("git status && ls src"))
+        self.assertIsNone(self.bash("python3 -m pytest -q"))  # runs tests: no known write target
+
+    def test_sisi_commands_that_resolve_a_refusal_are_never_refused(self):
+        self.assertIsNone(self.bash("sisi contract init --goal 'x'"))
+        self.assertIsNone(self.bash("sisi unit park 'why' && sisi unit continue"))
+
+    # ---- a valid unit
+    def test_with_a_valid_bound_unit_the_edit_goes_through(self):
+        self.open_unit()
+        self.assertIsNone(self.edit())
+        self.assertEqual(self.refusals(), [])
+
+    # ---- abuse: a stale or foreign unit from other work
+    def test_a_stale_unit_from_another_session_is_named_with_its_goal_and_age_and_the_three_ways_on(self):
+        self.foreign_unit()
+        msg = self.refused(self.edit(), "old-report", "redo the old report", "3 days ago", "sisi unit continue",
+                           "sisi unit park", "sisi unit close --abandon", "sisi contract init")
+        self.assertNotIn("c1", msg, "it must not list the foreign unit's checks")
+        self.assertEqual(C.load(self.contract_path)["goal"], "redo the old report")
+
+    def test_a_fresh_unit_another_session_opened_is_foreign_too(self):
+        self.write_contract(good_contract())
+        G.bind("someone-else", self.proj, C.load(self.contract_path), "init")
+        self.refused(self.edit(), "sisi unit continue")
+
+    def test_continue_then_the_edit_goes_through_and_a_bound_but_stale_unit_asks_for_continue_again(self):
+        c = self.foreign_unit()
+        self.refused(self.edit(), "sisi unit continue")
+        self.assertEqual(self.sisi("unit", "continue", env={"SISI_SESSION_ID": "me"}).returncode, 0)
+        self.assertIsNone(self.edit())
+        self.age_unit(C.load(self.contract_path), 20 * 3600, "me")
+        self.refused(self.edit(), "no activity since", "sisi unit continue")
+
+    def test_the_refusal_is_recorded_against_the_unit_the_session_holds(self):
+        c = self.open_unit(good_contract(checks=[dict(real("c1"), cmd="true")]))  # a vacuous check: invalid
+        self.edit()
+        (r,) = self.refusals()
+        self.assertEqual((r["unit"], r["state"]), ("work", "invalid"))
+
+    # ---- abuse: an invalid contract
+    def test_contract_init_that_leaves_the_placeholder_checks_is_still_refused(self):
+        r = self.sisi("contract", "init", "--goal", "make the app greet", env={"SISI_SESSION_ID": "me"})
+        self.assertEqual(r.returncode, 0)
+        self.refused(self.edit(), "placeholder")
+
+    def test_one_placeholder_check_left_among_real_ones_is_refused(self):
+        self.sisi("contract", "init", "--goal", "make the app greet", env={"SISI_SESSION_ID": "me"})
+        c = C.load(self.contract_path)
+        c["checks"][0] = real("c1")
+        c["risk"]["profile"] = "isolated"
+        C.save(self.contract_path, c)  # the deep placeholder is still there
+        self.refused(self.edit(), "placeholder")
+        c["checks"] = c["checks"][:1]
+        C.save(self.contract_path, c)
+        self.assertIsNone(self.edit())
+
+    def test_a_placeholder_goal_is_refused(self):
+        self.open_unit(good_contract(goal="TODO: one sentence describing the outcome"))
+        self.refused(self.edit(), "goal")
+
+    def test_a_vacuous_check_is_refused_with_contract_check_named(self):
+        self.open_unit(good_contract(checks=[dict(real("c1"), cmd="true")]))
+        self.refused(self.edit(), "cannot fail")
+
+    def test_declaring_trivial_on_a_source_path_with_no_reason_is_still_refused(self):
+        self.open_unit(good_contract(profile="trivial"))
+        self.refused(self.edit(), "below the floor", "risk")
+        c = C.load(self.contract_path)
+        c["risk"]["why"] = "a one-word string change that cannot affect behaviour"
+        C.save(self.contract_path, c)
+        self.assertIsNone(self.edit(), "a reason on the record lowers it, as the gate allows")
+
+    def test_integration_work_needs_the_requirement_list_the_risk_note_and_the_approach_before_building(self):
+        c = good_contract()
+        c["checks"] = [real("c1")]
+        self.open_unit(c)
+        msg = self.refused(self.edit("package.json"), "requirement list", "risk note", "approach")
+        self.assertNotIn("independent", msg)
+        self.open_unit(full_contract())
+        self.assertIsNone(self.edit("package.json"))
+
+    def test_independent_evidence_and_the_retro_are_not_asked_before_building(self):
+        self.open_unit(full_contract(risk={"profile": "data", "blast_radius": "the stored rows", "rollback": "restore backup"}))
+        self.assertIsNone(self.edit("db/schema.sql"))
+
+    # ---- abuse: shell writes
+    def test_a_shell_redirect_tee_sed_and_a_heredoc_are_refused(self):
+        for cmd in ("echo 'x = 1' > src/app.py", "echo x | tee src/app.py", "sed -i 's/hi/yo/' src/app.py",
+                    "cat > src/app.py <<'EOF'\nx = 1\nEOF", "cp /tmp/new.py src/app.py", "printf x >> src/app.py"):
+            self.refused(self.bash(cmd), "src/app.py", "sisi contract init")
+
+    def test_python_dash_c_slips_past_the_text_but_the_snapshot_refuses_the_next_call(self):
+        cmd = "python3 -c \"open('src/app.py', 'w').write('x = 1')\""
+        self.assertIsNone(self.bash(cmd))
+        payload = self.payload("Bash", {"command": cmd})
+        watch.before(payload)  # the stat-only snapshot before it ran
+        self.put(SRC, "x = 1\n")
+        watch.after(payload)
+        G.after(payload)
+        self.refused(self.edit("README.md"), "src/app.py", "sisi contract init")
+        self.refused(self.bash("echo hi > notes.py"))
+
+    def test_the_slip_is_forgiven_once_a_valid_unit_stands_behind_it(self):
+        cmd = "python3 -c \"open('src/app.py', 'w').write('x = 1')\""
+        payload = self.payload("Bash", {"command": cmd})
+        watch.before(payload)
+        self.put(SRC, "x = 1\n")
+        watch.after(payload)
+        G.after(payload)
+        self.refused(self.edit("README.md"))
+        self.open_unit()
+        self.assertIsNone(self.edit("README.md"))
+        self.assertEqual(store.load_session("me").get("ug_paths"), [])
+
+    def test_a_slip_by_a_read_only_followup_is_not_refused(self):
+        payload = self.payload("Bash", {"command": "python3 gen.py"})
+        watch.before(payload)
+        self.put("gen_out.py", "x = 1\n")
+        watch.after(payload)
+        G.after(payload)
+        self.assertIsNone(self.before("Read", {"file_path": os.path.join(self.proj, SRC)}))
+        self.assertIsNone(self.bash("git status"))
+
+    def test_build_output_that_a_run_leaves_behind_is_not_a_slip(self):
+        payload = self.payload("Bash", {"command": "python3 gen.py"})
+        watch.before(payload)
+        self.put("src/__pycache__/app.cpython-312.pyc", "bin")
+        watch.after(payload)
+        G.after(payload)
+        self.assertIsNone(self.edit("README.md"))
+
+    # ---- abuse: rewriting another unit's contract
+    def test_writing_the_contract_file_of_a_unit_the_session_does_not_hold_is_refused(self):
+        self.foreign_unit()
+        msg = self.refused(self.before("Write", {"file_path": self.contract_path, "content": "{}"}),
+                           "old-report", "sisi unit park")
+        self.assertEqual(C.load(self.contract_path)["goal"], "redo the old report")
+        self.refused(self.bash("echo '{}' > .sisi/contract.json"), "sisi unit park")
+        self.refused(self.before("Edit", {"file_path": self.contract_path, "old_string": "a", "new_string": "b"}))
+
+    def test_writing_a_contract_when_none_is_open_is_allowed_and_binds_the_writer(self):
+        self.assertIsNone(self.before("Write", {"file_path": self.contract_path, "content": "{}"}))
+        self.write_contract(good_contract())
+        G.after(self.payload("Write", {"file_path": self.contract_path, "content": "{}"}))
+        self.assertTrue(G.is_bound(store.load_session("me"), self.proj, C.load(self.contract_path)))
+        self.assertIsNone(self.before("Edit", {"file_path": self.contract_path, "old_string": "a", "new_string": "b"}))
+
+    # ---- who is exempt, and failure
+    def test_worker_and_subagent_sessions_are_never_refused(self):
+        self.assertIsNone(self.edit(agent_id="a1"))
+        self.assertIsNone(self.edit(agent_transcript_path="/x/subagents/agent-a1.jsonl"))
+        self.tick("sub", subagent=None)
+        s = store.load_session("sub")
+        s["subagent"] = True
+        store.save_session("sub", s)
+        self.assertIsNone(self.edit(sid="sub"))
+        with mock.patch.dict(os.environ, {"SISI_WORKER_RUN": "1"}):
+            self.assertIsNone(self.edit())
+        self.assertEqual(self.refusals(), [])
+
+    def test_an_error_inside_the_guard_lets_the_call_through(self):
+        with mock.patch.object(G, "verdict", side_effect=RuntimeError("boom")):
+            self.assertIsNone(self.edit())
+        with mock.patch.object(G, "_before", side_effect=RuntimeError("boom")):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertFalse(G.before(self.payload("Edit", {"file_path": os.path.join(self.proj, SRC)})))
+            self.assertEqual(out.getvalue(), "")
+            r = self.sisi("watch", "--before", stdin=json.dumps(self.payload("Edit", {"file_path": os.path.join(self.proj, SRC)})))
+            self.assertEqual(r.returncode, 0)
+
+    def test_outside_a_repository_nothing_is_measured_and_nothing_is_refused(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "a.py")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                refused = G.before({"session_id": "me", "cwd": d, "tool_name": "Write", "tool_input": {"file_path": p}})
+            self.assertFalse(refused)
+
+    def test_the_real_hook_command_prints_the_hosts_refusal_and_runs_nothing_else(self):
+        r = self.sisi("watch", "--before", stdin=json.dumps(self.payload("Write", {"file_path": os.path.join(self.proj, SRC), "content": "x"})))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        d = json.loads(r.stdout)["hookSpecificOutput"]
+        self.assertEqual(d["permissionDecision"], "deny")
+        self.assertIn("sisi contract init", d["permissionDecisionReason"])
+        r = self.sisi("watch", "--before", stdin=json.dumps(self.payload("Write", {"file_path": os.path.join(self.proj, "README.md"), "content": "x"})))
+        self.assertEqual(r.stdout, "")
+
+    def test_the_refusal_is_not_longer_than_twelve_lines_in_any_state(self):
+        for build in (lambda: None, lambda: self.foreign_unit(),
+                      lambda: self.open_unit(good_contract(profile="critical", checks=[dict(real("c1"), cmd="true")]))):
+            build()
+            self.assertLessEqual(len((self.edit("auth/login.py") or "").splitlines()), 12)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,5 +10,8 @@
   },
   "retro": {
     "required": true
+  },
+  "unit": {
+    "stale_hours": 12
   }
 }
