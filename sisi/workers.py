@@ -597,10 +597,15 @@ def model_words():
 
 
 def route_opts():
-    """Routing options from the config: `route.supersede_guessed` (default true) lets a class read from the id with
-    confidence, not yet recorded by the lead agent, take part in the rule that the newest version of a class wins."""
+    """Routing options: `route.supersede_guessed` (default true) lets a class read from the id with confidence, not yet
+    recorded by the lead agent, take part in the rule that the newest version of a class wins; the maker class orders
+    the lead agent recorded (`sisi workers classes`); and `route.class_span`, how far down an order each difficulty
+    reaches."""
     v = route_cfg().get("supersede_guessed")
-    return {"supersede_guessed": v if isinstance(v, bool) else True}
+    orders = {m: [str(x) for x in e["order"]] for m, e in load_model_facts()[1].items()
+              if isinstance(e, dict) and isinstance(e.get("order"), list)}
+    return {"supersede_guessed": v if isinstance(v, bool) else True, "class_orders": orders,
+            "class_span": route_cfg().get("class_span")}
 
 
 def route_floors():
@@ -1461,6 +1466,8 @@ def cmd_workers(args=()):
         return _cmd_only(args[1:])
     if args[:1] == ["note"]:
         return _cmd_note(args[1:])
+    if args[:1] == ["classes"]:
+        return _cmd_classes(args[1:])
     if args[:1] == ["down"]:
         return _cmd_down(args[1:])
     if args[:1] == ["up"]:
@@ -1519,6 +1526,9 @@ def cmd_workers(args=()):
         for standing, worker, entry in standings:
             print("  benchmark standing %g - %s: %s (%s)" % (standing, worker, entry.get("source") or "no source stated",
                                                           entry.get("date") or "no date stated"))
+    for maker, e in sorted(load_model_facts()[1].items()):
+        if isinstance(e, dict):
+            print(_classes_line(maker, e))
     routable, cold, _excluded = routable_candidates(build_candidates(disc, records), records)
     if routable and not cold:
         print("Model lines (the class of each routable worker; a guess is read from the id alone: confirm it "
@@ -1586,7 +1596,12 @@ def _route_setup(args):
 
 def class_line(result):
     """The one line asking the lead agent to determine a class sisi cannot read from the id, or None."""
-    names = (result.get("class_ask") or {}).get("classify") or []
+    ask = result.get("class_ask") or {}
+    names = ask.get("classify") or []
+    if not names and ask.get("order"):
+        maker, labels = ask["order"][0]
+        return ("sisi: classify %s's models and record the order, most capable first: `sisi workers classes %s %s --source S` "
+                "(classes seen: %s)" % (maker, maker, " ".join(labels), ", ".join(labels)))
     if not names:
         return None
     return ("sisi: the class of %s%s cannot be read from its id: decide it and record it with "
@@ -2094,6 +2109,48 @@ def _model_fact_args(args):
     if out and _opt(args, "--maker"):
         out["maker"] = _opt(args, "--maker").strip().lower()
     return out
+
+
+def _cmd_classes(args):
+    """`sisi workers classes MAKER CLASS [CLASS...] --source S` records a maker's classes, most capable first;
+    `sisi workers classes MAKER --remove` forgets them; no arguments lists them."""
+    usage = ("usage: sisi workers classes MAKER CLASS [CLASS...] --source S [--date YYYY-MM-DD]   (most capable class first)\n"
+             "       sisi workers classes MAKER --remove")
+    data = read_json(models_path())
+    classes = data.get("classes") if isinstance(data.get("classes"), dict) else {}
+    pos = _positional(args, ("--source", "--date"))
+    if not pos:
+        for maker, e in sorted(classes.items()):
+            print(_classes_line(maker, e))
+        return 0 if classes else (print("no class order recorded yet.\n" + usage) or 0)
+    maker, names = pos[0].strip().lower(), [x.strip().lower() for x in pos[1:]]
+    if "--remove" in args:
+        if names or maker not in classes:
+            print(usage if names else "sisi: no class order is recorded for %s" % maker, file=sys.stderr)
+            return 1
+        del classes[maker]
+        data["classes"] = classes
+        write_json(models_path(), data)
+        print("removed the class order of %s" % maker)
+        return 0
+    source = _opt(args, "--source")
+    if not names or not source:
+        print(usage, file=sys.stderr)
+        return 1
+    if any(not _NAME.fullmatch(x) for x in [maker] + names) or len(set(names)) != len(names):
+        print("sisi: a maker and each class is one short name (letters, digits, hyphens), none repeated", file=sys.stderr)
+        return 1
+    entry = {"order": names, "source": source, "date": _opt(args, "--date") or time.strftime("%Y-%m-%d", time.localtime())}
+    classes[maker] = entry
+    data["classes"] = classes
+    write_json(models_path(), data)
+    print(_classes_line(maker, entry).strip().replace("Classes of", "recorded the classes of", 1))
+    return 0
+
+
+def _classes_line(maker, e):
+    return "Classes of %s, most capable first: %s (%s, %s)" % (maker, ", ".join(e.get("order") or []),
+                                                          e.get("source") or "no source stated", e.get("date") or "no date stated")
 
 
 def _cmd_pref(kind, args):

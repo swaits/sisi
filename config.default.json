@@ -18,7 +18,12 @@
       "3": 85
     },
     "price_blend_input_parts": 3,
-    "supersede_guessed": true
+    "supersede_guessed": true,
+    "class_span": {
+      "1": 100,
+      "2": 70,
+      "3": 35
+    }
   },
   "unit": {
     "stale_hours": 12

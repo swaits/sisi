@@ -20,6 +20,12 @@ or learned from judged results. The strategy is [canon/orchestration.md](../cano
   A fact without a source is refused. Ranking uses one blend of the two prices, by default three
   parts input to one part output (`route.price_blend_input_parts`); `sisi workers` shows both
   prices and the blend, and lists each benchmark standing apart from the accepted rates it prints.
+- `sisi workers fact WORKER --class NAME [--family NAME] [--maker M] [--released YYYY-MM-DD] --source S` — the
+  class, line and release date the lead agent decided for a model; a recorded fact beats the parser.
+  `sisi workers` lists each routable worker's maker, class (recorded, or a guess read from the id) and recency.
+- `sisi workers classes MAKER CLASS [CLASS...] --source S` — a maker's classes from most capable to least
+  (`--remove` forgets them). A class is the tier word of one line (a "flash" beside the standard model) or,
+  for a maker whose lines are the classes, the line's own name; `sisi workers` shows both as the class label.
 - `sisi workers avoid|prefer PATTERN --why TEXT` — the user's own routing constraints.
 - `sisi workers only PROVIDER PATTERN... --why TEXT` — only the matching models of that provider are
   routable; anything else from it (a newly discovered model, say) is passed over with the reason.
@@ -101,6 +107,16 @@ supersede each other. A class read from the id with confidence takes part at onc
 (`route.supersede_guessed`, default true; false lets only recorded classes take part); a class that
 cannot be read (no version, or a word the data does not know) never does, and `sisi route` adds one
 line asking the lead agent to record it.
+
+The class order is a prior and nothing more. A worker with no judged proof and no benchmark standing,
+whose class is in its maker's recorded order, is capable when the class sits high enough for the
+difficulty: `route.class_span` (default routine work 100, ordinary 70, hard 35) is the share of the order,
+counted from the most capable class down, that each difficulty reaches. With four classes routine work
+reaches all four, ordinary work the top three, hard work the top two; the cheapest capable worker then
+wins, so routine work goes to the lowest class and hard work to the upper ones. A judged record or a
+benchmark standing always outranks the order; when nobody is proven, the strongest known worker is the
+one in the highest class. Classes of different makers are never compared. Until a maker with two or
+more classes among the usable workers has an order recorded, `sisi route` adds one line asking for it.
 
 A new version starts from its predecessor's judged record: a model with no thick record of its own
 for a kind and difficulty inherits, as evidence, the thick record of the closest older version of
