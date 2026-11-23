@@ -136,6 +136,45 @@ def author_models(project, c):
     return [m for m in _load(_act_path(unit_key(project, c))).get("models", []) if isinstance(m, str)]
 
 
+def is_self_reference(by, models=()):
+    """True when `by` (who or what produced independent evidence) is the author: a self-reference such as "me" or
+    "my own review" (the list is data), or a name of the session's own model."""
+    text = " ".join(str(by or "").lower().split())
+    if not text:
+        return True
+    words = set(re.findall(r"[a-z0-9']+", text))
+    for ref in _list("self_refs"):
+        ref = ref.lower()
+        if (ref in words) if " " not in ref else re.search(r"\b" + re.escape(ref) + r"\b", text):
+            return True
+    return any(m and (m.lower() in text or text in m.lower()) for m in models)
+
+
+def same_model(worker, model):
+    """Is this ledger worker the session's own model? Compares the model part of `provider/model` names."""
+    if not worker or not model:
+        return False
+    w, m = str(worker).lower(), str(model).lower()
+    tail = lambda x: x.rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    return w == m or tail(w) == tail(m) or m in w or w in m
+
+
+def current_model():
+    """The model of the session running this command (the gate and the shell export its id), or None."""
+    sid = store.session_id()
+    m = store.load_session(sid).get("model") if sid else None
+    return m if isinstance(m, str) and m else None
+
+
+def authors(project, c):
+    """Models that wrote this unit's work: those of the sessions bound to it, and of the session asking."""
+    out = list(author_models(project, c))
+    cur = current_model()
+    if cur and cur not in out:
+        out.append(cur)
+    return out
+
+
 def bind(sid, project, c, how):
     """This session now works on this unit: it opened it, continued it or resumed it."""
     sess = store.load_session(sid)

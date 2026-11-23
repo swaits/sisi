@@ -62,6 +62,21 @@ def _dialog_names():
         return "the question dialog"
 
 
+def _guard_scope():
+    """What the before-tool guard covers where it is registered: every file-changing tool and shell write, or
+    only shell commands (a Bash-only matcher). None when it is not registered or not present."""
+    try:
+        from . import wiring
+        m = wiring.HOOK_MATCHERS.get("PreToolUse")
+    except Exception:
+        return None
+    if not _has("unitguard", "before", "after"):
+        return None
+    if m in (None, "", "*") or any(t in str(m) for t in ("Edit", "Write")):
+        return "a file-changing call (edit tools, shell writes) or a build delegation"
+    return "a shell write (this host's hook is registered for shell commands only)"
+
+
 def _own_the_outcome():
     return _say(enforced=["ending a reply on a question instead of the question dialog (%s) is sent back by the end-of-turn gate"
                           % _dialog_names() if _has("questions", "ends_with_question", "sendback", "QUESTION_DIALOG_TOOLS")
@@ -75,7 +90,10 @@ def _size_by_risk():
                           if _gate_wired() and _has("risk", "assess", "requirements_for")
                           and _has("assure", "effective_profile", "missing") else None,
                           "a contract without a declared `risk.profile` is invalid"
-                          if _has("contract", "RISK_PROFILES") and _has("assure", "missing") else None],
+                          if _has("contract", "RISK_PROFILES") and _has("assure", "missing") else None,
+                          "the before-tool hook works out the risk floor of the path about to change (with what this session "
+                          "already changed) and refuses %s unless a valid unit stands behind it; the floor wins over a lower "
+                          "declared profile without a reason" % _guard_scope() if _guard_scope() else None],
                 measured=["`sisi risk` prints the floor and what the profile requires, the unit record keeps the profile"
                           if _has("risk", "assess") else None],
                 judgement=["raising the profile when you know better; lowering it needs a reason"])
@@ -86,7 +104,18 @@ def _define_done():
                           if _has("contract", "vacuous_reason") else None,
                           "end-of-turn gate sends the agent back when the profile needs a contract and there is none, "
                           "or when a check lacks what it covers, invariants or the requirement list are missing"
-                          if _gate_wired() and _has("assure", "missing") else None],
+                          if _gate_wired() and _has("assure", "missing") else None,
+                          "%s is refused before it runs unless this session holds a valid unit: opened or continued by it "
+                          "(`sisi unit continue`), not stale (`unit.stale_hours`), `sisi contract check` passing with no placeholder, "
+                          "and carrying what its risk profile needs before building" % _guard_scope()
+                          if _guard_scope() else None,
+                          "`sisi unit pause` is refused without such a unit (a pause defers waiting checks and the retro, never the "
+                          "contract), and a pause silences the gate only for the session holding the unit"
+                          if _has("unitguard", "pause_refusal") else None,
+                          "the gate never judges a session's changes against a unit the session does not hold: it sends back "
+                          "to continue, park or init" if _gate_wired() and _has("unitguard", "bound_fresh") else None,
+                          "every refusal is kept in the unit record and counted by `sisi status`"
+                          if _has("unitguard", "record_refusal") else None],
                 judgement=["the goal in the person's words, one check on the purpose, invariants captured before the first edit"])
 
 
@@ -95,8 +124,12 @@ def _verify_enough():
                           if _has("verify", "STATUSES") else None,
                           "the end-of-turn gate runs the fast checks and sends the agent back on a failure, with the failing evidence lines"
                           if _gate_wired() and _has("assure", "failure_lines") else None,
-                          "high-risk profiles need evidence from someone or something other than the author"
-                          if _has("assure", "independent_evidence") else None],
+                          "high-risk profiles need evidence from someone or something other than the author: a check marked "
+                          "independent does not count when `by` is empty, the session's own model or a self-reference, and a "
+                          "review counts only from a worker other than the author's model, judged with a check stronger than none"
+                          if _has("assure", "independent_evidence") and _has("unitguard", "is_self_reference") else
+                          ("high-risk profiles need evidence from someone or something other than the author"
+                           if _has("assure", "independent_evidence") else None)],
                 measured=["a commit or merge with no passing `sisi verify` for the tree gets a notice, never a block"
                           if _has("watch", "commit_notice") else None],
                 judgement=["choosing the technique, which checks the change can affect, watching a test fail once"])

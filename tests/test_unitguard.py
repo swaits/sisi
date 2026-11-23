@@ -678,5 +678,114 @@ class GateUnitTests(GuardCase):
         self.assertIn("c1", msg)
 
 
+class IndependenceTests(GuardCase):
+    """Item 6: nobody is their own independent evidence (R-13.3-4)."""
+
+    def data_unit(self, by, independent=True, model="model-a"):
+        self.tick(model=model)
+        ch = dict(real("review"), independent=independent)
+        if by is not None:
+            ch["by"] = by
+        c = full_contract(risk={"profile": "data", "blast_radius": "the stored rows", "rollback": "restore backup"})
+        c["checks"] = [real("c1"), ch]
+        self.write_contract(c)
+        c = C.load(self.contract_path)
+        G.bind(self.sid, self.proj, c, "init")
+        return c
+
+    def counted(self, c):
+        res = [{"id": "review", "status": "passed"}]
+        return assure.independent_evidence(self.proj, c, res)
+
+    def test_a_self_reference_in_by_is_not_independent_evidence(self):
+        for by in ("my own review", "me", "myself", "self", "I checked it", "the author", "this session", "own", "", "  ", None):
+            c = self.data_unit(by)
+            self.assertEqual(self.counted(c), [], repr(by))
+
+    def test_the_sessions_own_model_named_in_by_is_not_independent(self):
+        c = self.data_unit("model-a re-reading its own diff", model="model-a")
+        self.assertEqual(self.counted(c), [])
+
+    def test_something_else_named_in_by_counts_when_the_check_passes(self):
+        c = self.data_unit("a separate reviewer agent running model-b", model="model-a")
+        self.assertEqual(len(self.counted(c)), 1)
+        self.assertEqual(self.counted(c)[0], "check review by a separate reviewer agent running model-b")
+
+    def test_a_failing_or_unmarked_check_does_not_count_either(self):
+        c = self.data_unit("a separate reviewer agent")
+        self.assertEqual(assure.independent_evidence(self.proj, c, [{"id": "review", "status": "failed"}]), [])
+        c = self.data_unit("a separate reviewer agent", independent=False)
+        self.assertEqual(self.counted(c), [])
+
+    def test_the_missing_list_says_why_the_claim_was_not_counted(self):
+        c = self.data_unit("my own review")
+        miss = assure.missing("data", c, self.proj, [{"id": "review", "status": "passed"}], C.validate(c))
+        (what, how), = [m for m in miss if "independent" in m[0]]
+        self.assertIn("review by 'my own review'", what)
+        self.assertIn("by", how)
+
+    def ledger(self, **row):
+        base = {"type": "review", "outcome": "accepted", "check": "tests", "worker": "model-b"}
+        return mock.patch("sisi.workers.delegations_for_project", return_value={"delegations": [dict(base, **row)]})
+
+    def test_a_review_by_the_sessions_own_model_does_not_count_and_another_workers_does(self):
+        c = self.data_unit("a separate reviewer agent", independent=False)
+        with self.ledger(worker="model-a"):
+            self.assertEqual(assure.independent_evidence(self.proj, c, []), [])
+        with self.ledger(worker="provider/model-a"):
+            self.assertEqual(assure.independent_evidence(self.proj, c, []), [])
+        with self.ledger(worker="model-b"):
+            self.assertEqual(assure.independent_evidence(self.proj, c, []), ["review by model-b"])
+
+    def test_a_review_judged_with_no_check_or_not_accepted_does_not_count(self):
+        c = self.data_unit("x", independent=False)
+        for row in ({"check": "none"}, {"check": None}, {"outcome": "rejected"}, {"type": "impl"}):
+            with self.ledger(**row):
+                self.assertEqual(assure.independent_evidence(self.proj, c, []), [], row)
+
+    def test_the_gate_still_sends_back_a_data_unit_whose_only_evidence_is_the_author(self):
+        os.environ["SISI_RETRO_REQUIRED"] = "1"
+        self.addCleanup(lambda: os.environ.__setitem__("SISI_RETRO_REQUIRED", "0"))
+        self.data_unit("my own review")
+        self.put("db/schema.sql", "create table t (id integer);\n")
+        self.put("db/schema.sql", "create table t (id integer);\n")
+        a, msg = gate.decide({"session_id": "me", "cwd": self.proj, "hook_event_name": "Stop"})
+        self.assertEqual(a, "block")
+        self.assertIn("independent evidence", msg)
+
+
+class RecordTests(GuardCase):
+    """Item 6: every refusal is kept in the unit record, and `sisi status` counts them (R-10.2-1)."""
+
+    def test_the_closed_units_record_holds_each_refusal_with_what_and_when(self):
+        c = self.open_unit(good_contract(checks=[dict(real("c1"), cmd="true")]))  # invalid: building is refused
+        self.edit()
+        self.edit()
+        self.assertIn("2 building step", self.sisi("status").stdout)
+        c = C.load(self.contract_path)
+        c["checks"] = [real("c1")]
+        C.save(self.contract_path, c)
+        self.assertEqual(self.sisi("verify", env={"SISI_SESSION_ID": "me"}).returncode, 0)
+        r = self.sisi("unit", "close", env={"SISI_SESSION_ID": "me"})
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with open(os.path.join(self.proj, ".sisi", "units", "work.json")) as f:
+            rec = json.load(f)
+        self.assertEqual(len(rec["guard_refusals"]), 2)
+        self.assertEqual(rec["guard_refusals"][0]["state"], "invalid")
+        self.assertIn("src/app.py", rec["guard_refusals"][0]["what"])
+        self.assertTrue(rec["guard_refusals"][0]["ts"])
+        self.assertIn("the guard refused 2 building step", self.sisi("status").stdout)
+
+    def test_the_rule_listing_shows_rules_two_and_three_as_enforced_with_these_mechanisms(self):
+        for n in ("2", "3"):
+            out = self.sisi("rule", n).stdout
+            self.assertIn("enforced:", out)
+            self.assertIn("before-tool hook", out) if n == "2" else self.assertIn("sisi unit continue", out)
+        three = self.sisi("rule", "3").stdout
+        for part in ("`sisi unit pause` is refused", "never judges a session's changes", "every refusal is kept"):
+            self.assertIn(part, three)
+        self.assertIn("review counts only from a worker other than the author", self.sisi("rule", "4").stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -460,6 +460,10 @@ def format_status(units, learning=False, recent=5, opened=()):
             lines.append("")
             lines.append("%s  %s  [%s]  %s%s" % (u.get("id"), str(u.get("ended") or "")[:10],
                                                 u.get("delivery_status"), u.get("goal") or "", _lowered_note(u)))
+            n_ref = u.get("guard_refusals")
+            n_ref = len(n_ref) if isinstance(n_ref, list) else (n_ref or 0)
+            if n_ref:
+                lines.append("  the guard refused %d building step(s) before a valid unit stood behind them" % n_ref)
             sc = u.get("scorecard") or {}
             for dim, vals in sc.items():
                 lines.append(format_dimension(dim, vals))

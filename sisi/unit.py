@@ -554,6 +554,7 @@ def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None, 
         "never_run_mandatory": [{"id": r["id"], "status": r["status"], "reason": r.get("reason")} for r in unrun],
         "limitations": c.get("limitations") or [], "open_risks": c.get("open_risks") or [],
         "deviations": c.get("deviations") or [], "pauses": c.get("pauses") or [],
+        "guard_refusals": _guard_refusals(c, project),
         "delivery_status": delivery_status,
         "abandon_reason": abandon_reason,
         "policy_version": policy_version(project, c),
@@ -564,12 +565,24 @@ def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None, 
     return rec
 
 
+def _guard_refusals(c, project):
+    """Every refusal the before-tool guard made for this unit (what, when): rule 3 as a mechanism."""
+    try:
+        from . import unitguard
+        return [{k: r.get(k) for k in ("ts", "what", "state", "tool", "session")}
+                for r in unitguard.refusals_for(project, c.get("id"), c.get("started"))]
+    except Exception as e:
+        store.log_error("unit-refusals", e)
+        return []
+
+
 def summary_line(rec):
     risk = rec.get("risk") or {}
     floor = (risk.get("floor") or {}).get("value") if isinstance(risk.get("floor"), dict) else risk.get("floor")
     return {"id": rec["id"], "parent": rec.get("parent"), "project": rec.get("project"),
             "goal": rec.get("goal"), "delivery_status": rec.get("delivery_status"),
             "risk": {"declared": risk.get("declared"), "floor": floor, "lowered": bool(risk.get("lowered"))},
+            "guard_refusals": len(rec.get("guard_refusals") or []),
             "models": rec.get("models") or [], "policy_version": rec.get("policy_version"),
             "started": rec.get("started"), "ended": rec.get("ended"), "closed_at": rec.get("closed_at"),
             "scorecard": rec.get("scorecard")}
