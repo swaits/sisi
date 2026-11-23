@@ -122,6 +122,7 @@ def note_shell(sess, cmd, payload):
 
 _APPROVE = re.compile(r"(?:^|[\s/;&|(=`$])(?:sisi|sisi\.py|__main__\.py)(?=\s)(?:\s+-{1,2}[\w=-]+)*\s+approve\b([^;&|\n)`]*)")
 _DECISION = re.compile(r"\bP-\d+\b[\s\S]*--(?:yes|no)\b|--(?:yes|no)\b[\s\S]*\bP-\d+\b")
+_FLAG = re.compile(r"--(?:yes|no)\b")
 APPROVE_REFUSED = ("sisi: refused. Approving or refusing a learning change is the owner's alone; an agent does not "
                    "run `sisi approve ID --yes|--no`, however it is wrapped. Show the owner what is waiting (run "
                    "`sisi approve` with no arguments to list it, and show him the listing) and give him the command "
@@ -130,7 +131,8 @@ APPROVE_REFUSED = ("sisi: refused. Approving or refusing a learning change is th
 
 def refuse_self_approval(cmd, sid):
     """Before-tool guard, for main threads and workers alike: a shell command whose text invokes
-    sisi's approve command with an argument is refused (exit 2, the reason on stderr), however it
+    sisi's approve command with a decision (`--yes` or `--no` for a change it names) is refused (exit 2,
+    the reason on stderr), however it
     is wrapped (`script`, `sh -c`, `env`, `expect`, a path to the launcher, `python -m sisi`). The
     plain listing, `sisi approve`, is allowed. Quotes, backslashes and IFS tricks are stripped
     before the text is read. The attempt is recorded in the store with the session id. Fails open:
@@ -139,8 +141,13 @@ def refuse_self_approval(cmd, sid):
     itself requires at the terminal is the second layer."""
     try:
         text = re.sub(r"\$\{?IFS\}?", " ", re.sub(r"[\"'\\]", "", cmd or ""))
-        m = _APPROVE.search(text)
-        hit = bool(m and m.group(1).strip()) or bool(re.search(r"\bsisi\b", text) and _DECISION.search(text))
+        # a decision has --yes or --no and names the change: an id, or something a shell would fill in
+        # (a variable, a command, a brace); prose that only mentions the command (`sisi approve ID --yes`
+        # in a doc, a search pattern) is not an invocation
+        named = bool(re.search(r"\bP-\d+\b", text))
+        hit = any(_FLAG.search(m.group(1)) and (named or re.search(r"[${`]", m.group(1)))
+                  for m in _APPROVE.finditer(text)) \
+            or bool(re.search(r"\bsisi\b", text) and _DECISION.search(text))
         if not hit:
             return
         pid = re.search(r"\bP-\d+\b", text)

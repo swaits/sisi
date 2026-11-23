@@ -41,9 +41,10 @@ limited, and the rest waits for you:
 `sisi approve` lists every waiting change in full (the exact command, the pattern and profile, the rule text as a
 diff). Deciding one takes two layers:
 
-- The before-tool hook refuses any shell command an agent runs whose text invokes `sisi approve` with an argument,
+- The before-tool hook refuses any shell command an agent runs whose text invokes `sisi approve` with a decision
+  (`--yes` or `--no` for a change it names by id, or by something a shell fills in),
   however it is wrapped (`script`, `sh -c`, `env`, `expect`, a path to the launcher, `python -m sisi`, quotes and
-  backslashes inside the words), for main threads and workers alike, and tells the agent that approval is yours
+  backslashes inside the words); prose that only mentions the command (a search for it, a doc line) is allowed, for main threads and workers alike, and tells the agent that approval is yours
   alone and to show you the command to run yourself. The plain listing (`sisi approve` with no arguments) is
   allowed. The hook fails open on an error, so it is a guard, not a wall: a command built from pieces, from a
   variable or from an encoded string is not recognised by its text.

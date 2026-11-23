@@ -32,7 +32,7 @@ class Replay(Base):
         before, after = self.fixed_repo()
         self.recorded(before, after)
         cmd = "sh -c 'echo ran > %s; grep -q fixed f.txt'" % self.marker
-        p = self.cycle_file([self.cmd_action(cmd)])
+        p = self.cycle_file([self.cmd_action(cmd, before=before, after=after)])  # the file's own commits: ignored
         r = self.sisi("cycle", "check", p)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(os.path.exists(self.marker), "check executed a command from the file")
@@ -175,6 +175,11 @@ class Approval(Base):
             "sisi${IFS}approve${IFS}P-0001${IFS}--yes",
             "cd x; sisi approve P-0001 --yes; echo done",
             "a=approve; sisi $a P-0001 --yes",
+            "ID=P-0003; sisi approve $ID --yes",
+            'sisi approve "$1" --no',
+            "sisi approve $(echo P-0001) --yes",
+            "sisi approve P-000{1,2} --yes",
+            "sisi approve docs; sisi approve $X --yes",
         ]
         for cmd in wrapped:
             with self.subTest(cmd=cmd):
@@ -189,7 +194,10 @@ class Approval(Base):
         """R-14.3-2 (item 3a): `sisi approve` with no arguments is the listing; nothing else is touched."""
         for cmd in ("sisi approve", "/path/to/bin/sisi approve", "sisi approve | head -20", "python3 -m sisi approve;",
                     "sisi cycle apply f.json", "sisi cycle check c.json", "echo approve the plan",
-                    "git commit -m 'approve the design'", "ls"):
+                    "git commit -m 'approve the design'", "ls",
+                    # prose that only mentions the command is not an invocation
+                    'grep -rn "sisi approve" docs', "grep -n 'sisi approve ID --yes|--no' SECURITY.md",
+                    "python3 - <<'E'\nprint('give him: sisi approve ID --yes')\nE"):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.hook(cmd), 0, cmd)
         self.assertEqual(L.load_approvals(), [])
