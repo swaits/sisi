@@ -229,7 +229,7 @@ def _claude_md_wired(data):
 
 
 # ---- settings.json ---------------------------------------------------------
-HOOK_MATCHERS = {"PreToolUse": "Bash", "PostToolUse": "Bash"}
+HOOK_MATCHERS = {}  # no matcher: the tool hooks run for every tool (the orchestration meter counts all of them)
 
 
 def hook_cmds():
@@ -240,7 +240,8 @@ def hook_cmds():
             "Stop": (hookjson.fail_open_command(paths.launcher(), "gate", "claude-code"), gate_to),
             "SubagentStop": (hookjson.fail_open_command(paths.launcher(), "gate", "claude-code", True), 30),
             "PreToolUse": (watch, 60),
-            "PostToolUse": (watch, 60)}
+            "PostToolUse": (watch, 60),
+            "PostToolUseFailure": (watch, 60)}
 
 
 def _claude_spec():
@@ -326,11 +327,15 @@ def _hooks_wired(obj):
     out = {}
     for ev, sub, name in (("SessionStart", "tick", "tick"), ("UserPromptSubmit", "prompt", "prompt"),
                           ("Stop", "gate", "gate"), ("SubagentStop", "gate", "subagent"),
-                          ("PreToolUse", "watch", "pre"), ("PostToolUse", "watch", "post")):
+                          ("PreToolUse", "watch", "pre"), ("PostToolUse", "watch", "post"),
+                          ("PostToolUseFailure", "watch", "postfail")):
         groups = hooks.get(ev) if isinstance(hooks, dict) else None
         sub, key = sub, name
         out[key] = False
         for g in groups if isinstance(groups, list) else []:
+            if ev in ("PreToolUse", "PostToolUse", "PostToolUseFailure") and isinstance(g, dict) \
+                    and g.get("matcher") not in (None, "", "*"):
+                continue  # a hook limited to some tools (the shell only, in an older install) does not meter the rest
             for h in g.get("hooks", []) if isinstance(g, dict) and isinstance(g.get("hooks"), list) else []:
                 inv = hookjson.sisi_invocation(h.get("command")) if isinstance(h, dict) else None
                 if _is_ours(h, sub) and inv and inv[0] == paths.launcher():
@@ -561,7 +566,7 @@ def uninstall():
         try:
             text = data.decode("utf-8")
             subs = {"SessionStart": "tick", "UserPromptSubmit": "prompt", "Stop": "gate", "SubagentStop": "gate",
-                    "PreToolUse": "watch", "PostToolUse": "watch"}
+                    "PreToolUse": "watch", "PostToolUse": "watch", "PostToolUseFailure": "watch"}
             orig = _read(os.path.join(_idir(), "backups", ent["backup"])) if ent and ent["backup"] else None
             drop_hooks, _dv = hookjson.backup_drop_flags(
                 orig.decode("utf-8") if orig is not None else None, None) if orig is not None else (True, False)
@@ -617,7 +622,8 @@ def doctor():
     missing = [n for n, ok in (("import line", _claude_md_wired(cm)), ("tick hook", hw["tick"]),
                                ("prompt hook", hw.get("prompt", False)),
                                ("gate hook", hw["gate"]), ("subagent hook", hw["subagent"]),
-                               ("watch-before hook", hw["pre"]), ("watch-after hook", hw["post"])) if not ok]
+                               ("watch-before hook (all tools)", hw["pre"]), ("watch-after hook (all tools)", hw["post"]),
+                               ("watch-failure hook", hw.get("postfail", False))) if not ok]
     rows.append({"tool": "claude-code", "status": "not wired" if missing else "wired",
                  "detail": ("missing: " + ", ".join(missing)) if missing else "import + tick + prompt + gate registered",
                  "blocking_hook": "yes (Stop)" if hw["gate"] else "no",
@@ -708,7 +714,8 @@ def doctor_claude():
     missing = [n for n, ok in (("import line", _claude_md_wired(cm)), ("tick hook", hw["tick"]),
                                ("prompt hook", hw.get("prompt", False)),
                                ("gate hook", hw["gate"]), ("subagent hook", hw["subagent"]),
-                               ("watch-before hook", hw["pre"]), ("watch-after hook", hw["post"])) if not ok]
+                               ("watch-before hook (all tools)", hw["pre"]), ("watch-after hook (all tools)", hw["post"]),
+                               ("watch-failure hook", hw.get("postfail", False))) if not ok]
     return ", ".join(missing)
 
 

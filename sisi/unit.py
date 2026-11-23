@@ -319,6 +319,13 @@ def build_telemetry(c, project, results, t0, t1, t0_basis="measured"):
             tel["time_in_delegations_s"] = val(0, "measured")
             tel["overlapped_delegations"] = val(0, "measured")
 
+    try:
+        from . import orchestration
+        tel["orchestration"] = orchestration.telemetry(project, t0, t1)
+    except Exception as e:  # the part is measurement; never lose the record for it
+        store.log_error("unit-orchestration", e)
+        tel["orchestration"] = {}
+
     changed = _changed_artifacts(c, project)
     tel["files_changed"] = val(len(changed["files"]), "measured") if changed else unavailable()
     tel["lines_changed"] = val(changed["lines"], "measured") if changed else unavailable()
@@ -503,6 +510,7 @@ def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None, 
         "approach": c.get("approach"),
         "plan": c.get("plan") or [],
         "workers": delegation_rows,
+        "orchestration": tel.get("orchestration") or {},
         "models": models, "budgets": c.get("budgets"),
         "started": started, "started_basis": basis, "ended": ended, "closed_at": ended, "telemetry": tel,
         "start_commit": c.get("base_head"),
@@ -781,6 +789,9 @@ def cmd_unit(args, cwd=None, out=print):
         C.save(p, c)
         out("unit %s paused: %s" % (c.get("id"), what))
         return 0
+    if sub == "direct":
+        from . import orchestration
+        return orchestration.cmd_direct(args[1:], cwd)
     if sub == "show":
         uid = args[1] if len(args) > 1 else None
         if uid is None:
@@ -827,5 +838,5 @@ def cmd_unit(args, cwd=None, out=print):
         if c is None and not rows:
             out("no units in this project yet")
         return 0
-    out("usage: sisi unit close [--abandon \"<reason>\"] | pause \"<what it waits for>\" | show [ID] | list")
+    out("usage: sisi unit close [--abandon \"<reason>\"] | pause \"<what it waits for>\" | direct \"<reason>\" | show [ID] | list")
     return 1

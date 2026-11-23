@@ -171,3 +171,16 @@ def advice(text):
         out.append("It has numbered items but no commit per item: ask for a commit after each, with a "
                    "\"done / next\" note, so an interruption loses at most one.")
     return out
+
+
+def check(text):
+    """Plain lines about a brief that arrives by a host's own delegation tool: what it lacks of the
+    three required parts (outcome, acceptance, the files the worker may change), then the usual
+    advice. Always advice for the main agent; a brief is never refused here."""
+    lines = []
+    missing = missing_required(text)
+    if missing:
+        lines.append("the brief has no %s; a worker starts cold, so say %s (`sisi delegate brief` prints the template)"
+                     % (" and no ".join(m.lower() for m in missing), "each of them"))
+    lines += advice(text)
+    return lines

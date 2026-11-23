@@ -480,10 +480,31 @@ def import_ledger(src, now=None):
     return before, before + added, added
 
 
+def merged_runs(records=None):
+    """The ledger's runs, each with the later `run-end` fact for its id applied (a delegation the
+    host started: written when it begins, completed when it returns). A run still in flight keeps
+    status "pending"."""
+    records = read_records() if records is None else records
+    ends = {}
+    for r in records:
+        if r.get("kind") == "run-end" and r.get("run_id"):
+            ends[r["run_id"]] = r
+    out = []
+    for r in records:
+        if r.get("kind") != "run":
+            continue
+        end = ends.get(r.get("id"))
+        if end is not None:
+            r = dict(r, **{k: v for k, v in end.items() if k not in ("kind", "run_id", "ts") and v is not None})
+        out.append(r)
+    return out
+
+
 def unjudged_runs(records=None):
+    """Finished runs with no judgement. A run still in flight (status "pending") is not waiting yet."""
     records = read_records() if records is None else records
     judged = {r.get("run_id") for r in records if r.get("kind") == "attempt" and r.get("run_id")}
-    return [r for r in records if r.get("kind") == "run" and r.get("id") not in judged]
+    return [r for r in merged_runs(records) if r.get("id") not in judged and r.get("status") != "pending"]
 
 
 # ---------------------------------------------------------------- candidates
@@ -855,6 +876,40 @@ def mechanism_for(cand, host=None):
     if host and workers_cfg().get("host_cross_provider"):
         return "use the host's cross-provider delegation"
     return "use `sisi delegate` (the host has no delegation of its own for this worker)"
+
+
+def same_model(a, b):
+    """Do two spellings name one model? Equal, or one an alias contained in the other's full name
+    (a short name against a dated id). Neither side may be empty or shorter than three characters."""
+    a, b = str(a or "").strip().lower(), str(b or "").strip().lower()
+    if len(a) < 3 or len(b) < 3:
+        return False
+    a, b = a.rsplit("/", 1)[-1], b.rsplit("/", 1)[-1]
+    return a == b or a in b or b in a
+
+
+def _own_workers(candidates, own_model):
+    return [c["worker"] for c in candidates
+            if own_model and any(same_model(own_model, x) for x in
+                                 [c.get("worker"), c.get("model")] + list(c.get("aliases") or []))]
+
+
+def recommend(kind, difficulty, cwd=None, own_model=None):
+    """The router's pick for a kind of task as (worker, mechanism line, usable_count), reading only
+    the cached discovery and the record, never printing. The session's own model is not offered:
+    delegating to the same model is what orchestration is meant to avoid. (None, None, 0) when no
+    other worker is usable."""
+    records = read_records()
+    candidates, _tools = _cached_candidates(records)
+    candidates, _cold, _x = routable_candidates(candidates, records)
+    prefs = effective_prefs(kind, difficulty, cwd or os.getcwd())
+    candidates, _limited = apply_limits(candidates, prefs)
+    result = routing.choose(candidates, records, read_availability(), kind, difficulty, now=time.time(),
+                            exclude=_own_workers(candidates, own_model), avoid=prefs["avoid"], prefer=prefs["prefer"])
+    choice = result["choice"]
+    if choice is None:
+        return None, None, 0
+    return choice["worker"], mechanism_for(choice), 1
 
 
 def _pct(ok, n):
@@ -1615,7 +1670,7 @@ def _cmd_judge(args):
     records = read_records()
     run_id = args[0] if args and not args[0].startswith("--") else None
     if run_id is not None:
-        run = next((r for r in records if r.get("kind") == "run" and r.get("id") == run_id), None)
+        run = next((r for r in merged_runs(records) if r.get("id") == run_id), None)
         if run is None:
             print("sisi delegate: no delegation run with id %s" % run_id, file=sys.stderr)
             return 1
@@ -1626,10 +1681,14 @@ def _cmd_judge(args):
                "project": os.path.basename(str(run.get("cwd") or "").rstrip("/")) or None,
                "type": run.get("type"), "difficulty": run.get("difficulty"), "worker": run.get("worker"),
                "model": run.get("model"), "tool": run.get("tool"), "outcome": outcome, "check": check,
-               "minutes": None, "tokens": run.get("tokens"), "tokens_class": run.get("tokens_class"),
+               "minutes": run.get("minutes"), "tokens": run.get("tokens"), "tokens_class": run.get("tokens_class"),
                "cost": run.get("cost"), "cost_class": run.get("cost_class"),
                "started": run.get("started"), "ended": run.get("ended"),
                "retry_of": run.get("retry_of"), "note": None}
+        if _opt(args, "--type") or _opt(args, "--kind"):  # a run the host started carries no kind until judged
+            rec["type"] = _opt(args, "--type") or _opt(args, "--kind")
+        if _opt(args, "--difficulty") in ("1", "2", "3"):
+            rec["difficulty"] = int(_opt(args, "--difficulty"))
     else:
         worker = _opt(args, "--worker")
         kind = _opt(args, "--type") or _opt(args, "--kind")

@@ -487,12 +487,36 @@ def _send_back(stop, cwd, c, path, project, profile, info, reasons, miss, failin
     return stop.block(assure.fit(lines), uid, project)
 
 
+def _orchestration_step(payload, action):
+    """Rule 6 at the end of a turn, main thread only: ask once for the judgement of this session's finished
+    delegations (a send-back like any other missing item); when the turn really ends, the meter starts over."""
+    try:
+        from . import orchestration, workers
+        if workers.is_subagent_payload(payload):
+            return None
+        cwd = _cwd(payload)
+        sid = _session_key(payload, cwd)
+        if store.load_session(sid).get("subagent"):
+            return None
+        if action == "allow":
+            text = orchestration.judgement_sendback(payload, sid)
+            if text:
+                return "block", text
+            orchestration.end_turn(sid)
+    except Exception as e:  # the meter must never break the gate
+        store.log_error("gate-orchestration", e)
+    return None
+
+
 def decide(payload):
     """The gate's answer: the contract decision, then — only on an otherwise-clean stop —
     the rule-5 question check, which sends the agent back at most once per final message."""
     action, msg = _decide(payload)
     if action != "allow":
         return action, msg
+    j = _orchestration_step(payload, action)
+    if j:
+        return j
     try:
         from . import questions
         q = questions.sendback(payload)

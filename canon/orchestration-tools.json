@@ -1,0 +1,56 @@
+{
+  "_about": "Host tool names the orchestration meter needs (sisi/orchestration.py). Per host: `delegation` tools start a worker (where the call carries the model and the brief text, as dotted paths into the tool's input); `exempt` tools are never counted as direct work (the question dialog, planning and to-do tools, messaging tools). Any other tool, including one named nowhere here, counts. `refuse` says how the host's before-tool hook refuses a call: `json-deny` prints the host's permission-deny JSON, `exit-2` exits with status 2 and the reason on standard error. `evidence` says how sure this entry is.",
+  "claude-code": {
+    "refuse": "json-deny",
+    "evidence": "observed live (tools/live_orchestration_check.py)",
+    "delegation": {
+      "Task": {"model": "model", "brief": "prompt"},
+      "Agent": {"model": "model", "brief": "prompt"}
+    },
+    "exempt": {
+      "dialog": ["AskUserQuestion"],
+      "planning": ["TodoWrite", "EnterPlanMode", "ExitPlanMode", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskOutput", "TaskStop"],
+      "messaging": ["SendMessage", "SendUserMessage", "PushNotification"]
+    }
+  },
+  "codex": {
+    "refuse": "exit-2",
+    "evidence": "from the host's hook documentation; not run live here",
+    "delegation": {},
+    "exempt": {
+      "dialog": ["request_user_input"],
+      "planning": ["update_plan"],
+      "messaging": []
+    }
+  },
+  "gemini": {
+    "refuse": "exit-2",
+    "evidence": "from the host's hook documentation; not run live here",
+    "delegation": {},
+    "exempt": {
+      "dialog": ["ask_user"],
+      "planning": ["write_todos"],
+      "messaging": []
+    }
+  },
+  "copilot": {
+    "refuse": "exit-2",
+    "evidence": "from the host's hook documentation; not run live here",
+    "delegation": {"task": {"model": "model", "brief": "prompt"}},
+    "exempt": {
+      "dialog": ["ask_user"],
+      "planning": ["update_todo"],
+      "messaging": []
+    }
+  },
+  "cursor": {
+    "refuse": "exit-2",
+    "evidence": "from the host's hook documentation; not run live here",
+    "delegation": {"Task": {"model": "model", "brief": "prompt"}},
+    "exempt": {
+      "dialog": ["AskQuestion"],
+      "planning": ["TodoWrite"],
+      "messaging": []
+    }
+  }
+}

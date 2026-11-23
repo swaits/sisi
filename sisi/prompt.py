@@ -112,6 +112,17 @@ def build_context(query, session=None):
     return text
 
 
+def meter_new_turn(session, cwd, query):
+    """Every prompt the session receives starts the orchestration meter's turn again (and the first one may
+    show the session is a worker). Never raises."""
+    try:
+        if session and query:
+            from . import orchestration
+            orchestration.new_turn(session, cwd, query)
+    except Exception as e:
+        store.log_error("prompt-meter", e)
+
+
 def extract_prompt(payload):
     """The human's request text from a hook payload, across the tools' documented field names."""
     if not isinstance(payload, dict):
@@ -150,6 +161,7 @@ def main(args=()):
                 os.chdir(cwd)
         if not query:
             return 0
+        meter_new_turn(session, os.getcwd(), query)
         text = build_context(query, session=session)
         if not text:
             return 0

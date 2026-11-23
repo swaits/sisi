@@ -88,7 +88,7 @@ class HookToolTests(AdapterBase):
                     self.assertTrue(any("watch --tool %s" % name in (c or "") for c in cmds), (name, ev, cmds))
                 if name == "codex":
                     for ev in events:
-                        self.assertTrue(any(g.get("matcher") == "Bash" for g in obj["hooks"][ev]))
+                        self.assertFalse(any(g.get("matcher") for g in obj["hooks"][ev]), "tool hooks cover every tool")
                 self.assertEqual(self.rows()[name]["status"], "wired")
                 wiring.uninstall()
 

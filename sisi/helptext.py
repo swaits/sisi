@@ -6,7 +6,7 @@ command is printed by `sisi help COMMAND` and `sisi COMMAND --help`.
 
 LONG = {
     'contract': '  sisi contract init [--goal TEXT]   start a work unit: create .sisi/contract.json here (refuses while one is open)\n  sisi contract check                validate the contract (vacuous checks are refused)\n  sisi contract waive [--check ID] "<reason>"\n      record a deviation: a waived check does not pass; the unit closes as a deviation and the report must say so\n  sisi contract trust | untrust      allow / stop allowing this project\'s contract to run commands',
-    'unit': '  sisi unit close [--abandon "<reason>"]\n      archive the unit to .sisi/units/<id>.json with its scorecard; --abandon records why it stopped\n  sisi unit pause "<what it waits for>"\n      record a wait; the turn may end with no demands\n  sisi unit show [ID] | list         print the open unit or an archived record; list this project\'s units',
+    'unit': '  sisi unit close [--abandon "<reason>"]\n      archive the unit to .sisi/units/<id>.json with its scorecard; --abandon records why it stopped\n  sisi unit pause "<what it waits for>"\n      record a wait; the turn may end with no demands\n  sisi unit direct "<reason>"\n      say why doing this work yourself is cheaper than delegating it; a specific reason allows more direct calls this turn and is kept with the unit record\n  sisi unit show [ID] | list         print the open unit or an archived record; list this project\'s units',
     'verify': '  sisi verify [--json]               run the selected fast checks (five statuses; nothing unrun passes); exit 0 ok, 1 failure, 2 no contract, 3 untrusted\n  sisi verify --deep [--background]  run the deep (long) checks; --background detaches and returns at once\n  sisi verify --all | --state        run every check in both tiers; print only the deep-check state (with --json)',
     'gate': "  sisi gate [--tool NAME]            end-of-turn hook (reads hook JSON on stdin; NAME selects the tool's hook shape)",
     'tick': '  sisi tick [--tool NAME]            session-start hook',
@@ -58,7 +58,7 @@ GROUPS = (
     )),
     ("For the agent at work", (
         (("contract",), "contract init|check|waive|trust|untrust", "start, validate and bend the unit's contract"),
-        (("unit",), "unit close|pause|show|list", "close a unit with its scorecard, record a wait, look back"),
+        (("unit",), "unit close|pause|direct|show|list", "close a unit with its scorecard, record a wait, look back"),
         (("risk",), "risk [--json]", "the risk floor of the working-tree change; what it requires"),
         (("verify",), "verify [--deep|--all|--state] [--json]", "run the contract's checks; nothing unrun passes"),
         (("retro",), "retro [--finding F ...|--adopt ID]", "the unit's record; record a finding, with its cause and fix"),

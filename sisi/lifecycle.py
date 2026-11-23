@@ -534,9 +534,25 @@ def post_update():
     except pdata.DataError as e:
         print("sisi update: %s" % e)
         return 1
+    _rewire_existing()
     from . import cli
     print("doctor:")
     return cli.cmd_wiring("doctor")
+
+
+def _rewire_existing():
+    """An installation that exists is brought up to what this version registers (the tool hooks now run for
+    every tool, not only the shell). Idempotent and span-preserving; nothing happens without an installation."""
+    try:
+        from . import wiring
+        if not os.path.exists(wiring._mpath()):
+            return
+        rc, notes = wiring.install()
+        for n in notes:
+            if "hook" in n or rc:
+                print(n)
+    except Exception as e:
+        print("sisi update: re-registering the hooks failed (%r); run `sisi install`" % e)
 
 
 # ---- export / import ------------------------------------------------------------------------------

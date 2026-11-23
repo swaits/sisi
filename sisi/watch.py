@@ -18,7 +18,7 @@ from . import gitutil, paths, store
 
 BEFORE_EVENTS = {"PreToolUse", "BeforeTool", "preToolUse", "beforeShellExecution", "tool_call"}
 AFTER_EVENTS = {"PostToolUse", "AfterTool", "postToolUse", "afterShellExecution",
-                "postToolUseFailure", "tool_result"}
+                "PostToolUseFailure", "postToolUseFailure", "tool_result"}
 SHELL_TOOLS = ("bash", "shell", "command", "terminal", "exec")
 
 
@@ -213,23 +213,69 @@ def commit_notice(payload):
             "`sisi verify` first (a notice, not a block)." % c.get("id"))
 
 
+def meter(payload, after_call, host=None):
+    """The orchestration meter's answer for one tool call ({"deny": text} / {"context": text} / {}); never
+    raises: an error inside the meter lets the call through."""
+    try:
+        from . import orchestration
+        return (orchestration.after if after_call else orchestration.before)(payload, host)
+    except Exception as e:
+        store.log_error("watch-meter", e)
+        return {}
+
+
+def run(payload, args=(), host=None):
+    """One before/after hook call for any tool: the meter first (a refusal skips the rest: the command will
+    not run), then the shell measurement. Returns {"deny": text} or {"context": text} or {}."""
+    _tool, _cmd, ev, _cwd, _sid = extract(payload)
+    out = {}
+    if "--before" in args or ev in BEFORE_EVENTS:
+        out = meter(payload, False, host)
+        if out.get("deny"):
+            return out
+        try:
+            before(payload)
+        except Exception as e:
+            store.log_error("watch", e)
+        try:
+            line = commit_notice(payload)
+            if line:
+                out = dict(out, notice=line)
+        except Exception as e:
+            store.log_error("watch-commit-notice", e)
+    elif "--after" in args or ev in AFTER_EVENTS:
+        out = meter(payload, True, host)
+        try:
+            after(payload)
+        except Exception as e:
+            store.log_error("watch", e)
+    return out
+
+
+def render_claude(out, event):
+    """The Claude Code hook output for a run() result, or None."""
+    if out.get("deny"):
+        return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                  "permissionDecisionReason": out["deny"]}})
+    ctx = "\n".join(x for x in (out.get("context"), out.get("notice")) if x)
+    if not ctx:
+        return None
+    d = {"hookSpecificOutput": {"hookEventName": event, "additionalContext": ctx}}
+    if out.get("notice"):
+        d["systemMessage"] = out["notice"]
+    return json.dumps(d)
+
+
 def main(args=()):
     try:
         from . import gate
         payload = gate._read_payload()
         _tool, _cmd, ev, _cwd, _sid = extract(payload)
-        if "--before" in args or ev in BEFORE_EVENTS:
-            before(payload)
-            try:
-                line = commit_notice(payload)
-                if line:
-                    import sys
-                    sys.stdout.write(json.dumps({"systemMessage": line, "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse", "additionalContext": line}}) + "\n")
-            except Exception as e:
-                store.log_error("watch-commit-notice", e)
-        elif "--after" in args or ev in AFTER_EVENTS:
-            after(payload)
+        out = run(payload, args)
+        text = render_claude(out, "PreToolUse" if ("--before" in args or ev in BEFORE_EVENTS) else "PostToolUse")
+        if text:
+            import sys
+            sys.stdout.write(text + "\n")
     except Exception as e:  # fail open: a tool call must never be held up by measurement
         store.log_error("watch", e)
     return 0
