@@ -5,7 +5,7 @@ policy is empirical and revisable: an unproven worker earns difficulty by its ju
 is persisted so it is not rediscovered), R-16-3 and R-16-7 (a driver file is untrusted input: validated, least
 privilege), R-16-4 (the brief never reaches a shell), R-16-6 (a tool's output is data), R-16-8 (consequential changes
 are recorded), R-16-11 (a learned driver cannot widen permissions: approvals-off waits for the owner)."""
-import json, os, stat, sys, time, unittest
+import json, os, shutil, stat, sys, time, unittest
 from unittest import mock
 
 from support import *
@@ -76,6 +76,9 @@ class DiscoveryCase(SisiCase):
         self.bindir = os.path.join(self.tmp, "sysbin")
         os.makedirs(self.userbin)
         os.makedirs(self.bindir)
+        git = shutil.which("git")
+        if git:  # decisions and the store's history need git; nothing else of the machine's tools is on this PATH
+            os.symlink(git, os.path.join(self.bindir, "git"))
         self.marker = os.path.join(self.tmp, "mark")
         self.argsfile = os.path.join(self.tmp, "args")
         patcher = mock.patch.dict(os.environ, {"PATH": self.userbin + os.pathsep + self.bindir,
@@ -551,15 +554,19 @@ class WaitsForTheOwner(DiscoveryCase):
         self.assertIn("fakeagent --dangerously-skip-permissions -p {prompt}", listing)
         refused = self.sisi("approve", "drv-fakeagent", "--yes")
         self.assertEqual(refused.returncode, 2)
-        self.assertIn("owner in a terminal", refused.stderr)
+        self.assertIn("typed at a terminal", refused.stderr)
         self.assertEqual(discovery.load_drivers()["fakeagent"]["state"], "waiting-owner")
         self.assertEqual(self.runs(), [])
         self.assertEqual(self.sisi("approve", "drv-ghost", "--yes").returncode, 2)
 
     def test_the_owners_yes_runs_the_smoke_task_and_only_then_the_driver_is_usable(self):
         self.bypass()
-        self.write_cfg({"learning": {"agent_relayed_approval": True}})  # stands in for the owner's terminal here
-        r = self.sisi("approve", "drv-fakeagent", "--yes")
+        owner = terminal()  # the owner's own terminal: the full action is shown and the word typed back
+        with owner:
+            r = self.sisi("approve", "drv-fakeagent", "--yes")
+        t = owner.fake
+        self.assertIn("fakeagent --dangerously-skip-permissions -p {prompt}", t.text)
+        self.assertIn("Type the word", t.text)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("PASSED", r.stdout)
         self.assertEqual(discovery.load_drivers()["fakeagent"]["state"], "usable")
@@ -567,8 +574,8 @@ class WaitsForTheOwner(DiscoveryCase):
 
     def test_the_owners_no_removes_the_driver(self):
         self.bypass()
-        self.write_cfg({"learning": {"agent_relayed_approval": True}})
-        self.assertEqual(self.sisi("approve", "drv-fakeagent", "--no").returncode, 0)
+        with terminal():
+            self.assertEqual(self.sisi("approve", "drv-fakeagent", "--no").returncode, 0)
         self.assertEqual(discovery.load_drivers(), {})
         self.assertEqual(self.runs(), [])
 

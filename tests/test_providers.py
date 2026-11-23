@@ -93,7 +93,7 @@ class ProviderCase(TD.DiscoveryCase):
                            limit_signatures=["allowance used up"], tokens_regex=None)
         r = self.sisi("workers", "learn", "multi", "--record", f)
         self.assertEqual(r.returncode, 0, r.stdout)
-        self.write_cfg({"learning": {"agent_relayed_approval": True}, "discovery": {"allowance_timeout_s": 1}})
+        self.write_cfg({"discovery": {"allowance_timeout_s": 1}})
 
     def cands(self):
         return {c["worker"]: c for c in workers.build_candidates()}
@@ -114,7 +114,8 @@ class ProviderCase(TD.DiscoveryCase):
                       *PATHS, *extra)
         self.assertEqual(r.returncode, 0, r.stdout)
         if approve:
-            self.assertEqual(self.sisi("approve", "probe-zai", "--yes").returncode, 0)
+            with terminal():  # the owner's own terminal
+                self.assertEqual(self.sisi("approve", "probe-zai", "--yes").returncode, 0)
         return r
 
 
@@ -381,7 +382,6 @@ class AllowanceProbe(ProviderCase):
         self.assertIn("allowance probe waits for the owner", shown)
         self.sisi("route", "--kind", "read", "--difficulty", "1")
         self.assertEqual(self.q.hits, [], "not one request before the owner approved")
-        self.write_cfg({"discovery": {"allowance_timeout_s": 1}})  # no relay: an agent cannot decide
         self.assertEqual(self.sisi("approve", "probe-zai", "--yes").returncode, 2)
         self.assertEqual(self.q.hits, [])
 

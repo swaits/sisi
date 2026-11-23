@@ -248,7 +248,7 @@ def due_notice(session=None):
     if n >= DUE_AFTER or fl:
         lines.append("sisi: a learning cycle is due (%d proposed learning(s)%s; `sisi cycle` prints the brief)"
                      % (n, ", %d flagged not working" % fl if fl else ""))
-    pend = L.pending_notice()
+    pend = L.pending_notice(waiting_count())
     if pend:
         lines.append(pend)
     return "\n".join(lines)
@@ -1241,14 +1241,47 @@ def park_rule_change(action, reasons):
     return pid
 
 
+def _waiting():
+    """Everything that waits for the owner, of all three kinds, as dicts with "id", "lines" (the full action) and
+    "apply" (yes -> (exit code, text)): a learning change (P-N), a learned driver (drv-NAME), an allowance
+    probe (probe-PROVIDER). One list, one ask."""
+    def one(i):
+        def apply(yes, how, pid=i["id"]):
+            return 0, apply_pending(pid, yes, how)
+        return {"id": i["id"], "lines": describe_pending(i), "apply": apply, "kind": "change", "item": i}
+    out = [one(i) for i in L.load_pending()]
+    try:
+        from . import discovery
+        for w in discovery.waiting_decisions():
+            inner = w["apply"]
+            w["apply"] = lambda yes, how, f=inner: f(yes)
+            out.append(w)
+    except Exception as e:  # a broken listing of drivers must not hide the learning changes
+        from . import store
+        store.log_error("approve-waiting", e)
+    return out
+
+
+def waiting_count():
+    """How many decisions wait for the owner, of all three kinds (the session-start line counts them together)."""
+    n = len(L.load_pending())
+    try:
+        from . import discovery
+        n += discovery.waiting_count()
+    except Exception as e:
+        from . import store
+        store.log_error("approve-count", e)
+    return n
+
+
 def cmd_approve(argv):
-    items = L.load_pending()
+    waiting = _waiting()
     if not argv:
-        if not items:
+        if not waiting:
             print("nothing waits for a decision")
             return 0
-        for i in items:
-            print("\n".join(describe_pending(i)))
+        for w in waiting:
+            print("\n".join(w["lines"]))
             print()
         print("The owner decides, in a terminal: sisi approve ID --yes | --no (and types the word it shows)")
         return 0
@@ -1256,13 +1289,13 @@ def cmd_approve(argv):
     if not yes and "--no" not in argv:
         print("usage: sisi approve [ID --yes | --no]", file=sys.stderr)
         return 2
-    item = next((i for i in items if i.get("id") == pid), None)
+    item = next((w for w in waiting if w["id"] == pid), None)
     tty = _open_terminal()
     relayed = False
     if tty is None:
         if not relay_allowed():
             if item:
-                print("\n".join(describe_pending(item)), file=sys.stderr)
+                print("\n".join(item["lines"]), file=sys.stderr)
             refuse_attempt(pid, "no controlling terminal")
             print("sisi approve: refused. A decision is the owner's, typed at a terminal: this process has no "
                   "controlling terminal (an agent, a script, a pipe). Show the owner what it does (the listing "
@@ -1276,7 +1309,7 @@ def cmd_approve(argv):
                 print("sisi approve: no pending change %r (`sisi approve` lists them)" % pid, file=sys.stderr)
                 return 2
             word = _decision_word()
-            tty.write("\n".join(describe_pending(item)) + "\n\nYou are about to %s %s.\n"
+            tty.write("\n".join(item["lines"]) + "\n\nYou are about to %s %s.\n"
                       % ("APPROVE" if yes else "REFUSE", pid))
             if not _typed_word(tty, word):
                 refuse_attempt(pid, "the word was not typed at the terminal")
@@ -1288,9 +1321,18 @@ def cmd_approve(argv):
                 tty.close()
             except OSError:
                 pass
+    if item is None:
+        print("sisi approve: no pending change %r (`sisi approve` lists them)" % pid, file=sys.stderr)
+        return 2
+    how = {"terminal": tty is not None, "relayed": relayed}
     try:
-        print(apply_pending(pid, yes, {"terminal": tty is not None, "relayed": relayed}))
-        return 0
+        if item["kind"] != "change":  # a change records its own decision inside its transaction (apply_pending)
+            L.record_approval({"id": pid, "decision": "yes" if yes else "no", "ts": L.now(), "kind": item["kind"],
+                               "session": os.environ.get("SISI_SESSION_ID") or None, "terminal": bool(how["terminal"]),
+                               "relayed": "relayed by an agent" if relayed else None, "action": item.get("action")})
+        rc, text = item["apply"](yes, how)
+        print(text, file=sys.stdout if rc == 0 else sys.stderr)
+        return rc
     except (CycleError, overlay.OverlayError, documents.DocumentError) as e:
         print("sisi approve: %s" % e, file=sys.stderr)
         return 2

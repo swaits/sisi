@@ -293,9 +293,8 @@ def main(argv):
         from . import cycle
         return cycle.cmd_cycle(args)
     if cmd == "approve":
-        from . import cycle, discovery
-        handled = discovery.approve_hook(args)  # a learned driver waiting for the owner (ids drv-NAME)
-        return handled if handled is not None else cycle.cmd_approve(args)
+        from . import cycle
+        return cycle.cmd_approve(args)  # learning changes (P-N), learned drivers (drv-NAME), allowance probes (probe-NAME)
     if cmd == "oracle":
         return cmd_oracle()
     if cmd == "risk":

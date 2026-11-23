@@ -126,12 +126,24 @@ def note_shell(sess, cmd, payload):
 
 
 _APPROVE = re.compile(r"(?:^|[\s/;&|(=`$])(?:sisi|sisi\.py|__main__\.py)(?=\s)(?:\s+-{1,2}[\w=-]+)*\s+approve\b([^;&|\n)`]*)")
-_DECISION = re.compile(r"\bP-\d+\b[\s\S]*--(?:yes|no)\b|--(?:yes|no)\b[\s\S]*\bP-\d+\b")
+# what names a change to decide, whatever its kind: P-N (a learning change), drv-NAME (a learned tool),
+# probe-PROVIDER (an allowance probe) or any other word that is not the documentation's own placeholder
+_ID = r"(?:P-\d+|(?:drv|probe)-(?!(?:NAME|PROVIDER|ID|X+)\b)[A-Za-z0-9][\w.-]*)"
+_PLACEHOLDER = re.compile(r"^(?:ID|NAME|PROVIDER|(?:drv|probe|P)-(?:ID|NAME|PROVIDER|N+|X+))$|^\.\.\.$|^\[.*\]$|^<.*>$")
+_DECISION = re.compile(_ID + r"\b[\s\S]*--(?:yes|no)\b|--(?:yes|no)\b[\s\S]*\b" + _ID)
 _FLAG = re.compile(r"--(?:yes|no)\b")
 APPROVE_REFUSED = ("sisi: refused. Approving or refusing a learning change is the owner's alone; an agent does not "
                    "run `sisi approve ID --yes|--no`, however it is wrapped. Show the owner what is waiting (run "
                    "`sisi approve` with no arguments to list it, and show him the listing) and give him the command "
                    "to type himself in a terminal.")
+
+
+def _names_something(args):
+    """Does the first word after `approve` (the id `sisi approve` reads) name a change: any word that is not a
+    flag and not the documentation's placeholder? An id of any shape counts: the refusal does not depend on
+    how it looks."""
+    words = [w for w in args.split() if not w.startswith("-")]
+    return bool(words) and not _PLACEHOLDER.match(words[0])
 
 
 def refuse_self_approval(cmd, sid):
@@ -149,13 +161,13 @@ def refuse_self_approval(cmd, sid):
         # a decision has --yes or --no and names the change: an id, or something a shell would fill in
         # (a variable, a command, a brace); prose that only mentions the command (`sisi approve ID --yes`
         # in a doc, a search pattern) is not an invocation
-        named = bool(re.search(r"\bP-\d+\b", text))
-        hit = any(_FLAG.search(m.group(1)) and (named or re.search(r"[${`]", m.group(1)))
+        named = bool(re.search(r"\b" + _ID, text))
+        hit = any(_FLAG.search(m.group(1)) and (named or re.search(r"[${`]", m.group(1)) or _names_something(m.group(1)))
                   for m in _APPROVE.finditer(text)) \
             or bool(re.search(r"\bsisi\b", text) and _DECISION.search(text))
         if not hit:
             return
-        pid = re.search(r"\bP-\d+\b", text)
+        pid = re.search(_ID, text)
         from . import cycle
         cycle.refuse_attempt(pid.group(0) if pid else "", "an agent's shell command invoked it (refused by the "
                              "before-tool hook)", how="hook", session=sid)

@@ -1,28 +1,5 @@
 {
-  "comment": "Data for sisi/discovery.py: what a host's capability listing and delegation tool look like, which flags switch off approvals, which names are never tools, and which names hint at an agent tool. Names of tools and hosts live here, never in code. Paths are dotted keys into the tool's JSON.",
-  "hosts": [
-    {
-      "host": "t3-code",
-      "capability_tool": "^mcp__t3-code__orchestrator_capabilities$",
-      "delegation_tool": "^mcp__t3-code__delegate_task$",
-      "capability": {
-        "providers": "providers",
-        "provider": "providerInstanceId",
-        "kind": "driverKind",
-        "name": "displayName",
-        "models": "models",
-        "model": "id",
-        "label": "label",
-        "usable": "canRunChildTask",
-        "constraints": "constraints"
-      },
-      "delegation": {
-        "tool_name": "delegate_task",
-        "provider": "target.providerInstanceId",
-        "model": "target.model"
-      }
-    }
-  ],
+  "comment": "Data for sisi/discovery.py: which flags switch off approvals, which names are never tools, and which names hint at an agent tool. A host's own tools (its capability listing and delegation tool, and where the provider and model sit in them) are in canon/orchestration-tools.json, the one description of a host's tools. Names of tools and hosts live in data, never in code. Paths are dotted keys into the tool's JSON.",
   "blocking_constraint_words": ["disabled", "unavailable", "not installed", "not authenticated", "not signed in", "unsupported"],
   "approval_bypass_patterns": [
     "^--?dangerous",

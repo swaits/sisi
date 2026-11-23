@@ -49,6 +49,33 @@ def hosts():
     return _HOSTS
 
 
+def _name_regex(name):
+    """A tool name from the data file as a case-insensitive regular expression: an exact name, or a pattern when
+    it starts with `^`."""
+    n = str(name)
+    return "(?i)" + (n if n.startswith("^") else "^" + re.escape(n) + "$")
+
+
+def reach_specs():
+    """What discovery needs of the hosts' tools, from the same data file the meter reads: one dict per `reach`
+    (the label what is learned is stored under) with "host" (the label), "capability_tool" and "delegation_tool"
+    (regular expressions), "capability" (dotted paths into the listing) and "delegation" ("tool_name", "provider"
+    and "model": dotted paths into the delegation tool's input). A reach lacking either tool is still returned."""
+    out = {}
+    for hd in hosts().values():
+        for name, spec in (hd.get("capability") or {}).items():
+            if isinstance(spec, dict) and spec.get("reach"):
+                r = out.setdefault(spec["reach"], {"host": spec["reach"]})
+                r.update(capability_tool=_name_regex(name), capability={k: v for k, v in spec.items() if k != "reach"})
+        for name, spec in (hd.get("delegation") or {}).items():
+            if isinstance(spec, dict) and spec.get("reach") and spec.get("provider"):
+                r = out.setdefault(spec["reach"], {"host": spec["reach"]})
+                r.update(delegation_tool=_name_regex(name),
+                         delegation={"tool_name": str(name).rsplit("__", 1)[-1], "provider": spec["provider"],
+                                     "model": spec.get("model")})
+    return list(out.values())
+
+
 def host_data(host):
     return hosts().get(host or "claude-code") or {}
 

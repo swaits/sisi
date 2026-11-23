@@ -38,14 +38,22 @@ _DATA = []
 
 
 def data():
-    """canon/discovery.json (names of hosts' tools, flag patterns, hints), read once per process."""
+    """canon/discovery.json (flag patterns, hints) with the hosts' tools from canon/orchestration-tools.json (the one
+    description of a host's tools, read through orchestration.reach_specs), read once per process."""
     if not _DATA:
         try:
             with open(paths.canon("discovery.json"), encoding="utf-8") as f:
                 d = json.load(f)
-            _DATA.append(d if isinstance(d, dict) else {})
+            d = d if isinstance(d, dict) else {}
         except (OSError, ValueError):
-            _DATA.append({})
+            d = {}
+        try:
+            from . import orchestration
+            d = dict(d, hosts=orchestration.reach_specs())
+        except Exception as e:  # no hosts: nothing is learned from a host, the rest of discovery works
+            store.log_error("discovery-hosts", e)
+            d = dict(d, hosts=[])
+        _DATA.append(d)
     return _DATA[0]
 
 
@@ -789,72 +797,57 @@ def waiting_drivers():
     return {n: r for n, r in load_drivers().items() if r.get("state") == "waiting-owner"}
 
 
-def _owner_may_decide(lines):
-    """True when this is the owner's terminal (or the config lets an agent relay a decision); else prints why not."""
-    import sys
-    from . import cycle
-    if cycle._stdin_is_tty() or cycle.relay_allowed():
-        return True
-    print("\n".join(lines), file=sys.stderr)
-    print("sisi approve: refused. A decision must be made by the owner in a terminal: this was run without one "
-          "(an agent, a script, a pipe). Show the owner the text above and give them the line to type.", file=sys.stderr)
-    return False
+def waiting_decisions():
+    """What waits for the owner here, as `sisi approve` lists and decides it: one dict per learned driver
+    (`drv-NAME`) and per allowance probe (`probe-PROVIDER`) with {"id", "kind", "lines" (the full action),
+    "action" (a short record of it for the approvals log), "apply" (a function of yes, True or False, returning
+    (exit code, text))}. The ask itself (the full action shown, the random word typed back at the terminal, the
+    refusals recorded) is cycle.cmd_approve's, the same for every kind; this module only says what is waiting
+    and what each decision does."""
+    out = []
+    for n, r in sorted(waiting_drivers().items()):
+        out.append({"id": "drv-" + n, "kind": "driver", "lines": describe_driver(n, r),
+                    "action": {"action": "approve-driver", "tool": n, "command": list(r["driver"]["run"]),
+                               "bypass": list(r.get("bypass") or [])},
+                    "apply": (lambda yes, n=n: _decide_driver(n, yes))})
+    for n, d in sorted(waiting_probes().items()):
+        out.append({"id": "probe-" + n, "kind": "probe", "lines": describe_probe(n, d),
+                    "action": {"action": "approve-probe", "provider": n,
+                               "command": d.get("command") or d.get("secret_command"), "url": d.get("url")},
+                    "apply": (lambda yes, n=n: _decide_probe(n, yes))})
+    return out
 
 
-def approve_hook(args):
-    """Called first by `sisi approve`. Handles the ids `drv-NAME` (a learned driver) and `probe-PROVIDER` (an
-    allowance probe) and adds both kinds waiting for the owner to the listing. Returns an exit code when it
-    handled the call, None to let the cycle's approvals go on."""
-    import sys
-    from . import learning
-    waiting, probes = waiting_drivers(), waiting_probes()
-    if not args:
-        if not waiting and not probes:
-            return None
-        for n, r in sorted(waiting.items()):
-            print("\n".join(describe_driver(n, r)) + "\n")
-        for n, d in sorted(probes.items()):
-            print("\n".join(describe_probe(n, d)) + "\n")
-        if learning.load_pending():
-            return None
-        print("The owner decides, in a terminal: sisi approve drv-NAME|probe-PROVIDER --yes | --no")
-        return 0
-    if not (args[0].startswith("drv-") or args[0].startswith("probe-")):
-        return None
-    kind, name = args[0].split("-", 1)
-    held = waiting if kind == "drv" else probes
-    yes = "--yes" in args
-    if name not in held:
-        print("sisi approve: nothing named %r waits for a decision" % args[0], file=sys.stderr)
-        return 2
-    if not yes and "--no" not in args:
-        print("usage: sisi approve drv-NAME|probe-PROVIDER --yes | --no", file=sys.stderr)
-        return 2
-    if not _owner_may_decide(describe_driver(name, held[name]) if kind == "drv" else describe_probe(name, held[name])):
-        return 2
-    if kind == "probe":
-        provs = load_providers()
-        if not yes:
-            provs[name].pop("allowance", None)
-            save_providers(provs)
-            print("probe-%s refused; the probe was removed" % name)
-            return 0
-        provs[name]["allowance"]["state"] = "usable"
+def waiting_count():
+    return len(waiting_drivers()) + len(waiting_probes())
+
+
+def _decide_probe(name, yes):
+    provs = load_providers()
+    if not isinstance(provs.get(name, {}).get("allowance"), dict):
+        return 2, "sisi approve: nothing named probe-%s waits for a decision" % name
+    if not yes:
+        provs[name].pop("allowance", None)
         save_providers(provs)
-        print("probe-%s approved; it is read when `sisi workers` is asked and when routing needs it" % name)
-        return 0
+        return 0, "probe-%s refused; the probe was removed" % name
+    provs[name]["allowance"]["state"] = "usable"
+    save_providers(provs)
+    return 0, "probe-%s approved; it is read when `sisi workers` is asked and when routing needs it" % name
+
+
+def _decide_driver(name, yes):
     if not yes:
         forget(name)
-        print("drv-%s refused; the driver was removed" % name)
-        return 0
+        return 0, "drv-%s refused; the driver was removed" % name
     drivers = load_drivers()
+    if name not in drivers:
+        return 2, "sisi approve: nothing named drv-%s waits for a decision" % name
     drivers[name]["state"] = "unverified"
     drivers[name]["approved_at"] = time.time()
     save_drivers(drivers)
     res = prove(name, drivers)
-    print("drv-%s approved. Smoke task: %s" % (name, "PASSED, the driver is usable" if res["ok"] else
-                                              "FAILED (%s): %s" % (res["kind"], res["note"])))
-    return 0 if res["ok"] else 1
+    return (0 if res["ok"] else 1), "drv-%s approved. Smoke task: %s" % (
+        name, "PASSED, the driver is usable" if res["ok"] else "FAILED (%s): %s" % (res["kind"], res["note"]))
 
 
 # ---------------------------------------------------------------- the brief for a cheap worker
@@ -1330,8 +1323,7 @@ def _cmd_allowance(args):
             re.compile(pth[3:])
         else:
             path_values({}, pth)  # raises ValueError for a path it cannot read
-    from . import cycle
-    defn["state"] = "usable" if cycle._stdin_is_tty() else "waiting-owner"
+    defn["state"] = "waiting-owner"  # a probe runs a command or sends a request with a key: only the owner's decision lets it
     defn["defined"] = time.strftime("%Y-%m-%d")
     provs.setdefault(prov, {})["allowance"] = defn
     save_providers(provs)

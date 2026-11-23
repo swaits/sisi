@@ -794,11 +794,13 @@ def approved_ids():
     return {a["id"] for a in load_approvals() if a.get("decision") == "yes" and a.get("id")}
 
 
-def pending_notice():
-    n = len(load_pending())
+def pending_notice(count=None):
+    """The session-start line for decisions waiting for the owner. `count` is every kind together (learning
+    changes, learned drivers, allowance probes: cycle.waiting_count); by default only the learning changes."""
+    n = len(load_pending()) if count is None else count
     if not n:
         return ""
-    return ("sisi: %d learning change(s) wait for the owner's decision. Ask the owner through the host's "
+    return ("sisi: %d change(s) wait for the owner's decision. Ask the owner through the host's "
             "question dialog (`sisi approve` lists each change in full; show the owner what it would do) and give "
             "the owner the command to run in a terminal: `sisi approve ID --yes` or `--no`. "
             "Do not run it for the owner." % n)
