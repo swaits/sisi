@@ -11,7 +11,7 @@ import hashlib, json, os, time
 from . import contract as C, gitutil, harvest, paths, scorecard, store
 from .scorecard import unavailable, val
 
-DELIVERY_STATUSES = ("delivered", "delivered-with-deferred", "deviation", "unverified", "abandoned")
+DELIVERY_STATUSES = ("delivered", "delivered-with-deferred", "deviation", "unverified", "abandoned")  # the five of SPEC 10.3
 
 
 def is_closed(c):
@@ -51,57 +51,77 @@ def fresh_id(base, project):
     return "%s-%d" % (base, n)
 
 
-# ---------------------------------------------------------------- later-wave hooks
-# Each of these is the one small function a later wave calls or replaces. Until then the
-# record carries an honest empty or unavailable value for what they will supply.
+# ---------------------------------------------------------------- sources the record draws on
+
+def _git_diff_text(project, base):
+    import subprocess
+    top = gitutil.root(project)
+    if not top:
+        return ""
+    try:
+        p = subprocess.run(["git", "diff", "--no-ext-diff", base or gitutil.head(top) or gitutil.EMPTY_TREE,
+                            "--", ".", ":(exclude).sisi"], cwd=top, capture_output=True, timeout=10)
+        return p.stdout.decode("utf-8", "replace")[:200000]
+    except Exception:
+        return ""
+
 
 def risk_floor(c, project):
-    """Risk-profile floor from changed paths. Later wave (risk profiles) computes it; a
-    contract already carrying `risk_floor` has that value taken as measured."""
-    if isinstance(c, dict) and c.get("risk_floor"):
-        return val(c["risk_floor"], "measured")
-    return unavailable()
+    """The risk floor from what changed since the unit started (committed or not), by the
+    product's and the project's risk table. Unavailable outside a repository."""
+    ch = _changed_artifacts(c, project)
+    if ch is None:
+        return unavailable(), []
+    try:
+        from . import risk
+        profile, reasons = risk.assess(ch["files"], diff_text=_git_diff_text(project, c.get("base_head")),
+                                       patterns=risk.load_patterns(project))
+        return val(profile, "measured"), list(reasons)
+    except Exception as e:
+        store.log_error("unit-risk-floor", e)
+        return unavailable(), []
 
 
 def retro_findings(c, project):
-    """Retro findings for this unit. Later wave (learning loop) fills these in."""
-    return list(c.get("retro_findings") or []) if isinstance(c, dict) else []
-
-
-def learning_ids(c, project):
-    """Learning records this unit created. Later wave (learning loop) fills these in."""
-    return list(c.get("learning_ids") or []) if isinstance(c, dict) else []
-
-
-def delegations(c, project, t0, t1):
-    """Delegation ledger rows (user store `delegations.jsonl`) inside the unit's window.
-    Rows naming another project are dropped; rows naming none are taken by time alone.
-    Returns (rows, found_the_ledger)."""
-    p = paths.data_file("delegations.jsonl")
-    if not os.path.exists(p):
-        return [], False
-    rows = []
+    """The retro findings recorded for this unit (the learning store holds them)."""
     try:
-        with open(p, encoding="utf-8") as f:
-            lines = f.readlines()
-    except OSError:
-        return [], False
-    for line in lines:
-        try:
-            r = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(r, dict):
-            continue
-        rp = r.get("project") or r.get("cwd")
-        if rp and os.path.realpath(str(rp)) != os.path.realpath(project) \
-                and not str(rp).startswith(project + os.sep):
-            continue
-        t = _row_epoch(r)
-        if t is not None and t0 is not None and not (t0 <= t <= (t1 or t)):
-            continue
-        rows.append(r)
-    return rows, True
+        from . import learning
+        return learning.findings_for_unit(project, c.get("id"))
+    except Exception as e:
+        store.log_error("unit-findings", e)
+        return []
+
+
+def learning_activity(c, project):
+    """(ids of learnings this unit created, count of recurrences it recorded)."""
+    try:
+        from . import learning
+        pk = learning.project_key(project)
+        made, rec = [], 0
+        for r in learning.load_learnings():
+            if r.get("source_unit") == c.get("id") and r.get("origin_project") == pk:
+                made.append(r.get("id"))
+            for pv in r.get("provenance") or []:
+                if isinstance(pv, dict) and pv.get("kind") == "recurrence" \
+                        and pv.get("unit") == c.get("id") and pv.get("project") == pk:
+                    rec += 1
+        return made, rec
+    except Exception as e:
+        store.log_error("unit-learnings", e)
+        return [], None
+
+
+def delegations(project, t0, t1):
+    """The ledger's attempts for this project inside the unit's window, from the orchestration
+    record. The ledger names a project by its folder name. None when it cannot be read."""
+    if t0 is None:
+        return None
+    try:
+        from . import workers
+        return workers.delegations_for_project(os.path.basename(project.rstrip(os.sep)), t0, t1)
+    except Exception as e:
+        store.log_error("unit-delegations", e)
+        return None
 
 
 def _row_epoch(r):
@@ -123,13 +143,15 @@ def policy_version(project, c):
     rulebook = paths.generated()
     if not os.path.exists(rulebook):
         rulebook = paths.canon("core.md")
-    for p in (rulebook, paths.canon("floors.json"), paths.canon("risk.json"),
-              os.path.join(project, ".sisi", "risk.json")):
+    # named by role, never by path: the same policies hash the same in any clone or project
+    for role, p in (("rulebook", rulebook), ("floors", paths.canon("floors.json")),
+                    ("risk table", paths.canon("risk.json")),
+                    ("project risk table", os.path.join(project, ".sisi", "risk.json"))):
         try:
             with open(p, "rb") as f:
-                h.update(p.encode() + b"\0" + f.read() + b"\0")
+                h.update(role.encode() + b"\0" + f.read() + b"\0")
         except OSError:
-            h.update(p.encode() + b"\0missing\0")
+            h.update(role.encode() + b"\0missing\0")
     try:
         from . import cycle
         h.update(json.dumps(cycle.load_enforced(), sort_keys=True, default=str).encode())
@@ -277,25 +299,22 @@ def build_telemetry(c, project, results, t0, t1):
             models = []
     tel["cost"] = unavailable()  # no price facts live here; never estimated from thin air
 
-    rows, have_ledger = delegations(c, project, t0, t1)
-    if not have_ledger:
+    dg = delegations(project, t0, t1)
+    if dg is None:
         for k in ("delegations", "overlapped_delegations", "worker_minutes", "time_in_delegations_s"):
             tel[k] = unavailable()
+        rows = []
     else:
-        tel["delegations"] = val(len(rows), "inferred")
-        mins = [float(r["minutes"]) for r in rows if isinstance(r.get("minutes"), (int, float))]
-        if mins:
-            tel["worker_minutes"] = val(round(sum(mins), 1), "estimated")
-            tel["time_in_delegations_s"] = val(round(sum(mins) * 60, 1), "estimated")
-            ivs = [(_row_epoch(r), float(r["minutes"]) * 60) for r in rows
-                   if _row_epoch(r) is not None and isinstance(r.get("minutes"), (int, float))]
-            over = sum(1 for i in range(len(ivs)) for j in range(i + 1, len(ivs))
-                       if ivs[i][0] < ivs[j][0] + ivs[j][1] and ivs[j][0] < ivs[i][0] + ivs[i][1])
-            tel["overlapped_delegations"] = val(over, "inferred")
+        rows = dg["delegations"]
+        tel["delegations"] = val(dg["count"], "measured")
+        if dg["count"]:
+            tel["worker_minutes"] = val(round(dg["worker_minutes"], 1), "estimated")
+            tel["time_in_delegations_s"] = val(round(dg["wall_minutes"] * 60, 1), "estimated")
+            tel["overlapped_delegations"] = val(dg["overlapping_pairs"], "inferred")
         else:
-            tel["worker_minutes"] = unavailable()
-            tel["time_in_delegations_s"] = unavailable()
-            tel["overlapped_delegations"] = unavailable()
+            tel["worker_minutes"] = val(0, "measured")
+            tel["time_in_delegations_s"] = val(0, "measured")
+            tel["overlapped_delegations"] = val(0, "measured")
 
     changed = _changed_artifacts(c, project)
     tel["files_changed"] = val(len(changed["files"]), "measured") if changed else unavailable()
@@ -310,12 +329,14 @@ def build_telemetry(c, project, results, t0, t1):
         tel["public_surface_touched"] = unavailable()
 
     findings = retro_findings(c, project)
-    learnings = learning_ids(c, project)
+    learnings, recurrences = learning_activity(c, project)
     tel["retro_findings"] = val(len(findings), "measured")
     tel["learnings_created"] = val(len(learnings), "measured")
-    tel["recurrences"] = unavailable()
+    tel["recurrences"] = val(recurrences, "measured") if recurrences is not None else unavailable()
     tel["_models"] = models
-    tel["_delegation_rows"] = rows if have_ledger else []
+    tel["_delegation_rows"] = rows
+    tel["_findings"] = findings
+    tel["_learnings"] = learnings
     tel["_changed"] = changed
     return tel
 
@@ -341,24 +362,87 @@ def _changed_artifacts(c, project):
 
 # ---------------------------------------------------------------- the record
 
-def _latest_results(c, rows):
-    """Latest recorded result per check, plus a synthesized not-run for checks never run.
-    Synthesis is only ever not-run: a check with no record did not pass."""
-    from . import verify as V
-    latest = {}
+def latest_results(c, rows):
+    """The standing result of every check and invariant of the contract, and of the floor and
+    enforced items of the latest fast run. A check with no record gets a synthesized `not-run`:
+    nothing that has no record of running is ever shown as passed. Each entry also says whether
+    the check ever passed in this unit, ever failed, and was waived."""
+    ids = {x["id"] for x in (c.get("checks") or []) + (c.get("invariants") or [])
+           if isinstance(x, dict) and x.get("id")}
+    last_fast = None
     for r in rows:
-        if r.get("item") in ("check", "invariant", "floor", "enforced") and r.get("check"):
-            latest[r["check"]] = {"item": r.get("item"), "id": r["check"], "status": scorecard.norm_status(r.get("status")),
-                                  "reason": r.get("reason"), "duration_s": r.get("duration_s", 0.0),
-                                  "mandatory": r.get("mandatory", True), "seen_failing": r.get("seen_failing"),
-                                  "tier": r.get("tier", "fast"), "tail": ""}
+        if r.get("tier", "fast") == "fast" and r.get("run"):
+            last_fast = r["run"]
+    waived = {d.get("check") for d in (c.get("deviations") or []) if isinstance(d, dict) and d.get("check")}
+    latest, ever_passed, ever_failed = {}, set(), set()
+    for r in rows:
+        cid = r.get("check")
+        if not cid or r.get("item") not in ("check", "invariant", "floor", "enforced"):
+            continue
+        if r["item"] in ("floor", "enforced"):
+            if r.get("run") != last_fast:
+                continue
+        elif cid not in ids:
+            continue  # a check since removed from the contract no longer speaks for it
+        st = scorecard.norm_status(r.get("status"))
+        if st == "passed":
+            ever_passed.add(cid)
+        if st == "failed":
+            ever_failed.add(cid)
+        latest[cid] = {"item": r["item"], "id": cid, "status": st, "reason": r.get("reason"),
+                       "duration_s": r.get("duration_s", 0.0), "mandatory": r.get("mandatory", True),
+                       "tier": r.get("tier", "fast"), "ts": r.get("ts")}
     for x in (c.get("checks") or []) + (c.get("invariants") or []):
         if isinstance(x, dict) and x.get("id") and x["id"] not in latest:
             latest[x["id"]] = {"item": "check", "id": x["id"], "status": "not-run",
                                "reason": "needs human" if x.get("rung") in (5, 6) else "never run",
                                "duration_s": 0.0, "mandatory": x.get("mandatory", True),
-                               "seen_failing": False, "tier": x.get("tier", "fast"), "tail": ""}
-    return list(latest.values())
+                               "tier": x.get("tier", "fast"), "ts": None}
+    out = []
+    for cid, r in latest.items():
+        r["ever_passed"] = cid in ever_passed
+        r["seen_failing"] = cid in ever_failed
+        r["waived"] = cid in waived
+        out.append(r)
+    return out
+
+
+def _justified_by_selection(r):
+    """A check kept back because the change did not touch what it watches, where files it
+    watches exist. A watch that matches no file at all justifies nothing."""
+    return r["status"] == "skipped" and str(r.get("reason") or "").startswith("not affected")
+
+
+def never_run(latest):
+    """Mandatory checks that never ran to a pass in this unit and that nothing justifies
+    skipping. A unit with any of these cannot close as plainly delivered."""
+    out = []
+    for r in latest:
+        if r["item"] not in ("check", "invariant") or not r.get("mandatory", True):
+            continue
+        if r["ever_passed"] or _justified_by_selection(r):
+            continue
+        out.append(r)
+    return out
+
+
+def decide_status(c, rows, abandon=None):
+    """(delivery status or None, blocking, unrun). None with blocking results means the unit
+    cannot close as delivered. A waiver or an abandonment is recorded as what it is."""
+    from . import verify as V
+    latest = latest_results(c, rows)
+    block = V.blocking(latest)
+    unrun = never_run(latest)
+    if abandon is not None:
+        return "abandoned", block, unrun
+    if c.get("deviations"):
+        return "deviation", block, unrun
+    if block:
+        released = any(r.get("check") == "gate" and r.get("status") == "unverified" for r in rows)
+        return ("unverified" if released else None), block, unrun
+    if any(r["status"] == "not-run" for r in latest) or unrun or C.deferred_checks(c):
+        return "delivered-with-deferred", block, unrun
+    return "delivered", block, unrun
 
 
 def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None):
@@ -368,36 +452,42 @@ def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None):
     models = tel.pop("_models")
     delegation_rows = tel.pop("_delegation_rows")
     changed = tel.pop("_changed")
+    findings = tel.pop("_findings")
+    learnings = tel.pop("_learnings")
     ended = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(ended_epoch)) + "Z"
-    latest = _latest_results(c, rows)
-    deferred_ids = [r["id"] for r in latest if r["status"] == "not-run"
-                    and str(r.get("reason") or "").startswith(("deferred", "needs human"))]
+    latest = latest_results(c, rows)
+    unrun = never_run(latest)
+    floor, floor_reasons = risk_floor(c, project)
+    declared = c.get("risk") or {}
     rec = {
         "id": c["id"], "parent": c.get("parent"),
         "goal": c.get("goal"), "scope": c.get("scope") or {"in": [], "out": []},
         "project": project,
         "requirements": c.get("requirements") or [],
         "checks": c.get("checks") or [], "invariants": c.get("invariants") or [],
-        "risk": {"floor": risk_floor(c, project),
-                 "declared": (c.get("risk") or {}).get("profile"),
-                 "why": (c.get("risk") or {}).get("why"),
-                 "blast_radius": (c.get("risk") or {}).get("blast_radius"),
-                 "rollback": (c.get("risk") or {}).get("rollback")},
-        "plan": c.get("plan") or [], "dependencies": c.get("dependencies") or [],
+        "risk": {"floor": floor, "floor_reasons": floor_reasons,
+                 "declared": declared.get("profile"), "why": declared.get("why"),
+                 "blast_radius": declared.get("blast_radius"), "rollback": declared.get("rollback")},
+        "approach": c.get("approach"),
+        "plan": c.get("plan") or [],
         "workers": delegation_rows,
         "models": models, "budgets": c.get("budgets"),
-        "started": c.get("started"), "ended": ended, "telemetry": tel,
+        "started": c.get("started"), "ended": ended, "closed_at": ended, "telemetry": tel,
+        "start_commit": c.get("base_head"),
+        "closing_commit": gitutil.head(project) if gitutil.root(project) else None,
         "changed_artifacts": changed if changed is not None else {"files": [], "lines": None},
-        "summary": c.get("summary"),
         "verification": rows,
-        "deferred": c.get("deferred") or [], "deferred_checks": deferred_ids,
+        "final_verification": latest,
+        "deferred": c.get("deferred") or [],
+        "deferred_checks": [r["id"] for r in latest if r["status"] == "not-run"
+                            and str(r.get("reason") or "").startswith(("deferred", "needs human"))],
+        "never_run_mandatory": [{"id": r["id"], "status": r["status"], "reason": r.get("reason")} for r in unrun],
         "limitations": c.get("limitations") or [], "open_risks": c.get("open_risks") or [],
         "deviations": c.get("deviations") or [], "pauses": c.get("pauses") or [],
         "delivery_status": delivery_status,
         "abandon_reason": abandon_reason,
         "policy_version": policy_version(project, c),
-        "retro_findings": retro_findings(c, project),
-        "learning_ids": learning_ids(c, project),
+        "retro_findings": findings, "learning_ids": learnings,
         "contract": c,
     }
     rec["scorecard"] = scorecard.build_scorecard(c, rows, tel, delivery_status)
@@ -405,12 +495,14 @@ def build_record(c, project, delivery_status, ended_epoch, abandon_reason=None):
 
 
 def summary_line(rec):
+    risk = rec.get("risk") or {}
+    floor = (risk.get("floor") or {}).get("value") if isinstance(risk.get("floor"), dict) else risk.get("floor")
     return {"id": rec["id"], "parent": rec.get("parent"), "project": rec.get("project"),
             "goal": rec.get("goal"), "delivery_status": rec.get("delivery_status"),
-            "risk": {"declared": (rec.get("risk") or {}).get("declared"),
-                     "floor": (rec.get("risk") or {}).get("floor")},
+            "risk": {"declared": risk.get("declared"), "floor": floor},
             "models": rec.get("models") or [], "policy_version": rec.get("policy_version"),
-            "started": rec.get("started"), "ended": rec.get("ended"), "scorecard": rec.get("scorecard")}
+            "started": rec.get("started"), "ended": rec.get("ended"), "closed_at": rec.get("closed_at"),
+            "scorecard": rec.get("scorecard")}
 
 
 def _summary_exists(project, uid):
@@ -419,74 +511,154 @@ def _summary_exists(project, uid):
 
 
 def archive_record(rec, project):
-    """Write the archive with exclusive create. Returns (path, created). An existing
-    archive is left byte-for-byte intact (created=False): records are never overwritten."""
+    """Write the archive so that it appears whole or not at all and is never replaced: the
+    full text goes to a temporary file, which is then hard-linked into place (the link fails
+    if the archive exists). Returns (path, created). An existing archive stays byte for byte."""
     p = archive_path(project, rec["id"])
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    try:
-        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-    except FileExistsError:
-        return p, False
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(rec, f, indent=2)
+    tmp = "%s.tmp%d" % (p, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(rec, f, indent=2, default=str)
         f.write("\n")
-    return p, True
+        f.flush()
+        os.fsync(f.fileno())
+    try:
+        try:
+            os.link(tmp, p)
+        except FileExistsError:
+            return p, False
+        except OSError:  # a filesystem without hard links
+            try:
+                fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            except FileExistsError:
+                return p, False
+            with os.fdopen(fd, "w", encoding="utf-8") as f, open(tmp, encoding="utf-8") as src:
+                f.write(src.read())
+        return p, True
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _capture_case(rec):
+    """Offer the closed unit to the evaluation harness as a benchmark case. Never stops a close."""
+    try:
+        from . import evaluate
+        view = dict(rec)
+        view["fix_commit"] = rec.get("closing_commit")
+        view["request"] = rec.get("goal")
+        evaluate.capture_case(view)
+    except Exception as e:
+        store.log_error("unit-capture-case", e)
 
 
 def close_unit(c, contract_path, project, abandon=None, now=None):
-    """Archive the open unit. Returns (record_or_None, message, ok).
-    Refuses with nothing written when verification blocks and no deviation, deferral
-    outcome, gate release or abandonment accounts for it."""
-    from . import verify as V
+    """Archive the open unit and mark the contract closed. Returns (record_or_None, message, ok).
+    Refuses with nothing written when verification blocks and no deviation, gate release or
+    abandonment accounts for it. Safe to repeat after a crash at any step: an archive that
+    exists is kept as it stands and the remaining steps are completed."""
     ended_epoch = time.time() if now is None else now
     path = archive_path(project, c["id"])
-    already = os.path.exists(path)
-    if already and is_closed(c):
-        return None, "unit %s is already closed (%s); nothing changed" % (c["id"], path), True
-    rows = _unit_results(c, project, c.get("started"))
-    latest = _latest_results(c, rows)
-    gate_released = any(r.get("check") == "gate" and r.get("status") == "unverified" for r in rows)
-    if abandon is not None:
-        status = "abandoned"
-    elif c.get("deviations"):
-        status = "deviation"
-    elif V.blocking(latest):
-        if gate_released:
-            status = "unverified"
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                old = json.load(f)
+        except (OSError, ValueError):
+            old = None
+        if is_closed(c):
+            return None, "unit %s is already closed (%s); nothing changed" % (c["id"], path), True
+        if isinstance(old, dict) and old.get("started") == c.get("started") and old.get("project") == project:
+            rec, created = old, False  # a crash after archiving: complete the close from it
         else:
+            c["id"] = fresh_id(c["id"], project)  # another unit owns this id: never overwrite it
+            path = archive_path(project, c["id"])
+            rec = None
+    else:
+        rec = None
+    if rec is None:
+        rows = _unit_results(c, project, c.get("started"))
+        status, block, _ = decide_status(c, rows, abandon)
+        if status is None:
             bad = ", ".join("%s (%s%s)" % (r["id"], r["status"], ": " + r["reason"] if r.get("reason") else "")
-                            for r in V.blocking(latest))
+                            for r in block)
             return None, ("sisi: unit %s cannot close as delivered: %s. Fix and re-run `sisi verify`, "
                           "record a deviation with `sisi contract waive \"<reason>\"`, or close it with "
                           "`sisi unit close --abandon \"<reason>\"`." % (c["id"], bad)), False
-    elif any(r["status"] == "not-run" for r in latest) or C.deferred_checks(c):
-        status = "delivered-with-deferred"
-    else:
-        status = "delivered"
-    rec = build_record(c, project, status, ended_epoch, abandon_reason=abandon)
-    _, created = archive_record(rec, project)
-    if not created:
-        # a crash after archiving: keep the archived record exactly as it stands
-        try:
-            with open(path, encoding="utf-8") as f:
-                rec = json.load(f)
-        except (OSError, ValueError):
-            pass
+        rec = build_record(c, project, status, ended_epoch, abandon_reason=abandon)
+        _, created = archive_record(rec, project)
+        if created:
+            _capture_case(rec)
     if not _summary_exists(project, rec["id"]):
         store.append("units", summary_line(rec))
     c["status"] = "closed"
     c["ended"] = rec.get("ended")
     c["delivery_status"] = rec.get("delivery_status")
-    try:
-        from . import verify as _V
-        c["closed_fp"] = _V.tree_fp(project, contract_path)
-    except Exception:
-        c["closed_fp"] = None
-    for p in c.get("pauses") or []:
-        if isinstance(p, dict) and not p.get("until"):
-            p["until"] = rec.get("ended")
+    for pz in c.get("pauses") or []:
+        if isinstance(pz, dict) and not pz.get("until"):
+            pz["until"] = rec.get("ended")
     C.save(contract_path, c)
     return rec, "closed unit %s (%s): %s" % (rec["id"], rec.get("delivery_status"), path), True
+
+
+def resume(c, contract_path):
+    """End a recorded wait: the unit is open again and the wait's length is recorded."""
+    if c.get("status") != "paused":
+        return False
+    for pz in c.get("pauses") or []:
+        if isinstance(pz, dict) and not pz.get("until"):
+            pz["until"] = store.now()
+    c["status"] = "open"
+    c.pop("pause_fp", None)
+    C.save(contract_path, c)
+    return True
+
+
+def summary_for_retro(project):
+    """What `sisi retro` prints: the open unit's scorecard so far and what stands out in it."""
+    p = os.path.join(project, C.REL)
+    try:
+        c = C.load(p)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(c, dict) or not c.get("id"):
+        return ""
+    now = time.time()
+    rows = _unit_results(c, project, c.get("started"))
+    latest = latest_results(c, rows)
+    tel = build_telemetry(c, project, rows, harvest.epoch(c["started"]) if isinstance(c.get("started"), str) else None, now)
+    for k in [k for k in tel if k.startswith("_")]:
+        tel.pop(k)
+    card = scorecard.build_scorecard(c, rows, tel, "open")
+    lines = ["unit %s (%s): %s" % (c["id"], c.get("status", "open"), c.get("goal") or ""), ""]
+    for dim, vals in card.items():
+        lines.append(scorecard.format_dimension(dim, vals))
+    out = []
+    seen = [r["id"] for r in latest if r["seen_failing"] and r["status"] == "passed"]
+    if seen:
+        out.append("failed and then passed (the evidence is real): %s" % ", ".join(seen))
+    failing = [r["id"] for r in latest if r["status"] == "failed"]
+    if failing:
+        out.append("still failing: %s" % ", ".join(failing))
+    nr = never_run(latest)
+    if nr:
+        out.append("mandatory checks that never ran to a pass: %s" % ", ".join(r["id"] for r in nr))
+    if c.get("deviations"):
+        out.append("a deviation was recorded: the unit cannot read as delivered")
+    hc = (tel.get("human_corrections") or {}).get("value")
+    if hc:
+        out.append("%s human correction(s) inferred from the transcript" % hc)
+    sb = (tel.get("send_backs") or {}).get("value")
+    if sb:
+        out.append("the gate sent the agent back %s time(s)" % sb)
+    unav = sorted(k for k, v in tel.items() if isinstance(v, dict) and v.get("class") == "unavailable")
+    if unav:
+        out.append("not measurable here (unavailable): %s" % ", ".join(unav))
+    lines += ["", "what stands out:"] + (["  - " + x for x in out] or ["  nothing in the record stands out"])
+    lines += ["", "record each finding with `sisi retro --finding ... --cause ... --impact ... --disposition ...`; "
+                  "then `sisi unit close` archives the unit."]
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------- command
@@ -552,6 +724,7 @@ def cmd_unit(args, cwd=None, out=print):
         else:
             pauses.append({"what": what, "since": store.now(), "until": None})
         c["status"] = "paused"
+        c["pause_fp"] = gitutil.fingerprint(project)  # a change to the tree ends the wait (see gate)
         C.save(p, c)
         out("unit %s paused: %s" % (c.get("id"), what))
         return 0

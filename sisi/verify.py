@@ -149,7 +149,9 @@ def input_fingerprint(c, project, x, files=None, contract_path=None):
     h.update(json.dumps([x.get("cmd"), x.get("expect")], sort_keys=True, default=str).encode())
     wc = x.get("when_changed")
     if not wc:
-        fp = tree_fp(project, contract_path)
+        # the whole tree, but not the contract file: a pause, a note or a status change in the
+        # contract cannot change what a command shows, and must not defeat reuse
+        fp = tree_fp(project, None)
         if fp is None:
             return None
         h.update(fp.encode())
@@ -293,8 +295,6 @@ def run(c, project, deadline=None, default_timeout=60, tiers=("fast",), changed=
             from . import cycle
             extra = cycle.enforced_results(c, project, deadline, default_timeout)
             for r in extra:
-                if r.get("status") == "timeout":
-                    r["status"], r["reason"] = "not-run", "timed out"
                 r.setdefault("reason", None)
                 r.setdefault("mandatory", True)
                 r.setdefault("seen_failing", r.get("status") == "failed")
@@ -433,9 +433,15 @@ def cmd_verify(args, cwd=None, out=print):
     good = ok(results)
     ds = deep.deep_state(c, project, fp)
     saved = time_saved(results)
+    from . import unit as _unit
+    standing = _unit.latest_results(c, _unit._unit_results(c, project, c.get("started")))
+    unproven = [{"id": r["id"], "status": r["status"], "reason": r.get("reason")} for r in _unit.never_run(standing)]
+    if c.get("status") == "paused":
+        _unit.resume(c, path)  # work resumed: the wait is over
     if as_json:
         out(json.dumps({"contract": c["id"], "project": project, "ok": good, "tiers": list(tiers), "fingerprint": fp,
-                        "deep_state": deep.public(ds), "time_saved_s": saved, "results": results}, indent=2))
+                        "deep_state": deep.public(ds), "time_saved_s": saved,
+                        "never_run_mandatory": unproven, "results": results}, indent=2))
     else:
         if results:
             out(format_table(results))
@@ -445,6 +451,14 @@ def cmd_verify(args, cwd=None, out=print):
             waiting = [r["id"] for r in results if r["status"] == "not-run"]
             out("\nOK" + ((" (not run: %s)" % ", ".join("%s %s" % (r["id"], r.get("reason") or "")
                                                           for r in results if r["status"] == "not-run")) if waiting else ""))
+        held_back = [r for r in results if r["status"] in ("skipped", "not-applicable")]
+        if held_back:
+            out("did not run (not a pass): " + "; ".join("%s %s (%s)" % (r["id"], r["status"], r.get("reason") or "")
+                                                          for r in held_back))
+        if unproven:
+            out("no evidence yet: mandatory check(s) never ran to a pass: " +
+                ", ".join("%s (%s)" % (u["id"], u["reason"] or u["status"]) for u in unproven) +
+                "; the unit cannot close as plainly delivered")
         slow = sorted((r for r in results if r["duration_s"] > 0), key=lambda r: -r["duration_s"])[:3]
         if slow:
             out("slowest checks: " + ", ".join("%s %.1fs" % (r["id"], r["duration_s"]) for r in slow))

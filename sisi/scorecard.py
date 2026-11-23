@@ -5,7 +5,7 @@ Missing data is unavailable with value None: never zero, never good. No single s
 ever computed or printed. Check statistics and escape candidates (work declared verified
 that then turned out wrong) live here too: they feed the correctness and intent dimensions.
 """
-import datetime, json, os, re, time
+import json, os, re
 
 from . import harvest, store
 
@@ -24,6 +24,7 @@ def unavailable():
 # ---------------------------------------------------------------- check statistics
 
 MANY_RUNS = 10
+# rows written by earlier versions: neither of these ever meant a pass
 _LEGACY = {"timeout": "not-run", "awaiting-human": "not-run"}
 
 
@@ -40,7 +41,7 @@ def check_stats(results):
         if r.get("verifier"):
             keys.append(("verifier", r["verifier"], byv))
         for _, k, d in keys:
-            s = d.setdefault(k, {"runs": 0, "failures": 0, "timeouts": 0, "not_run": 0,
+            s = d.setdefault(k, {"runs": 0, "failures": 0, "not_run": 0,
                                  "total_s": 0.0, "timed_runs": 0})
             s["runs"] += 1
             if isinstance(r.get("duration_s"), (int, float)) and not isinstance(r.get("duration_s"), bool):
@@ -52,12 +53,11 @@ def check_stats(results):
                 s["failures"] += 1
             elif st == "not-run":
                 s["not_run"] += 1
-                s["timeouts"] += 1  # legacy column name, kept for existing readers
     def fin(d):
         out = []
         for k, s in sorted(d.items()):
             s = dict(s, id=k)
-            s["never_seen_failing"] = s["runs"] >= MANY_RUNS and s["failures"] == 0 and s["timeouts"] == 0
+            s["never_seen_failing"] = s["runs"] >= MANY_RUNS and s["failures"] == 0 and s["not_run"] == 0
             out.append(s)
         return out
     return {"checks": fin(by), "verifiers": fin(byv)}
@@ -139,55 +139,6 @@ def escape_candidates(con, results=None):
     return out
 
 
-# ---------------------------------------------------------------- session trends (weekly)
-
-def iso_week(t):
-    d = datetime.datetime.fromtimestamp(t, datetime.timezone.utc).date()
-    y, w, _ = d.isocalendar()
-    return "%04d-W%02d" % (y, w)
-
-
-def _blank():
-    return {"sessions": 0, "turns": 0, "corrections": 0, "questions": 0, "contract": 0, "claim_sessions": 0, "premature_sessions": 0}
-
-
-def _finish(a):
-    n, t = a["sessions"], a["turns"]
-    return {"sessions": n, "turns_per_session": round(t / n, 2) if n else None,
-            "corrections_per_100": round(100.0 * a["corrections"] / t, 1) if t else None,
-            "questions_per_100": round(100.0 * a["questions"] / t, 1) if t else None,
-            "contract_share": round(a["contract"] / n, 3) if n else None,
-            "premature_done_share": round(a["premature_sessions"] / a["claim_sessions"], 3) if a["claim_sessions"] else None}
-
-
-def _add(a, r):
-    a["sessions"] += 1
-    a["turns"] += r["user_turns"]
-    a["corrections"] += r["n_corrections"]
-    a["questions"] += r["n_question_turns"] + r["n_ask"]
-    a["contract"] += 1 if (r["used_contract"] or r["used_verify"]) else 0
-    if r["n_completion_claims"]:
-        a["claim_sessions"] += 1
-        a["premature_sessions"] += 1 if r["n_premature_done"] else 0
-
-
-def session_trends(con):
-    from . import taskset
-    weeks, repos, wr = {}, {}, {}
-    q = ("SELECT s.t0, s.user_turns, s.n_corrections, s.n_question_turns, s.n_ask, s.used_contract, s.used_verify, "
-         "s.n_completion_claims, s.n_premature_done, g.repo_root FROM sessions s LEFT JOIN groundtruth g ON g.session_id=s.id "
-         "WHERE s.kind='main' AND s.machine=0 AND s.t0 IS NOT NULL")
-    for r in con.execute(q):
-        repo = (r["repo_root"] or "(no repo)").rstrip("/").rsplit("/", 1)[-1]
-        week = iso_week(r["t0"])
-        for table, key in ((weeks, week), (repos, repo), (wr, (week, repo))):
-            _add(table.setdefault(key, _blank()), r)
-    return {"weeks": {k: _finish(v) for k, v in sorted(weeks.items())},
-            "repos": {k: _finish(v) for k, v in sorted(repos.items())},
-            "week_repo": {"%s %s" % k: _finish(v) for k, v in sorted(wr.items())},
-            "tasks": taskset.counts(con)}
-
-
 # ---------------------------------------------------------------- the eight dimensions
 
 def _latest_by_check(results):
@@ -258,7 +209,7 @@ def build_scorecard(c, results, telemetry, delivery_status):
             "delegations": T("delegations"),
             "overlapped_delegations": T("overlapped_delegations"),
             "worker_minutes": T("worker_minutes"),
-            "wall_minutes": T("time_to_validated_completion_s"),
+            "wall_time_s": T("time_to_validated_completion_s"),
         },
         "human_experience": {
             "human_messages": T("human_messages"),
@@ -351,7 +302,7 @@ def trends(units):
         if kind == "model":
             models = u.get("models") or []
             return ", ".join(models) if isinstance(models, list) and models else "(no model recorded)"
-        return u.get("policy_version") or "(none recorded)"
+        return str(u.get("policy_version") or "(none recorded)")[:12]
     out = {}
     for kind in ("project", "risk profile", "model", "policy version"):
         groups = {}
@@ -386,7 +337,15 @@ def _fmt_val(v):
     return str(x)
 
 
-def format_status(units, learning=False, recent=8):
+def format_dimension(dim, vals):
+    shown = ["%s %s (%s)" % (k, _fmt_val(v), v.get("class")) for k, v in vals.items()
+             if isinstance(v, dict) and v.get("class") != "unavailable"]
+    n_un = sum(1 for v in vals.values() if isinstance(v, dict) and v.get("class") == "unavailable")
+    return "  %s: %s%s" % (dim.replace("_", " "), "; ".join(shown) or "nothing recorded",
+                           ("; %d unavailable" % n_un) if n_un else "")
+
+
+def format_status(units, learning=False, recent=5):
     lines = []
     if not units:
         lines.append("sisi status: no closed work units yet. Close one with `sisi unit close`; "
@@ -399,11 +358,7 @@ def format_status(units, learning=False, recent=8):
                                               u.get("delivery_status"), u.get("goal") or ""))
             sc = u.get("scorecard") or {}
             for dim, vals in sc.items():
-                shown = ["%s %s (%s)" % (k, _fmt_val(v), v.get("class")) for k, v in vals.items()
-                         if isinstance(v, dict) and v.get("class") != "unavailable"]
-                n_un = sum(1 for v in vals.values() if isinstance(v, dict) and v.get("class") == "unavailable")
-                lines.append("  %s: %s%s" % (dim.replace("_", " "), "; ".join(shown) or "nothing recorded",
-                                             ("; %d unavailable" % n_un) if n_un else ""))
+                lines.append(format_dimension(dim, vals))
         lines.append("")
         lines.append("trends (median / p95; segments under five units say 'too few'):")
         for kind, segs in trends(units).items():
@@ -417,12 +372,14 @@ def format_status(units, learning=False, recent=8):
                                                   v["n"] if v != "unavailable" else 0)
                              for name, v in m.items()]
                     lines.append("    %-28s %s" % (seg[:28], "; ".join(cells)))
-    # The learning view (`sisi status --learning`: per promoted learning, units since,
-    # recurrences, realization rate) plugs in here with the learning-loop wave.
     if learning:
         lines.append("")
-        lines.append("learning: unavailable -- the learning view lands with the retro and cycle "
-                     "rebuild; until then `sisi lessons` and `sisi cycle status` hold that record.")
+        try:
+            from . import learning as _L
+            lines.append(_L.learning_report())
+        except Exception as e:
+            store.log_error("status-learning", e)
+            lines.append("learning: unavailable (%s)" % e)
     return "\n".join(lines)
 
 

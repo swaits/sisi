@@ -206,12 +206,24 @@ def save_session(sid, rec):
     os.replace(tmp, p)
 
 
+def _transcript_alive(session_file, cutoff):
+    """True when the transcript this session record names was written to since `cutoff`: the
+    session is still going on in the host even though sisi has not touched its record."""
+    try:
+        with open(session_file, encoding="utf-8") as f:
+            tp = json.load(f).get("transcript_path")
+        return isinstance(tp, str) and os.stat(os.path.expanduser(tp)).st_mtime >= cutoff
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def prune_sessions(now=None, active_ids=(), force=False):
     """Remove session-state files older than the configured age. Runs on a counter kept in
     scratch (every Nth session start, first run included), never on a scheduler. Bounded:
     stops after the configured time budget or deletion count, and a later start continues.
-    Never deletes the file of a session named active, nor the file just written for the
-    current session (callers pass its id). Returns the number of files removed."""
+    Never deletes the file of a session named active (callers pass the current session's id)
+    nor of one whose transcript the host has written to within the age. Returns the number
+    of files removed."""
     cfg = config().get("scratch", {})
     d = os.path.join(paths.state(), "sessions")
     counter_file = os.path.join(d, ".prune-counter")
@@ -229,29 +241,38 @@ def prune_sessions(now=None, active_ids=(), force=False):
     except OSError:
         pass
     every = max(1, int(cfg.get("prune_every", 20)))
-    if not force and count % every != 1 % every and count != 1:
-        return 0
+    if not force and (count - 1) % every != 0:
+        return 0  # not this start's turn: the first start and every Nth after it sweep
     now = time.time() if now is None else now
     cutoff = now - float(cfg.get("session_max_age_days", 30)) * 86400
     keep = {safe_id(s) + ".json" for s in active_ids if s}
     budget = float(cfg.get("prune_budget_s", 0.25))
     max_delete = int(cfg.get("prune_max_delete", 1000))
-    removed, deadline = 0, time.time() + budget
+    removed, deadline, unfinished = 0, time.time() + budget, False
     try:
         with os.scandir(d) as it:
             for e in it:
                 if removed >= max_delete or time.time() > deadline:
+                    unfinished = True
                     break
                 if not e.name.endswith(".json") or e.name in keep:
                     continue
                 try:
                     if e.is_file(follow_symlinks=False) and e.stat().st_mtime < cutoff:
+                        if _transcript_alive(e.path, cutoff):
+                            continue  # the host is still writing this session's transcript
                         os.unlink(e.path)
                         removed += 1
                 except OSError:
                     pass
     except OSError:
         pass
+    if unfinished:  # out of budget with files left: the next start continues the sweep
+        try:
+            with open(counter_file, "w", encoding="utf-8") as f:
+                f.write("0")
+        except OSError:
+            pass
     return removed
 
 

@@ -69,8 +69,8 @@ def cmd_tasks(args):
 
 
 def cmd_escapes(args):
-    from . import escapes, harvest
-    rows = escapes.find(harvest.connect())
+    from . import harvest, scorecard
+    rows = scorecard.escape_candidates(harvest.connect())
     if args.json:
         print(json.dumps(rows))
         return 0
@@ -84,17 +84,17 @@ def cmd_escapes(args):
 
 
 def cmd_checks(args):
-    from . import scoreboard
-    st = scoreboard.check_stats(store.read("results"))
+    from . import scorecard
+    st = scorecard.check_stats(store.read("results"))
     if args.json:
         print(json.dumps(st))
         return 0
     for title, key in (("check", "checks"), ("verifier", "verifiers")):
         if not st[key]:
             continue
-        print("%-40s %5s %5s %5s" % (title, "runs", "fail", "tmo"))
+        print("%-40s %5s %5s %5s" % (title, "runs", "fail", "not run"))
         for s in st[key]:
-            print("%-40s %5d %5d %5d%s" % (s["id"][:40], s["runs"], s["failures"], s["timeouts"],
+            print("%-40s %5d %5d %5d%s" % (s["id"][:40], s["runs"], s["failures"], s["not_run"],
                                            "  never seen failing" if s["never_seen_failing"] else ""))
     return 0
 

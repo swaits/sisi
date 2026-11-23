@@ -76,6 +76,7 @@ def skeleton(goal=None, cwd=None):
         "deferred": [],
         "limitations": [],
         "plan": [],
+        "approach": None,
         "status": "open",
         "started": _store.now(),
         "pauses": [],
@@ -275,6 +276,20 @@ def _validate_new_top(c, ids, errs):
                         errs.append("%s.%s must be a non-empty string" % (w, k))
                 if "check" in d and d["check"] is not None and not _str(d["check"]):
                     errs.append(w + ": check must be a check id or null")
+    if "approach" in c and c["approach"] is not None:
+        ap = c["approach"]
+        if not isinstance(ap, dict):
+            errs.append("approach must be an object")
+        else:
+            for k in ap:
+                if k not in ("chosen", "why", "alternatives", "reuses"):
+                    errs.append("approach: unknown key %r" % k)
+            for k in ("chosen", "why"):
+                if k in ap and not _str(ap[k]):
+                    errs.append("approach.%s must be a non-empty string" % k)
+            for k in ("alternatives", "reuses"):
+                if k in ap and (not isinstance(ap[k], list) or not all(_str(x) for x in ap[k])):
+                    errs.append("approach.%s must be a list of non-empty strings" % k)
     if "limitations" in c:
         if not isinstance(c["limitations"], list) or not all(isinstance(x, str) for x in c["limitations"]):
             errs.append("limitations must be a list of strings")

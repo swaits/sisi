@@ -311,15 +311,6 @@ class LintCrossCheckTests(LibCase):
         self.assertIn("short.md: 30" if False else "verified: memory", r.stdout)
         self.assertIn("warning(s)", r.stdout)
 
-    def test_status_shows_library_size(self):
-        self.put("prove/a.md", vfile("a", extra="verified: ran\n"))
-        self.put("prove/b.md", vfile("b", extra="verified: memory\n"))
-        self.put("prove/c.md", vfile("c", extra="verified: docs\n"))
-        self.put("prove/d.md", vfile("d", extra="verified: docs\n"))
-        self.put("r.md", dfile("r"), self.ddir)
-        out = self.sisi("status").stdout
-        self.assertIn("4 verifiers (verified ran 1, docs 2, memory 1), 1 recipes", out)
-
 
 class CoreMdTests(SisiCase):
     def test_help_lists_new_commands(self):

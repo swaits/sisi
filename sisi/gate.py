@@ -641,9 +641,11 @@ def _decide(payload):
         if c is not None and C.is_unedited_skeleton(c):
             path = None  # nothing real written yet: behave as if there is no contract
             sess["req_contract"] = False
-        if c is not None and path and c.get("status") == "paused" and \
-                any(isinstance(p, dict) and not p.get("until") for p in (c.get("pauses") or [])):
-            return "allow", None  # a recorded wait: the turn may end with no demands
+        if c is not None and path and c.get("status") == "paused":
+            from . import unit as _unit
+            if gitutil.root(cwd) is None or c.get("pause_fp") == gitutil.fingerprint(cwd):
+                return "allow", None  # a recorded wait and no new change: the turn ends with no demands
+            _unit.resume(c, path)  # the tree changed since the pause: the wait is over
         if c is not None and path and c.get("status") == "closed":
             path = None  # the unit is archived; new work stands or falls on its own
             sess["req_contract"] = False
