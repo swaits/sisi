@@ -34,15 +34,37 @@ def _union_lines(src, dst):
     return len(add)
 
 
+def _copy_tree(src, dst):
+    """Copy a folder as it is being used by others: a file or folder that disappears during the copy (a git lock
+    file, a temporary file) is not part of what was backed up, and is not an error."""
+    os.makedirs(dst, exist_ok=True)
+    try:
+        names = os.listdir(src)
+    except FileNotFoundError:
+        return
+    for n in names:
+        s, d = os.path.join(src, n), os.path.join(dst, n)
+        try:
+            if os.path.isdir(s):
+                _copy_tree(s, d)
+            else:
+                shutil.copy2(s, d)
+        except FileNotFoundError:
+            continue
+
+
 def _copy_into(src, bdir, rel):
     dst = os.path.join(bdir, rel)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    if os.path.isdir(src):
-        shutil.copytree(src, dst, dirs_exist_ok=True)
-    elif src.endswith(".db"):
-        _sqlite_copy(src, dst)
-    else:
-        shutil.copy2(src, dst)
+    try:
+        if os.path.isdir(src):
+            _copy_tree(src, dst)
+        elif src.endswith(".db"):
+            _sqlite_copy(src, dst)
+        else:
+            shutil.copy2(src, dst)
+    except FileNotFoundError:
+        pass
 
 
 def _sqlite_copy(src, dst):
