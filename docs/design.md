@@ -269,22 +269,27 @@ Learnings recorded by a subagent are held as candidates until the parent's retro
 `sisi learn --withdraw` takes an owner statement recorded by mistake out of delivery while
 keeping it in history.
 
-**Promotion** is the cycle, due by a counter. A cycle turns proposed learnings into
-mechanisms in the user store: an enforced contract requirement, an enforced command check, a
-library entry, a risk-table or routing adjustment, a benchmark case, or rule text. Changes to
-sisi's own code are `tool` learnings: they go to the backlog and the contribution export.
+**Promotion** is the cycle, due by a counter (what a cycle can act on, arrived since the last one). `sisi cycle`
+prints a brief a cheap agent can act on alone (format with an example per action, every value, what happens to
+each kind of action, at most eight learnings, at most 6,000 characters). A cycle turns proposed learnings into
+mechanisms in the user store: an enforced contract requirement, an enforced command check, a library entry, a
+risk-table or routing adjustment, a benchmark case, a sentence added to a rule (`rule-add`) or a whole rule
+(`rule-replace`, the owner's). Changes to sisi's own code are `tool` learnings: status `backlog`, never in a
+brief, they go to the contribution export. `sisi cycle check` runs nothing and lists every problem at once;
 `sisi cycle apply`:
 
-- **validates before promoting**. A command check is replayed on the commits of the unit it
-  came from where they are known (must fail before the fix, pass after). What cannot be
-  replayed is promoted as `unvalidated` and reported as such; it is never called validated.
+- **validates before promoting**. A command check is replayed only between the two commits of the learning's
+  own record (its unit's start and closing commits), in an exported copy of each tree with no history and a
+  reduced environment, and must name a path the fix changed. It must fail before the fix and pass after. What
+  cannot be replayed is `unvalidated`, waits for the owner and is reported as such; it is never called validated.
 - **commits** each change to the user store; revert is exact, as now.
 - **refuses** to touch protected rules (`canon/protected.json`: the non-negotiable
   constraints, verification before done, truthful reporting, this governance). Disabling a
-  rule, widening a scope to everything, or adding a command that runs in every project is
-  consequential: it is stored as pending and takes effect only after the owner's decision
-  (`sisi approve ID --yes|--no`, asked through the host's question dialog). `sisi approve`
-  refuses a decision made without a terminal unless a config setting allows relayed approval.
+  rule, replacing a whole rule, widening a scope to everything, or adding a command that runs in every
+  project is consequential: it is stored as pending (the learning is `pending-approval`) and takes effect
+  only after the owner's decision (`sisi approve ID --yes|--no`, asked through the host's question dialog).
+  `sisi approve` needs the word it prints typed at the controlling terminal, and the before-tool hook refuses an
+  agent's shell command that invokes it.
 - **must act on flagged learnings**: see monitoring.
 
 **Monitoring.** A recurrence after promotion counts against the learning. Two recurrences flag

@@ -97,6 +97,33 @@ def rule_text(r):
     return "## %s\n\n%s\n" % (r["title"], r["body"])
 
 
+def add_to_body(body, add):
+    """The rule's body with the sentence(s) `add` placed before its `Why:` paragraph: on the end
+    of the paragraph just before it (no new line), or as a paragraph of their own when that one is a
+    list. A rule without a Why paragraph gets them at the end."""
+    paras = body.split("\n\n")
+    at = next((i for i in range(len(paras) - 1, -1, -1) if paras[i].lstrip().startswith("Why:")), None)
+    if at is None:
+        at = len(paras)
+    if at == 0:
+        paras.insert(0, add)
+        return "\n\n".join(paras)
+    prev = paras[at - 1]
+    if any(re.match(r"\s*(?:[-*]|\d+[.)])\s", l) for l in prev.splitlines()):
+        paras.insert(at, add)
+    else:
+        paras[at - 1] = prev.rstrip() + " " + add
+    return "\n\n".join(paras)
+
+
+def rule_with_added(rid, add, base=None):
+    """The parsed rule `rid` (from `base`, else the rule in force) with `add` before its Why."""
+    cur = base or next((r for r in effective()[1] if r["id"] == rid), None)
+    if cur is None:
+        raise OverlayError("no rule %r (the brief lists the ids)" % rid)
+    return dict(cur, body=add_to_body(cur["body"], add))
+
+
 def _read(p):
     with open(p, encoding="utf-8") as f:
         return f.read()
@@ -569,6 +596,29 @@ def _lint_new(rel):
         raise OverlayError("the file does not pass `sisi verifiers lint`:\n  " + "\n  ".join(b[len(p) + 2:] for b in bad))
 
 
+def check_entry(kind, text, id=None, replacing=False):
+    """Would put_entry succeed? The same checks, with the overlay put back exactly as it was and
+    nothing committed: a library entry that cannot pass `sisi verifiers lint` is found when the
+    cycle file is checked, not when the owner approves it. Returns the entry id."""
+    from . import pdata
+    id, rel, mine = _put_entry(kind, text, id, replacing)
+    d = lib_dir(kind)
+    existed = os.path.isdir(d)
+    with pdata.lock():
+        snap = _snapshot(d)
+        try:
+            for p in mine:
+                _remove(p)
+            _write(rel, text if text.endswith("\n") else text + "\n")
+            _lint_new(rel)
+        finally:
+            _restore(d, snap)
+            if not existed:
+                import shutil
+                shutil.rmtree(d, ignore_errors=True)
+    return id
+
+
 def put_entry(kind, text, id=None, replacing=False):
     id, rel, mine = _put_entry(kind, text, id, replacing)
     with _txn("overlay: %s %s %s" % ("replace" if replacing else "add", kind, id)):
@@ -746,6 +796,10 @@ def _rule_change_waits(action):
         ok, msg = documents.check_budgets(render_with({rid: parse_rule_file(action["rule_text"], rid)}))
         if not ok:
             raise OverlayError(msg)
+    waiting = cycle._waiting()[1].get(rid)
+    if waiting:
+        raise OverlayError("rule %s already has a change waiting for the owner (%s); a second one waits until that "
+                           "is decided" % (rid, waiting))
     pid = cycle.park_rule_change(action, ["%s %s: changing or disabling an existing rule needs the owner" % (action["action"], rid)])
     print("%s %s waits for the owner: nothing changed. The owner decides in a terminal: `sisi approve %s --yes`"
           % (action["action"], rid, pid))

@@ -38,7 +38,13 @@ def _copy_into(src, bdir, rel):
     dst = os.path.join(bdir, rel)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     if os.path.isdir(src):
-        shutil.copytree(src, dst, dirs_exist_ok=True)
+        try:
+            # lock files are not data, and git's background maintenance removes them while we copy
+            shutil.copytree(src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.lock", "gc.pid"))
+        except shutil.Error as e:
+            # a file that vanished while being copied (git housekeeping in the personal repository) is not a failure
+            if not all(isinstance(x, tuple) and "No such file or directory" in str(x[2]) for x in e.args[0]):
+                raise
     elif src.endswith(".db"):
         _sqlite_copy(src, dst)
     else:
@@ -242,6 +248,7 @@ def run():
         pdata.commit("migrate: move personal data out of the product and the state folder", strict=True)
     notes += pdata.upgrade()
     notes += migrate_learnings()
+    notes += repair_learnings()
     return notes
 
 
@@ -265,6 +272,60 @@ def _jsonl_rows(path):
     except OSError:
         pass
     return rows, bad
+
+
+def repair_learnings():
+    """Repair of a store that was migrated or written by earlier code, run by `sisi update`. It is
+    idempotent: once a store is repaired it finds nothing to do and writes nothing. Only rows that sisi's own commands wrote, as
+    they wrote them, are touched, so a hand-edited row is never laundered into the ledger.
+      - a `proposed` learning that is a change to sisi itself becomes `backlog`;
+      - a `proposed` learning with a decision waiting for the owner becomes `pending-approval`;
+      - an origin project (and a provenance project) that is a linked worktree's path, or the path
+        of a deleted one, becomes the main repository's key, and enforced mechanisms keyed to the
+        old path follow it.
+    Returns notes with the counts."""
+    from . import cycle, learning as L
+    rows = L.load_learnings()
+    ledger = L.load_ledger()
+    waiting = {i.get("learning") for i in L.load_pending() if i.get("learning")}
+    changed, backlog, pend, remapped = [], 0, 0, {}
+    for r in rows:
+        if not L.is_registered(r, ledger):
+            continue
+        did = False
+        if r.get("status") == "proposed":
+            if (r.get("proposed") or {}).get("mechanism") == "tool":
+                r["status"], backlog, did = "backlog", backlog + 1, True
+            elif r["id"] in waiting:
+                r["status"], pend, did = "pending-approval", pend + 1, True
+        old = r.get("origin_project")
+        new = L.normalize_project(old) if old else old
+        if new and new != old:
+            remapped[old] = new
+            r["origin_project"], did = new, True
+        for pv in r.get("provenance") or []:
+            np_ = L.normalize_project(pv.get("project")) if pv.get("project") else pv.get("project")
+            if np_ and np_ != pv.get("project"):
+                pv["project"], did = np_, True
+        if did:
+            changed.append(r)
+    if changed:
+        L.save_learnings(rows, "repair: %d learning record(s) corrected" % len(changed), touched=changed, via="repair")
+    moved = 0
+    for rel, key in (("enforced.json", "checks"), ("risk-adjustments.json", "adjustments"),
+                     ("routing-adjustments.json", "adjustments")):
+        d = cycle._overlay_json(rel, key)
+        hit = [e for e in d.get(key, []) if isinstance(e, dict) and e.get("project") in remapped]
+        if hit:
+            for e in hit:
+                e["project"] = remapped[e["project"]]
+            moved += len(hit)
+            cycle._put_json(rel, d, "repair: %s keyed to the main repository" % rel)
+    if not (changed or moved):
+        return []
+    return ["learning repair: %d tool learning(s) moved to the backlog, %d waiting for a decision marked "
+            "pending-approval, %d project key(s) pointed at the main repository, %d mechanism(s) re-keyed"
+            % (backlog, pend, len(remapped), moved)]
 
 
 def migrate_learnings():
@@ -337,9 +398,12 @@ def migrate_learnings():
         origin = L.normalize_project(old.get("project")) or (prov[0]["project"] if prov else "")
         if not prov:
             prov = [{"unit": "legacy:%s" % lid, "project": origin, "ts": old.get("created") or "", "kind": "origin"}]
-        # an old open lesson waits for a cycle, as before: it stays counted by `sisi cycle due`
+        # an old open lesson waits for a cycle; one that is a change to sisi itself goes to the backlog
+        # (a cycle cannot promote it, so it must never count as waiting for one)
         status = {"applied": "implemented", "retired": "reverted", "open": "proposed"}.get(old.get("status"), "observed")
         kind = old.get("change_kind")
+        if status == "proposed" and kind == "tool":
+            status = "backlog"
         target = str(old.get("target") or "")
         rec = {
             "id": L.next_id(rows), "legacy_id": lid,
@@ -633,6 +697,7 @@ def import_archive(path):
             os.chmod(dst, m.mode & 0o777 or 0o644)
             os.utime(dst, (m.mtime, m.mtime))
     notes += migrate_learnings()
+    notes += repair_learnings()
     notes += pdata.upgrade()
     b = overlay.build_canon()
     notes.append("rulebook rebuilt: %d lines" % b["lines"])

@@ -5,7 +5,7 @@ finding with a disposition. Only the fields the disposition needs are asked for;
 terms, topics and short lines are derived by the tool. A finding that resembles an
 existing learning is attached to it as a recurrence candidate, never refused in a loop.
 """
-import hashlib, json, os, subprocess, sys
+import hashlib, json, os, re, subprocess, sys
 
 from . import learning as L, paths
 
@@ -20,6 +20,16 @@ def _git_head(cwd):
                            text=True, timeout=10)
         return p.stdout.strip() if p.returncode == 0 else None
     except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _unit_start(project):
+    """The commit the open unit started at (base_head in its contract), if known."""
+    try:
+        with open(os.path.join(project, ".sisi", "contract.json"), encoding="utf-8") as f:
+            b = json.load(f).get("base_head")
+        return b if isinstance(b, str) and b else None
+    except (OSError, ValueError, AttributeError):
         return None
 
 
@@ -161,7 +171,7 @@ def cmd_retro(argv, stdin=None):
     replay = None
     head = _git_head(project)
     if head:
-        replay = {"repo": pk, "after": head, "before": None}
+        replay = {"repo": pk, "after": head, "before": _unit_start(project)}
     ts = L.now()
     fid = "F-" + hashlib.sha1(("%s|%s|%s|%s" % (uid, pk, ts, finding)).encode()).hexdigest()[:8]
     f = {"id": fid, "unit": uid, "project": pk, "ts": ts, "finding": L.scrub_secrets(finding),
@@ -195,16 +205,17 @@ def cmd_retro(argv, stdin=None):
 
 
 def cmd_lessons(argv):
-    """sisi lessons [show ID] [--json] — list learning records. No digest; see status --learning."""
+    """sisi lessons [ID | show ID] [--json] — list learning records, or show one. No digest; see status --learning."""
     rows = L.load_learnings()
     if argv and argv[0] == "digest":
         print("sisi lessons: digest is retired; `sisi status --learning` is the one report",
               file=sys.stderr)
         return 2
-    if argv and argv[0] == "show" and len(argv) > 1:
-        r = L.get(rows, argv[1])
+    if argv and (re.fullmatch(r"L-\d+", argv[0]) or (argv[0] == "show" and len(argv) > 1)):
+        lid = argv[0] if argv[0] != "show" else argv[1]
+        r = L.get(rows, lid)
         if r is None:
-            print("no learning %r" % argv[1], file=sys.stderr)
+            print("no learning %r" % lid, file=sys.stderr)
             return 2
         print(json.dumps(r, indent=2, sort_keys=True))
         return 0

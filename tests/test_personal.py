@@ -66,7 +66,7 @@ class PersonalCase(SisiCase):
         r = self.ok(*a, **kw)
         self.assertTrue(L.load_pending(), "the change should be waiting for the owner")
         for item in L.load_pending():
-            with unittest.mock.patch("sisi.cycle._stdin_is_tty", return_value=True):
+            with terminal():
                 self.ok("approve", item["id"], "--yes")
         return r
 

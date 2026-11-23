@@ -1,39 +1,37 @@
 """The learning cycle: proposed learnings become mechanisms in the user store.
 
-Due by a counter (no scheduler). A worker writes a cycle file; `sisi cycle apply FILE`
-treats it as untrusted input, validates and plans everything before writing anything,
-replays command checks against the originating unit's commits in a temporary worktree
-(one replay implementation: evaluate.validate_command), refuses protected rules, parks
-consequential changes for the owner (`sisi approve`), and commits each change to the user
-store so revert is exact. What cannot be replayed is `unvalidated` and always reported as
-such; nothing is labelled `validated` without a validation run that passed.
+Due by a counter (no scheduler): learnings a cycle can act on (`proposed`, not tool changes, not
+waiting for the owner). `sisi cycle` prints a brief a small agent can act on alone: the file format
+with an example per action, every enumerated value, what each kind of action does, and at most
+eight learnings with statement, origin and whether commits are recorded, in at most 6000
+characters. The agent writes a cycle file. `sisi cycle check FILE` runs nothing and lists every
+problem at once; `sisi cycle apply FILE` treats the file as untrusted input, validates and plans
+everything before writing anything, replays command checks (one replay implementation:
+evaluate.validate_command) only between the two commits the learning's own record holds, in an
+exported copy of each tree with no history and a reduced environment, refuses protected rules,
+parks consequential changes for the owner (`sisi approve`, which needs the word typed at the
+terminal), and commits each change to the user store so revert is exact. What cannot be replayed is
+`unvalidated` and always reported as such; nothing is labelled `validated` without a validation run
+that passed.
 
 What a mechanism reaches is decided here from the learning, never from the cycle file: a
 mechanism is written with the learning's id and the scope the learning has *earned*
 (learning.earned_scope: its origin project, unless it was seen in two units in two projects or
 is an owner statement made at user scope). A scope or `every_project` flag in the file is only
 a request for more; a request for more than the learning has earned, any enforced command that
-is not proven in its origin project, any risk pattern that lowers a profile, any replacement or
-disabling of a rule, and any rule or library entry from a learning confined to one project
-wait for the owner. Readers filter by project; nothing reads a flag the cycle author wrote.
+is not proven in its origin project, any risk pattern that lowers a profile, any whole-rule
+replacement or disabling of a rule, any sentence added to a rule or library entry from a learning
+confined to one project, and any mechanism for a project that no longer exists wait for the owner.
+Readers filter by project; nothing reads a flag the cycle author wrote.
 
-Cycle file (JSON):
-  {"base": "<store base from `sisi cycle` brief>", "actions": [
-    {"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check",
-     "cmd": "...", "expect": {"exit": 0}, "before": "<sha>", "after": "<sha>"},
-    {"action": "promote", "learning": "L-0002", "mechanism_kind": "contract-requirement",
-     "when": "csv import", "require_kind": "property"},
-    {"action": "promote", "learning": "L-0003", "mechanism_kind": "rule-text",
-     "rule_id": "new-rule", "rule_text": "## Title {#new-rule}\\n\\n... Why: ..."},
-    {"action": "promote", "learning": "L-0004", "mechanism_kind": "library",
-     "library_kind": "recipe"|"verifier", "entry_text": "..."},
-    {"action": "promote", "learning": "L-0005", "mechanism_kind": "risk",
-     "pattern": "src/auth/**", "profile": "critical"},
-    {"action": "promote", "learning": "L-0006", "mechanism_kind": "routing",
-     "kind": "impl", "difficulty": 2, "prefer": "worker-x"},
-    {"action": "promote", "learning": "L-0007", "mechanism_kind": "benchmark",
-     "name": "csv-import", "case": {"...": "..."}},
-    {"action": "revise"|"revert"|"reject", "learning": "L-0008", "why": "..."}]}
+A learning waiting for the owner is `pending-approval`; a change to sisi itself is `backlog` (it
+goes out with `sisi promote --export`). Neither is in a brief or counts towards "due".
+
+Actions (the brief carries a filled example of each): promote with mechanism_kind
+command-check, contract-requirement (`when` is a risk profile or a path glob), rule-add (one or
+two sentences before a rule's Why, naming what it shortens), rule-replace (the whole rule, always
+the owner's), library, risk, routing, benchmark; reject (a specific reason), merge (into another
+learning), revise, revert; disable-rule.
 
 Mechanism data files (user store overlay); every entry carries learning, scope, project:
   enforced.json {"checks": [{"type": "command"|"contract-requirement", "learning": id, ...}]}
@@ -45,10 +43,11 @@ import copy, difflib, json, os, re, sys, time
 
 from . import documents, evaluate, learning as L, overlay, paths, pdata
 
-DUE_AFTER = 5  # proposed learnings waiting make a cycle due (a counter, checked in normal use)
-MECHANISM_KINDS = ("contract-requirement", "command-check", "library", "rule-text",
+DUE_AFTER = 5  # new learnings a cycle can act on make a cycle due (a counter, checked in normal use)
+DUE_AFTER_DAYS = 14  # or, this long after the last cycle, the ones it left alone
+MECHANISM_KINDS = ("contract-requirement", "command-check", "library", "rule-add", "rule-replace",
                    "risk", "routing", "benchmark")
-GLOBAL_KINDS = ("rule-text", "library")  # they change what every project loads: reach is `user`
+GLOBAL_KINDS = ("rule-add", "rule-replace", "library")  # they change what every project loads: reach is `user`
 # What a cycle changes on a learning record; revert restores exactly these fields, so records
 # and findings written after the cycle survive a revert.
 CYCLE_FIELDS = ("status", "validation", "mechanism_ref", "mechanism_scope", "promoted_at",
@@ -145,11 +144,21 @@ def load_enforced(project=None):
     return [c for c in checks if entry_applies(c, project, auth)]
 
 
-def _requirement_met(c, entry):
+def _requirement_met(c, entry, project=None):
+    """Does the contract meet this requirement? It applies only when its `when` triggers: a risk
+    profile (the contract declares that profile or a higher one) or a path glob (the unit changed a
+    path matching it). A `when` that is neither never triggers (free text nothing evaluates)."""
+    from . import risk
     want, when = entry.get("require_kind"), str(entry.get("when") or "")
-    w = L.stems(when)
-    trig = any(ch.get("kind") == when or (w & L.stems((ch.get("claim") or "") + " " + (ch.get("id") or "")))
-               for ch in c.get("checks", []) if isinstance(ch, dict)) or bool(w & L.stems(c.get("goal") or ""))
+    if when in risk.PROFILES:
+        declared = (c.get("risk") or {}).get("profile")
+        trig = declared in risk.PROFILES and risk._ORDER[declared] >= risk._ORDER[when]
+    elif when_is_evaluable(when):
+        from . import verify as V
+        files = V.changed_paths(c, project) if project else None
+        trig = files is None or any(risk._glob_match(f, when) for f in files)
+    else:
+        trig = False
     if not trig:
         return True
     max_rung = entry.get("max_rung")
@@ -171,7 +180,7 @@ def enforced_results(c, project, deadline=None, default_timeout=60):
         base = {"item": "enforced", "tier": "fast", "id": "enforced:learning-%s" % lid, "kind": None,
                 "rung": None, "claim": "enforced learning %s" % lid, "duration_s": 0.0, "tail": ""}
         if e.get("type") == "contract-requirement":
-            if not _requirement_met(c, e):
+            if not _requirement_met(c, e, project):
                 msg = ("enforced learning %s: a contract touching %r must contain a check of kind %s"
                        % (lid, e.get("when"), e.get("require_kind")))
                 out.append(dict(base, status="failed", claim=msg, tail=msg))
@@ -188,22 +197,55 @@ def enforced_results(c, project, deadline=None, default_timeout=60):
 # ---- due-ness (a counter, checked during normal use) ----------------------------
 
 def proposed(rows=None):
+    """The learnings a cycle can act on now: proposed, written by sisi's own commands, not a
+    subagent's candidate, and not a change to sisi itself (those are on the backlog and go out with
+    `sisi promote --export`). A learning waiting for the owner is `pending-approval`, not this."""
     rows = L.load_learnings() if rows is None else rows
     ledger = L.load_ledger()
     return [r for r in rows if r.get("status") == "proposed" and not r.get("candidate")
-            and L.is_registered(r, ledger)]
+            and (r.get("proposed") or {}).get("mechanism") != "tool" and L.is_registered(r, ledger)]
+
+
+def _age_days(ts):
+    import calendar
+    try:
+        return (time.time() - calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))) / 86400.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _num(lid):
+    m = re.match(r"L-(\d+)$", str(lid))
+    return int(m.group(1)) if m else 0
+
+
+def due_count(rows=None):
+    """How many learnings make a cycle due: those a cycle can act on that arrived since the last
+    cycle ran (a brief shows only a few, so what it left alone does not make the next cycle due by
+    itself), or, once the last cycle is DUE_AFTER_DAYS old, everything still waiting. Every
+    learning waiting is in the next brief, oldest first, whenever it runs."""
+    pr = proposed(rows)
+    done = [r for r in cycle_records() if not r.get("reverted") and r.get("ts")]
+    if not done:
+        return len(pr)
+    lastrec = max(done, key=lambda r: r["ts"])
+    last = lastrec["ts"]
+    if lastrec.get("learning_max"):  # ids only grow: what has a higher number arrived after the cycle
+        new = [r for r in pr if _num(r["id"]) > lastrec["learning_max"]]
+    else:
+        new = [r for r in pr if str(r.get("created") or "") > last]
+    if len(new) < DUE_AFTER and len(pr) >= DUE_AFTER and _age_days(last) >= DUE_AFTER_DAYS:
+        return len(pr)
+    return len(new)
 
 
 def due_notice(session=None):
     """Session-start lines: a cycle is due, and/or a decision waits for the owner. The callers
     (tick, the gate) catch and log a failure; it is not hidden here."""
-    n = len(proposed())
+    n = due_count()
     fl = len(L.flagged())
     lines = []
-    # The user's config can silence the request to run a cycle (learning.cycle_notice: false).
-    from . import store
-    notice = (store.config().get("learning") or {}).get("cycle_notice", True)
-    if notice and (n >= DUE_AFTER or fl):
+    if n >= DUE_AFTER or fl:
         lines.append("sisi: a learning cycle is due (%d proposed learning(s)%s; `sisi cycle` prints the brief)"
                      % (n, ", %d flagged not working" % fl if fl else ""))
     pend = L.pending_notice()
@@ -212,49 +254,146 @@ def due_notice(session=None):
     return "\n".join(lines)
 
 
+BRIEF_MAX_LEARNINGS = 8
+BRIEF_MAX_CHARS = 6000
+STATEMENT_MAX = 600  # a longer statement is cut, with the command that shows it whole
+
+FORMAT = """Write one JSON file, then run `sisi cycle check FILE` (runs nothing; lists every problem at once) and
+`sisi cycle apply FILE`. Never run `sisi approve`: only the owner decides what waits.
+{"base": "@BASE@", "actions": [ one action per learning below; leave a learning out to leave it ]}
+Actions (L-0000 stands for an id listed below):
+ {"action":"promote","learning":"L-0000","mechanism_kind":"command-check","cmd":"grep -q fixed f.txt","expect":{"exit":0}}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"contract-requirement","when":"src/auth/**","require_kind":"parsing"}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"rule-add","rule_id":"deliver-fast","add":"One or two sentences.","shortens":"nothing: <why>"}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"rule-replace","rule_id":"deliver-fast","rule_text":"## Title {#deliver-fast}\\n\\nBody.\\n\\nWhy: ...","shortens":"..."}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"library","library_kind":"recipe","entry_text":"---\\nid: x\\ntitle: T\\napplies_to: when\\n---\\n## Done means\\n- ...\\n## Checks\\n- `verifier-id`\\n## Common false finishes\\n- ..."}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"risk","pattern":"src/auth/**","profile":"critical"}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"routing","kind":"impl","difficulty":2,"prefer":"worker-x"}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"benchmark","name":"csv-import","case":{...}}
+ {"action":"reject","learning":"L-0000","why":"names the evidence: the retry loop in sync.py was already removed"}
+ {"action":"merge","learning":"L-0000","into":"L-9999","why":"same cause"}   {"action":"revise"|"revert","learning":"L-0000","why":"..."}
+Values: mechanism_kind @KINDS@; risk profile @PROFILES@; require_kind @REQKINDS@;
+ library_kind recipe|verifier (Checks may cite only ids `sisi verifiers` lists); difficulty 1|2|3;
+ when = a risk profile (that or higher) or a path glob.
+A command check: cmd must name a path the fix changed; apply replays it in a copy of the tree without .git, between the
+ commits recorded for the learning (never ones you write): it must fail at the start and pass at the end. No commits: it waits.
+Takes effect at once: reject, merge, revise, revert; risk (not lowering), routing, benchmark, contract-requirement; a replayed
+ command check; rule-add and library only from a learning seen in 2 units in 2 projects.
+Held for the owner: rule-replace, disable-rule, rule-add or library from a one-project learning, a command check that was not
+ replayed, risk that lowers a profile, scope beyond what was earned, a project gone from disk.
+Refused (whole file, every reason listed): a rule not in the list below (protected), a vacuous or failed replay, a generic reject reason,
+ a learning acted on twice or already waiting, a rule with a change waiting, a rulebook over @BUDGET@, a flagged learning left out.
+Rules you may change (id): @RULES@. Rulebook now @SIZE@. Adding to it means naming what it shortens, or "nothing: <why>".
+"""
+
+
+def _learning_block(r):
+    pr = r.get("proposed") or {}
+    prov = r.get("provenance") or []
+    units = len({p.get("unit") for p in prov})
+    projects = len({p.get("project") for p in prov})
+    stmt = " ".join(str(pr.get("description") or r.get("title") or "").split())
+    if len(stmt) > STATEMENT_MAX:
+        stmt = stmt[:STATEMENT_MAX].rstrip() + " ... (`sisi lessons %s` shows it whole)" % r["id"]
+    commits = "yes" if L.replay_commits(r) else "no"
+    lines = ["- %s [%s; earned scope %s; seen in %d unit(s), %d project(s)]" % (
+        r["id"], pr.get("mechanism") or "policy", L.earned_scope(r), units, projects),
+        "  statement: %s" % stmt,
+        "  origin: %s, unit %s, commits recorded: %s" % (os.path.basename(str(r.get("origin_project") or "").rstrip("/")) or "?",
+                                                        r.get("source_unit") or "?", commits)]
+    if r.get("expected_effect"):
+        lines.append("  expected effect: %s" % " ".join(str(r["expected_effect"]).split())[:160])
+    return "\n".join(lines)
+
+
+def _rank(rows):
+    """The most recurrent first, then the oldest; flagged learnings (which the cycle must act on) lead."""
+    def key(r):
+        prov = r.get("provenance") or []
+        return (0 if r.get("flagged_not_working") else 1, -len({p.get("unit") for p in prov}), str(r.get("created") or ""),
+                r["id"])
+    return sorted(rows, key=key)
+
+
+def format_text(base):
+    from . import risk, contract as _contract
+    rules = overlay.effective()[1]
+    prot = protected_rules()
+    ids = ", ".join(r["id"] for r in rules if r["id"] not in prot)
+    lines, chars = _book_size()
+    return (FORMAT.replace("@BASE@", base).replace("@KINDS@", "|".join(MECHANISM_KINDS))
+            .replace("@PROFILES@", "|".join(risk.PROFILES)).replace("@REQKINDS@", "|".join(_contract.KINDS))
+            .replace("@BUDGET@", "%d lines/%d characters" % (overlay.MAX_LINES, overlay.MAX_CHARS))
+            .replace("@RULES@", ids).replace("@SIZE@", "%d lines/%d characters" % (lines, chars)))
+
+
 def brief_text():
+    """The whole brief for a cheap agent working alone: the file format with one example per action,
+    every enumerated value, what happens to each kind of action, and at most BRIEF_MAX_LEARNINGS
+    learnings (flagged first, then the most recurrent, then the oldest), each with its statement,
+    origin project, source unit and whether commits are recorded, in at most BRIEF_MAX_CHARS."""
     rows = L.load_learnings()
     changed = L.monitor(rows)
     if changed:
         L.save_learnings(rows, "monitoring: %d learning(s) now monitored" % len(changed), touched=changed, via="cycle")
-    lines = ["Learning cycle brief. Base: %s" % L.store_base(rows), "",
-             "Write one cycle file (JSON, format in `sisi cycle help`) turning proposed "
-             "learnings into mechanisms. Prefer an executable mechanism over rule text. "
-             "A command check is replayed against its unit's commits and must fail before "
-             "the fix and pass after (the repository must be trusted and the command must exist "
-             "at both commits). A mechanism reaches only the scope its learning has earned; "
-             "anything wider, any command that is not proven, any replaced or disabled rule "
-             "waits for the owner. Protected rules (canon/protected.json) cannot be touched.", ""]
-    for r in proposed(rows):
-        lines.append("- %s [%s] %s (earned scope: %s)\n  change: %s\n  expect: %s  validate: %s"
-                     % (r["id"], r.get("proposed", {}).get("mechanism"), r.get("title"), L.earned_scope(r),
-                        r.get("proposed", {}).get("description"), r.get("expected_effect"),
-                        (r.get("validation") or {}).get("method")))
-    for r in L.flagged(rows):
-        lines.append("- %s FLAGGED NOT WORKING (%d recurrences since promotion): this cycle "
-                     "must revise or revert it." % (r["id"], r.get("recurrences_after_promotion", 0)))
-    return "\n".join(lines) + "\n"
+    base = L.store_base(rows)
+    flagged = {r["id"] for r in L.flagged(rows)}
+    todo = _rank([r for r in proposed(rows) if r["id"] not in flagged] + L.flagged(rows))
+    if not todo:
+        backlog = sum(1 for r in rows if r.get("status") == "backlog")
+        waiting = sum(1 for r in rows if r.get("status") == "pending-approval")
+        return ("Learning cycle brief: no learning a cycle can act on (%d on the backlog for sisi itself, %d waiting "
+                "for the owner). Nothing to write.\n" % (backlog, waiting))
+    text = "Learning cycle brief.\n" + format_text(base)
+    blocks, left = [], 0
+    for r in todo[:BRIEF_MAX_LEARNINGS]:
+        if r["id"] in flagged:
+            blk = "- %s FLAGGED NOT WORKING (%d recurrences since promotion): act on it with revise or revert." % (
+                r["id"], r.get("recurrences_after_promotion", 0))
+        else:
+            blk = _learning_block(r)
+        if len(text) + sum(len(b) + 1 for b in blocks) + len(blk) + 120 > BRIEF_MAX_CHARS:
+            left += 1
+            continue
+        blocks.append(blk)
+    left += max(0, len(todo) - BRIEF_MAX_LEARNINGS)
+    out = text + "Learnings (%d of %d; the most recurrent first, then the oldest):\n" % (len(blocks), len(todo)) \
+        + ("\n".join(blocks) if blocks else "(none a cycle can act on)") + "\n"
+    if left:
+        out += "%d more wait for the next cycle.\n" % left
+    return out
 
 
 # ---- replay validation (one implementation: evaluate.validate_command) -----------------
 
-def replay_validate(rec, action):
+def replay_validate(rec, action, run=True):
     """(result, detail): `validated` only when the command ran and failed before the fix and ran
-    and passed after it, in the learning's own, trusted project; `unvalidated` (with the reason)
-    when it could not be shown; `failed` when it ran and did not behave so."""
+    and passed after it, in the learning's own, trusted project, between the two commits the
+    learning's OWN record holds (its unit's start and closing commits, or the ones stored with the
+    finding). Commits, repository and project named in the cycle file are ignored. `unvalidated`
+    (with the reason) when it could not be shown; `failed` when it ran and did not behave so;
+    `vacuous` when the command names no path that differs between the two trees. With run=False
+    nothing is executed (the preflight only): the result is `unvalidated` unless it is refused."""
     cmd = action.get("cmd") or ""
     exp = (action.get("expect") or {}).get("exit", 0)
-    replay = rec.get("replay") or {}
-    repo = L.normalize_project(action.get("repo") or replay.get("repo") or rec.get("origin_project"))
-    before = action.get("before") or replay.get("before")
-    after = action.get("after") or replay.get("after")
-    if not (repo and before and after and cmd):
-        return "unvalidated", "no before/after commits are known, so the command was never replayed"
-    if repo != rec.get("origin_project"):
-        return "unvalidated", "the repository is not this learning's origin project; no replay was run"
+    commits = L.replay_commits(rec)
+    repo = rec.get("origin_project")
+    if not (repo and commits and cmd):
+        return "unvalidated", ("no commits are recorded for this learning (its unit %s has no start and closing "
+                               "commit, and the finding stored none), so the command was never replayed"
+                               % rec.get("source_unit"))
+    before, after, where = commits
+    if not run:
+        stop = evaluate.replay_preflight(repo, before, after, cmd)
+        if stop and stop["outcome"] == "vacuous":
+            return "vacuous", stop["reason"]
+        return "unvalidated", ("`check` runs nothing; `apply` replays it between the commits in %s"
+                               % where if not stop else "not replayable: %s" % stop.get("reason"))
     out = evaluate.validate_command(repo, before, after, cmd, exp)
     if out["outcome"] == "validated":
-        return "validated", "replay: failed at %s, passed at %s" % (str(before)[:12], str(after)[:12])
+        return "validated", "replay: failed at %s, passed at %s (commits from %s)" % (before[:12], after[:12], where)
+    if out["outcome"] == "vacuous":
+        return "vacuous", out.get("reason")
     if out["outcome"] == "not-run":
         return "unvalidated", "replay did not establish it: %s" % out.get("reason")
     return "failed", "replay: %s" % (out.get("reason") or out["outcome"])
@@ -269,7 +408,7 @@ def _need(cond, msg):
 
 def _text(a, key, rid):
     v = a.get(key)
-    _need(isinstance(v, str) and v.strip(), "%s for %s needs %s" % (a.get("mechanism_kind"), rid, key))
+    _need(isinstance(v, str) and v.strip(), "%s for %s needs \"%s\": a non-empty string" % (a.get("mechanism_kind"), rid, key))
     return v
 
 
@@ -282,16 +421,97 @@ def _risk_lowers(pattern, profile):
     return risk._ORDER[profile] < risk._ORDER[cur]
 
 
-def _plan_promote(a, rec, virtual_rules):
+def when_is_evaluable(when):
+    """A contract requirement's `when` must be something the code evaluates: a risk profile name (it
+    applies to a contract that declares that profile or a higher one) or a path glob (it applies to a
+    unit that changed a path matching it)."""
+    from . import risk
+    w = when if isinstance(when, str) else ""
+    return bool(w) and (w in risk.PROFILES or bool(re.search(r"[*?\[{/]", w))
+                        or bool(re.fullmatch(r"[\w.-]+\.[A-Za-z0-9]+", w)))
+
+
+def _sentences(add, lid, key="add"):
+    """One or two plain sentences, checked; returns the cleaned text."""
+    _need(isinstance(add, str) and add.strip(), "rule-add for %s needs \"%s\": one or two sentences" % (lid, key))
+    t = " ".join(add.split())
+    _need(len(t) <= 400 and not t.startswith(("#", "-", "*", ">", "|")) and "Why:" not in t,
+          "\"%s\" for %s must be one or two plain sentences (at most 400 characters, no heading, list marker "
+          "or `Why:`)" % (key, lid))
+    n = len(re.findall(r"[.!?](?:\s|$)", t))
+    _need(1 <= n <= 2 and t[-1] in ".!?", "\"%s\" for %s must be one or two sentences ending in . ! or ? (found %d)"
+          % (key, lid, n))
+    _need(not L.is_generic(t), "\"%s\" for %s is generic advice; name the situation and what to do in it" % (key, lid))
+    return t
+
+
+def _shortens(a, lid, need):
+    """Adding to the rulebook must name what it shortens, or say that nothing can be."""
+    v = a.get("shortens")
+    if not need and v is None:
+        return None
+    _need(isinstance(v, str) and len(v.split()) >= 3,
+          "this adds to the rulebook, so %s needs \"shortens\": name the rule id and the words it cuts, or start "
+          "with \"nothing:\" and say why nothing can be shortened" % lid)
+    rids = {x["id"] for x in overlay.effective()[1]}
+    ok = v.strip().lower().startswith("nothing") or any(r in v for r in rids)
+    _need(ok, "\"shortens\" for %s must name an existing rule id (the brief lists them) or start with \"nothing:\"" % lid)
+    return v.strip()
+
+
+def _rule_known():
+    return {x["id"] for x in overlay.base_rules()[1]} | set(overlay.overlay_rules())
+
+
+def _book_size():
+    return overlay.size(overlay.render())
+
+
+def _plan_rule(kind, a, rec, virtual_rules, reasons, n):
+    lid = rec["id"]
+    rid = a.get("rule_id")
+    _need(isinstance(rid, str) and overlay.ID_OK.match(rid), "%s for %s needs \"rule_id\": the id the brief lists" % (kind, lid))
+    _need(rid not in protected_rules(), "rule %r is protected (canon/protected.json); a cycle may not touch it. Pick a rule from the brief's list" % rid)
+    in_force = {r["id"]: r for r in overlay.effective()[1]}
+    if kind == "rule-add":
+        _need(rid in in_force or rid in virtual_rules, "no rule %r to add to (the brief lists the ids)" % rid)
+        add = _sentences(a.get("add"), lid)
+        cur = virtual_rules.get(rid) or in_force[rid]
+        new = overlay.rule_with_added(rid, add, dict(cur, id=rid))
+        n["rule_id"], n["add"] = rid, add
+        n["shortens"] = _shortens(a, lid, True)
+        if L.SCOPE_RANK[L.earned_scope(rec)] < L.SCOPE_RANK["user"]:
+            reasons.append("rule-add changes what every project loads, and learning %s has earned only its own "
+                           "project" % lid)
+    else:
+        text = _text(a, "rule_text", lid)
+        new = documents.check_rule_text(text, rid)
+        existing = in_force.get(rid)
+        n["rule_id"], n["rule_text"] = rid, text
+        grows = existing is None or len(overlay.rule_text(new)) > len(overlay.rule_text(existing))
+        n["shortens"] = _shortens(a, lid, grows)
+        reasons.append("%s %s the whole of rule %s; a whole-rule replacement always needs the owner"
+                       % (kind, "replaces" if existing else "adds", rid))
+    virtual_rules[rid] = new
+    before = _book_size()
+    ok, msg = documents.check_budgets(overlay.render_with(virtual_rules))
+    _need(ok, "%s for %s breaks the rulebook budget: %s. Shorten another rule in the same file "
+              "(rule-replace with less text) or drop this one; nothing is applied" % (kind, lid, msg))
+    n["size_before_after"] = [list(before), list(overlay.size(overlay.render_with(virtual_rules)))]
+
+
+def _plan_promote(a, rec, virtual_rules, run=True):
     """(normalized action, reasons that make it consequential, granted scope, replay)."""
     kind = a.get("mechanism_kind")
     lid = rec["id"]
+    _need(kind != "rule-text", "mechanism_kind rule-text is gone: use rule-add (one or two sentences added to a rule) "
+                               "or rule-replace (the whole rule); %s" % lid)
     _need(kind in MECHANISM_KINDS, "mechanism_kind for %s must be one of %s" % (lid, "|".join(MECHANISM_KINDS)))
     _need(rec.get("proposed", {}).get("mechanism") != "tool",
-          "learning %s is a tool change to sisi itself; it goes to the backlog and the contribution "
-          "export (`sisi promote --export`), not a cycle mechanism" % lid)
+          "learning %s is a tool change to sisi itself; it is on the backlog and goes out with "
+          "`sisi promote --export`, not a cycle mechanism. Remove this action" % lid)
     _need(not rec.get("candidate"), "learning %s is a subagent candidate; a parent retro must adopt it first "
-                                    "(`sisi retro --adopt %s`)" % (lid, lid))
+                                    "(`sisi retro --adopt %s`). Remove this action" % (lid, lid))
     n = {"action": "promote", "learning": lid, "mechanism_kind": kind}
     reasons, replay = [], None
     earned = L.earned_scope(rec)
@@ -302,47 +522,46 @@ def _plan_promote(a, rec, virtual_rules):
     if asked and L.SCOPE_RANK[asked] > L.SCOPE_RANK[base]:
         granted = asked
         reasons.append("the cycle asked for %s scope; learning %s has earned %s" % (asked, lid, earned))
-    if kind in GLOBAL_KINDS and L.SCOPE_RANK[earned] < L.SCOPE_RANK["user"]:
-        reasons.append("%s changes what every project loads, and learning %s has earned only its own project"
-                       % (kind, lid))
+    if kind == "library" and L.SCOPE_RANK[earned] < L.SCOPE_RANK["user"]:
+        reasons.append("library changes what every project loads, and learning %s has earned only its own project"
+                       % lid)
     elif kind not in GLOBAL_KINDS and L.SCOPE_RANK[granted] > L.SCOPE_RANK[earned]:
         reasons.append("wider than learning %s has earned (%s)" % (lid, earned))
+    proj = rec.get("origin_project")
+    if kind not in GLOBAL_KINDS and not (proj and os.path.isdir(proj)):
+        reasons.append("the origin project %s no longer exists on disk, so nothing can show this mechanism "
+                       "works there" % proj)
 
     if kind == "command-check":
         n["cmd"] = _text(a, "cmd", lid).strip()
         exp = a.get("expect") if isinstance(a.get("expect"), dict) else {}
         n["expect"] = {"exit": exp.get("exit", 0)}
-        for k in ("before", "after", "repo"):
-            if isinstance(a.get(k), str):
-                n[k] = a[k]
         if a.get("timeout_s") is not None:
             _need(isinstance(a["timeout_s"], (int, float)) and 0 < a["timeout_s"] <= 600,
-                  "timeout_s for %s must be between 0 and 600" % lid)
+                  "timeout_s for %s must be a number between 0 and 600" % lid)
             n["timeout_s"] = a["timeout_s"]
-        replay = replay_validate(rec, n)
+        replay = replay_validate(rec, n, run)
+        _need(replay[0] != "vacuous", "command check for %s is vacuous: %s. Write a command that reads a path "
+                                      "the fix changed" % (lid, replay[1]))
         _need(replay[0] != "failed", "replay validation failed for %s: %s; nothing is applied" % (lid, replay[1]))
         if replay[0] != "validated":
             reasons.append("an enforced command nobody has seen fail and then pass in its own project (%s)" % replay[1])
         if L.SCOPE_RANK[granted] > 0:
             reasons.append("an enforced command that would run outside the origin project")
     elif kind == "contract-requirement":
-        n["when"], n["require_kind"] = _text(a, "when", lid), _text(a, "require_kind", lid)
+        n["when"], n["require_kind"] = _text(a, "when", lid).strip(), _text(a, "require_kind", lid)
+        from . import contract as _contract
+        _need(when_is_evaluable(n["when"]),
+              "\"when\" for %s (%r) is not something the code evaluates. Use a risk profile (%s) or a path glob "
+              "such as src/auth/** or *.sql" % (lid, n["when"], "|".join(_profiles())))
+        _need(n["require_kind"] in _contract.KINDS, "require_kind for %s must be one of %s"
+              % (lid, "|".join(_contract.KINDS)))
         if a.get("max_rung") is not None:
-            _need(isinstance(a["max_rung"], int), "max_rung for %s must be an integer" % lid)
+            _need(isinstance(a["max_rung"], int) and not isinstance(a["max_rung"], bool),
+                  "max_rung for %s must be an integer" % lid)
             n["max_rung"] = a["max_rung"]
-    elif kind == "rule-text":
-        rid = a.get("rule_id")
-        _need(isinstance(rid, str) and overlay.ID_OK.match(rid), "rule-text for %s needs a plain rule_id" % lid)
-        _need(rid not in protected_rules(), "rule %r is protected (canon/protected.json); a cycle may not touch it" % rid)
-        text = _text(a, "rule_text", lid)
-        parsed = documents.check_rule_text(text, rid)
-        known = {x["id"] for x in overlay.base_rules()[1]} | set(overlay.overlay_rules())
-        if rid in known or rid in virtual_rules:
-            reasons.append("replaces the existing rule %s" % rid)
-        virtual_rules[rid] = parsed
-        ok, msg = documents.check_budgets(overlay.render_with(virtual_rules))
-        _need(ok, "rule-text for %s breaks the rulebook budget: %s; nothing is applied" % (lid, msg))
-        n["rule_id"], n["rule_text"] = rid, text
+    elif kind in ("rule-add", "rule-replace"):
+        _plan_rule(kind, a, rec, virtual_rules, reasons, n)
     elif kind == "library":
         _need(a.get("library_kind") in ("recipe", "verifier"), "library for %s needs library_kind recipe|verifier and entry_text" % lid)
         n["library_kind"], n["entry_text"] = a["library_kind"], _text(a, "entry_text", lid)
@@ -350,7 +569,7 @@ def _plan_promote(a, rec, virtual_rules):
         _need(eid is None or (isinstance(eid, str) and overlay.ID_OK.match(eid)), "entry_id for %s is not a plain id" % lid)
         n["entry_id"], n["replacing"] = eid, bool(a.get("replacing"))
         try:
-            n["entry_id"], _rel, _mine = overlay._put_entry(n["library_kind"], n["entry_text"], eid, n["replacing"])
+            n["entry_id"] = overlay.check_entry(n["library_kind"], n["entry_text"], eid, n["replacing"])
         except overlay.OverlayError as e:
             raise CycleError("library entry for %s: %s" % (lid, e))
         if n["replacing"]:
@@ -374,47 +593,106 @@ def _plan_promote(a, rec, virtual_rules):
     return n, reasons, granted, replay
 
 
-def validate_doc(doc, rows):
-    """Every refusal is raised before anything is applied. Returns the plan: a list of
-    {"kind": status|promote|disable-rule, "action", "rec", "pending", "reasons", "scope", "replay"}."""
+def _profiles():
+    from . import risk
+    return risk.PROFILES
+
+
+def _waiting():
+    """(learning ids with a pending decision, rule ids with a pending change), from the pending list."""
+    lids, rids = {}, {}
+    for i in L.load_pending():
+        a = i.get("action") or {}
+        if i.get("learning"):
+            lids[i["learning"]] = i["id"]
+        if a.get("rule_id"):
+            rids[a["rule_id"]] = i["id"]
+    return lids, rids
+
+
+def validate_doc(doc, rows, run=True):
+    """Every problem in the file is found and reported together, each with how to fix it; nothing
+    is applied unless the file has none. Returns the plan: a list of {"kind": status|merge|promote|
+    disable-rule, "action", "rec", "pending", "reasons", "scope", "replay"}."""
     if not isinstance(doc, dict) or not isinstance(doc.get("actions"), list) or not doc["actions"]:
-        raise CycleError("the cycle file must be JSON with a non-empty \"actions\" list")
-    base = doc.get("base")
-    if base != L.store_base(rows):
-        raise CycleError("stale base: the cycle was written against %r but the store is at %r; "
-                         "take a fresh brief (`sisi cycle`)" % (base, L.store_base(rows)))
+        raise CycleError("the cycle file must be a JSON object with a non-empty \"actions\" list")
+    problems = []
+    if doc.get("base") != L.store_base(rows):
+        problems.append("stale or missing \"base\": the file says %r but the store is at %r; copy the base from a "
+                        "fresh brief (`sisi cycle`)" % (doc.get("base"), L.store_base(rows)))
     ledger = L.load_ledger()
-    plan, acted, virtual = [], set(), {}
-    for a in doc["actions"]:
-        _need(isinstance(a, dict), "every action must be an object")
-        act = a.get("action")
-        if act == "disable-rule":
-            rid = a.get("rule_id")
-            _need(isinstance(rid, str) and rid, "disable-rule needs a rule_id")
-            _need(rid not in protected_rules(), "rule %r is protected (canon/protected.json); a cycle may not touch it" % rid)
-            known = {x["id"] for x in overlay.base_rules()[1]} | set(overlay.overlay_rules())
-            _need(rid in known, "no rule %r" % rid)
-            plan.append({"kind": "disable-rule", "action": {"action": "disable-rule", "rule_id": rid},
-                         "rec": None, "pending": True, "scope": None, "replay": None,
-                         "reasons": ["disables the rule %s" % rid]})
-            continue
-        rec = L.get(rows, a.get("learning") or "")
-        _need(rec is not None, "no learning %r" % a.get("learning"))
-        _need(L.is_registered(rec, ledger), "learning %s was not written by sisi's own commands "
-                                            "(added or edited by hand); a cycle does not act on it" % rec["id"])
-        acted.add(rec["id"])
-        if act in ("revise", "revert", "reject"):
-            _need((a.get("why") or "").strip(), "%s of %s needs a why" % (act, rec["id"]))
-            plan.append({"kind": "status", "action": {"action": act, "learning": rec["id"], "why": a["why"]},
-                         "rec": rec, "pending": False, "scope": None, "replay": None, "reasons": []})
-            continue
-        _need(act == "promote", "unknown action %r" % act)
-        n, reasons, granted, replay = _plan_promote(a, rec, virtual)
-        plan.append({"kind": "promote", "action": n, "rec": rec, "pending": bool(reasons),
-                     "scope": granted, "replay": replay, "reasons": reasons})
+    wait_l, wait_r = _waiting()
+    plan, acted, virtual, ruled = [], set(), {}, set()
+    for i, a in enumerate(doc["actions"], 1):
+        who = "action %d" % i
+        try:
+            _need(isinstance(a, dict), "every action must be a JSON object")
+            act = a.get("action")
+            if act == "disable-rule":
+                rid = a.get("rule_id")
+                who += " (disable-rule %s)" % rid
+                _need(isinstance(rid, str) and rid, "disable-rule needs \"rule_id\"")
+                _need(rid not in protected_rules(), "rule %r is protected (canon/protected.json); a cycle may not touch it. Pick a rule from the brief's list" % rid)
+                _need(rid in _rule_known(), "no rule %r (the brief lists the ids)" % rid)
+                _need(rid not in wait_r and rid not in ruled, "rule %s already has a change %s; wait for the "
+                      "owner's decision" % (rid, "waiting (%s)" % wait_r[rid] if rid in wait_r else "in this file"))
+                ruled.add(rid)
+                plan.append({"kind": "disable-rule", "action": {"action": "disable-rule", "rule_id": rid},
+                             "rec": None, "pending": True, "scope": None, "replay": None,
+                             "reasons": ["disables the rule %s" % rid]})
+                continue
+            lid = a.get("learning")
+            who += " (%s)" % lid
+            rec = L.get(rows, lid or "")
+            _need(rec is not None, "no learning %r (use the ids the brief lists)" % lid)
+            _need(L.is_registered(rec, ledger), "learning %s was not written by sisi's own commands "
+                                                "(added or edited by hand); a cycle does not act on it" % rec["id"])
+            _need(rec["id"] not in acted, "learning %s is acted on twice in this file; one action per learning" % rec["id"])
+            acted.add(rec["id"])
+            if act in ("revise", "revert", "reject"):
+                why = a.get("why")
+                _need(isinstance(why, str) and why.strip(), "%s of %s needs \"why\"" % (act, rec["id"]))
+                _need(act != "reject" or not L.is_generic(why),
+                      "the reason for rejecting %s is generic; say what is wrong with it (the evidence, a path, a "
+                      "number), or merge it into the learning it repeats" % rec["id"])
+                plan.append({"kind": "status", "action": {"action": act, "learning": rec["id"], "why": why},
+                             "rec": rec, "pending": False, "scope": None, "replay": None, "reasons": []})
+                continue
+            if act == "merge":
+                into = L.get(rows, a.get("into") or "")
+                _need(into is not None and into["id"] != rec["id"],
+                      "merge of %s needs \"into\": the id of a different learning" % rec["id"])
+                _need(into.get("status") not in L.ENDED and L.is_registered(into, ledger),
+                      "learning %s cannot take a merge (ended, or not written by sisi's own commands)" % into["id"])
+                shared = set(rec.get("terms") or []) & set(into.get("terms") or [])
+                _need(len(shared) >= 2, "%s and %s share too little (%d term(s)) to be the same learning; reject %s "
+                                        "with a specific reason instead" % (rec["id"], into["id"], len(shared), rec["id"]))
+                plan.append({"kind": "merge", "action": {"action": "merge", "learning": rec["id"], "into": into["id"],
+                                                         "why": str(a.get("why") or "")},
+                             "rec": rec, "pending": False, "scope": None, "replay": None, "reasons": []})
+                continue
+            _need(act == "promote", "unknown action %r: use promote, revise, revert, reject, merge or disable-rule" % act)
+            _need(rec["id"] not in wait_l, "learning %s already waits for the owner (%s); it cannot be promoted "
+                                           "again until that is decided" % (rec["id"], wait_l.get(rec["id"])))
+            rid = a.get("rule_id") if a.get("mechanism_kind") in ("rule-add", "rule-replace") else None
+            if rid:
+                _need(rid not in wait_r and rid not in ruled,
+                      "rule %s already has a change %s; a second one waits until that is decided" %
+                      (rid, "waiting (%s)" % wait_r[rid] if rid in wait_r else "in this file"))
+            n, reasons, granted, replay = _plan_promote(a, rec, virtual, run)
+            if rid:
+                ruled.add(rid)
+            plan.append({"kind": "promote", "action": n, "rec": rec, "pending": bool(reasons),
+                         "scope": granted, "replay": replay, "reasons": reasons})
+        except (CycleError, overlay.OverlayError, documents.DocumentError) as e:
+            problems.append("%s: %s" % (who, e))
     ignored = [r["id"] for r in L.flagged(rows) if r["id"] not in acted]
-    _need(not ignored, "this cycle ignores learning(s) flagged not working: %s; "
-                       "revise or revert each one" % ", ".join(ignored))
+    if ignored:
+        problems.append("flagged-not-working learning(s) %s are not acted on: add a revise or revert action for "
+                        "each" % ", ".join(ignored))
+    if problems:
+        raise CycleError("the cycle file has %d problem(s); nothing is applied:\n%s" % (
+            len(problems), "\n".join("  %d. %s" % (n, p) for n, p in enumerate(problems, 1))))
     return plan
 
 
@@ -454,16 +732,27 @@ def _apply_mechanism(a, rec, granted, approval=None):
              "max_rung": a.get("max_rung")}, rec, granted, approval))
         _put_json("enforced.json", d, "cycle: enforced contract requirement for %s" % lid)
         return "enforced contract requirement"
-    if kind == "rule-text":
+    if kind in ("rule-add", "rule-replace"):
         rid = a["rule_id"]
-        known = {x["id"] for x in overlay.base_rules()[1]} | set(overlay.overlay_rules())
-        if rid in known:
-            overlay.replace_rule(rid, a["rule_text"])
+        lines0, chars0 = _book_size()
+        in_force = {r["id"]: r for r in overlay.effective()[1]}
+        if kind == "rule-add":
+            cur = in_force.get(rid)
+            if cur is None:
+                raise CycleError("rule %r no longer exists" % rid)
+            new = overlay.rule_with_added(rid, a["add"], cur)
+            text = overlay.rule_text(new)
         else:
-            overlay.add_rule(a["rule_text"], rid)
+            text = a["rule_text"]
+        if rid in in_force:
+            overlay.replace_rule(rid, text)
+        else:
+            overlay.add_rule(text, rid)
         overlay.build_canon()
+        lines1, chars1 = _book_size()
         rec.setdefault("proposed", {})["target"] = rec.get("proposed", {}).get("target") or rid
-        return "rule %s" % rid
+        return "rule %s (%s; the loaded rulebook went from %d to %d lines, %d to %d characters)" % (
+            rid, "sentence(s) added" if kind == "rule-add" else "replaced", lines0, lines1, chars0, chars1)
     if kind == "library":
         eid = overlay.put_entry(a["library_kind"], a["entry_text"], a.get("entry_id"),
                                 replacing=bool(a.get("replacing")))
@@ -502,6 +791,17 @@ def _promoted(rec, ref, granted, replay):
     rec["recurrences_after_promotion"] = 0
     rec["version"] = int(rec.get("version") or 1) + 1
     return "%s promoted as %s: %s (%s)" % (rec["id"], result, ref, detail)
+
+
+def _apply_merge(a, rec, rows):
+    into = L.get(rows, a["into"])
+    rec["status"] = "merged"
+    rec["merged_into"] = into["id"]
+    rec["flagged_not_working"] = False
+    rec.setdefault("history", []).append({"ts": L.now(), "action": "merge", "into": into["id"],
+                                          "why": L.scrub_secrets(a.get("why", ""))})
+    into.setdefault("history", []).append({"ts": L.now(), "action": "absorbed", "learning": rec["id"]})
+    return "%s merged into %s" % (rec["id"], into["id"]), into
 
 
 def _apply_status(a, rec):
@@ -578,7 +878,9 @@ def _transact(label, fn):
     failure part-way restores every file it changed."""
     pdata.ensure()
     before = _head()
-    rows_before = {r["id"]: {k: copy.deepcopy(r[k]) for k in CYCLE_FIELDS if k in r} for r in L.load_learnings()}
+    all_rows = L.load_learnings()
+    rows_before = {r["id"]: {k: copy.deepcopy(r[k]) for k in CYCLE_FIELDS if k in r} for r in all_rows}
+    learning_max = max([_num(r["id"]) for r in all_rows] or [0])
     try:
         lines, touched, added = fn()
     except BaseException:
@@ -601,6 +903,7 @@ def _transact(label, fn):
     cid = "cycle-%04d" % n
     rec = {"id": cid, "label": label, "ts": L.now(), "before": before, "after": after, "lines": lines,
            "changed": _changed(before, after) if before and after else [],
+           "learning_max": learning_max,
            "rows_before": {i: rows_before[i] for i in touched if i in rows_before},
            "pending_added": added}
     pdata.write_text("cycles/%s.json" % cid, json.dumps(rec, indent=2, sort_keys=True) + "\n")
@@ -627,6 +930,10 @@ def apply_file(path):
             if p["kind"] == "status":
                 lines.append(_apply_status(a, rec))
                 touched.append(rec["id"])
+            elif p["kind"] == "merge":
+                text, into = _apply_merge(a, rec, rows)
+                lines.append(text)
+                touched += [rec["id"], into["id"]]
             elif p["kind"] == "promote" and not p["pending"]:
                 ref = _apply_mechanism(a, rec, p["scope"])
                 lines.append(_promoted(rec, ref, p["scope"], p["replay"]))
@@ -637,8 +944,8 @@ def apply_file(path):
                     if p["replay"] and p["replay"][0] == "validated":
                         rec["validation"].update(result="validated", detail=p["replay"][1],
                                                  method=rec["validation"].get("method") or "replay")
-                        if rec.get("status") in ("observed", "analyzed", "proposed", "implemented"):
-                            rec["status"] = "validated"
+                    if rec.get("status") not in L.ENDED:
+                        rec["status"] = "pending-approval"
                     touched.append(rec["id"])
                 lines.append("%s waits for the owner (%s): `sisi approve` lists it, the owner decides with "
                              "`sisi approve %s --yes|--no`" % (rec["id"] if rec else a.get("rule_id"),
@@ -689,6 +996,11 @@ def revert_cycle(cid=None):
                 r.pop(k, None)
         r.setdefault("history", []).append({"ts": L.now(), "action": "cycle-reverted", "cycle": rec["id"]})
         touched.append(r)
+    dropped = set(rec.get("pending_added") or [])
+    pending_for = {i.get("learning") for i in L.load_pending() if i.get("learning") and i.get("id") not in dropped}
+    for r in touched:
+        if r.get("status") == "pending-approval" and r["id"] not in pending_for:
+            r["status"] = "proposed"  # the decision it waited for is gone: it can be proposed again
     if touched:
         L.save_learnings(rows, "revert %s: learning records restored" % rec["id"], touched=touched, via="cycle")
     gone = set(rec.get("pending_added") or [])
@@ -708,11 +1020,81 @@ def revert_cycle(cid=None):
 
 # ---- approval -------------------------------------------------------------------------
 
-def _stdin_is_tty():
+TYPED_WAIT_S = 300  # how long a decision waits for the owner to type the word
+
+
+class _Terminal:
+    """The controlling terminal device, opened for reading and for writing (one text file object
+    cannot do both on a terminal)."""
+
+    def __init__(self):
+        self._r = open("/dev/tty", "r", encoding="utf-8")
+        try:
+            self._w = open("/dev/tty", "w", encoding="utf-8")
+        except OSError:
+            self._r.close()
+            raise
+
+    def write(self, text):
+        self._w.write(text)
+
+    def flush(self):
+        self._w.flush()
+
+    def fileno(self):
+        return self._r.fileno()
+
+    def readline(self):
+        return self._r.readline()
+
+    def close(self):
+        for f in (self._r, self._w):
+            try:
+                f.close()
+            except OSError:
+                pass
+
+
+def _open_terminal():
+    """The controlling terminal, or None when the process has none. Never standard input: a pipe,
+    a file or a script's stdin can carry words; a terminal device is what a person sits at."""
     try:
-        return bool(sys.stdin is not None and sys.stdin.isatty())
-    except (ValueError, OSError):
+        return _Terminal()
+    except OSError:
+        return None
+
+
+def _decision_word():
+    import secrets
+    c, v = "bdfgklmnprstvz", "aeiou"
+    return "".join(secrets.choice(c) + secrets.choice(v) for _ in range(3))
+
+
+def _typed_word(tty, word):
+    """True when the owner typed `word` at the terminal (read from the device, with a time limit)."""
+    import select
+    try:
+        tty.write("Type the word %s to decide, anything else cancels: " % word)
+        tty.flush()
+        try:
+            fd = tty.fileno()
+        except (AttributeError, OSError, ValueError):
+            fd = None
+        if fd is not None and not select.select([fd], [], [], TYPED_WAIT_S)[0]:
+            return False
+        return tty.readline().strip() == word
+    except (OSError, ValueError):
         return False
+
+
+def refuse_attempt(pid, why, how="approve", session=None):
+    """Every refused attempt to decide a change is recorded, with the session id it came from."""
+    try:
+        L.record_approval({"id": pid or "", "decision": "refused", "ts": L.now(), "how": how, "why": why,
+                           "session": session or os.environ.get("SISI_SESSION_ID") or None})
+    except Exception as e:  # recording must not turn a refusal into a crash
+        from . import store
+        store.log_error("approve-refused-record", e)
 
 
 def relay_allowed():
@@ -722,6 +1104,15 @@ def relay_allowed():
         return bool((store.config().get("learning") or {}).get("agent_relayed_approval"))
     except Exception:
         return False
+
+
+def _rule_after(a):
+    """(rule id, the parsed rule as the action would leave it) for a rule action, against the rule in force."""
+    rid = a.get("rule_id")
+    if a.get("mechanism_kind") == "rule-add":
+        cur = next((r for r in overlay.effective()[1] if r["id"] == rid), None)
+        return rid, overlay.rule_with_added(rid, a["add"], cur)
+    return rid, overlay.parse_rule_file(a["rule_text"], rid)
 
 
 def describe_pending(item):
@@ -754,17 +1145,23 @@ def describe_pending(item):
         out.append("  %s %s (%s):" % (a.get("library_kind"), a.get("entry_id") or "(id from its header)",
                                       "replaces the existing entry" if a.get("replacing") else "new"))
         out += ["    | " + l for l in str(a.get("entry_text") or "").splitlines()[:60]]
-    if kind == "rule-text" or a.get("action") == "replace-rule":
-        rid, new = a.get("rule_id"), a.get("rule_text") or ""
+    if kind in ("rule-add", "rule-replace") or a.get("action") == "replace-rule":
+        rid = a.get("rule_id")
         cur = next((r for r in overlay.effective()[1] if r["id"] == rid), None)
         out.append("  rule %s: %s" % (rid, "text diff against the rule in force" if cur else "new rule"))
+        if a.get("shortens"):
+            out.append("  what it shortens: %s" % a["shortens"])
         old_text = overlay.rule_text(cur).splitlines() if cur else []
         try:
-            new_text = overlay.rule_text(overlay.parse_rule_file(new, rid)).splitlines()
+            new_text = overlay.rule_text(_rule_after(a)[1]).splitlines()
         except Exception:
-            new_text = new.splitlines()
+            new_text = str(a.get("add") or a.get("rule_text") or "").splitlines()
         diff = list(difflib.unified_diff(old_text, new_text, "in force", "proposed", lineterm=""))
         out += ["    " + l for l in (diff if cur else ["+ " + l for l in new_text])]
+        sz = a.get("size_before_after")
+        if sz:
+            out.append("  loaded rulebook when planned: %d -> %d lines, %d -> %d characters"
+                       % (sz[0][0], sz[1][0], sz[0][1], sz[1][1]))
     if a.get("action") == "disable-rule":
         out.append("  switches off the rule %s" % a.get("rule_id"))
     out.append("  scope it would take effect in: %s" % (item.get("scope") or "all projects (a rule change)"))
@@ -790,6 +1187,12 @@ def apply_pending(pid, yes, how=None):
     if not yes:
         L.record_approval(row)
         L.save_pending(left, "approve: %s refused by the owner" % pid)
+        rows = L.load_learnings()
+        rec = L.get(rows, item.get("learning") or "")
+        if rec is not None and rec.get("status") == "pending-approval":
+            rec["status"] = "rejected"  # the owner said no: it is not proposed again
+            rec.setdefault("history", []).append({"ts": L.now(), "action": "owner-declined", "pending": pid})
+            L.save_learnings(rows, "approve: %s refused; %s rejected" % (pid, rec["id"]), touched=[rec], via="cycle")
         return "%s refused; nothing changed" % pid
     a = item["action"]
 
@@ -810,11 +1213,12 @@ def apply_pending(pid, yes, how=None):
             rec = L.get(rows, a.get("learning") or "")
             _need(rec is not None and rec.get("status") not in L.ENDED, "learning %r no longer exists" % a.get("learning"))
             _need(L.is_registered(rec), "learning %s was changed outside sisi's own commands" % rec["id"])
-            if a.get("mechanism_kind") == "rule-text":
+            if a.get("mechanism_kind") in ("rule-add", "rule-replace"):
                 rid = a["rule_id"]
                 _need(rid not in protected_rules(), "rule %r is protected; even approval cannot change it by cycle" % rid)
-                ok, msg = documents.check_budgets(overlay.render_with({rid: documents.check_rule_text(a["rule_text"], rid)}))
-                _need(ok, "rule-text for %s breaks the rulebook budget: %s" % (rec["id"], msg))
+                new = _rule_after(a)[1]
+                ok, msg = documents.check_budgets(overlay.render_with({rid: new}))
+                _need(ok, "%s for %s breaks the rulebook budget: %s" % (a["mechanism_kind"], rec["id"], msg))
             replay = tuple(item["replay"]) if item.get("replay") else None
             ref = _apply_mechanism(a, rec, item.get("scope") or "project", approval=pid)
             lines.append(_promoted(rec, ref, item.get("scope") or "project", replay) + " (approved)")
@@ -846,78 +1250,109 @@ def cmd_approve(argv):
         for i in items:
             print("\n".join(describe_pending(i)))
             print()
-        print("The owner decides, in a terminal: sisi approve ID --yes | --no")
+        print("The owner decides, in a terminal: sisi approve ID --yes | --no (and types the word it shows)")
         return 0
     pid, yes = argv[0], "--yes" in argv
     if not yes and "--no" not in argv:
         print("usage: sisi approve [ID --yes | --no]", file=sys.stderr)
         return 2
-    tty = _stdin_is_tty()
+    item = next((i for i in items if i.get("id") == pid), None)
+    tty = _open_terminal()
     relayed = False
-    if not tty:
+    if tty is None:
         if not relay_allowed():
-            item = next((i for i in items if i.get("id") == pid), None)
             if item:
                 print("\n".join(describe_pending(item)), file=sys.stderr)
-            print("sisi approve: refused. A decision must be made by the owner in a terminal: this was run "
-                  "without one (an agent, a script, a pipe). Show the owner what it does (the listing above) "
-                  "and give the owner the command to type. To allow an agent to relay a decision, set "
+            refuse_attempt(pid, "no controlling terminal")
+            print("sisi approve: refused. A decision is the owner's, typed at a terminal: this process has no "
+                  "controlling terminal (an agent, a script, a pipe). Show the owner what it does (the listing "
+                  "above) and give the owner the command to type. To allow an agent to relay a decision, set "
                   "learning.agent_relayed_approval in the user config (off by default).", file=sys.stderr)
             return 2
         relayed = True
+    else:
+        try:
+            if item is None:
+                print("sisi approve: no pending change %r (`sisi approve` lists them)" % pid, file=sys.stderr)
+                return 2
+            word = _decision_word()
+            tty.write("\n".join(describe_pending(item)) + "\n\nYou are about to %s %s.\n"
+                      % ("APPROVE" if yes else "REFUSE", pid))
+            if not _typed_word(tty, word):
+                refuse_attempt(pid, "the word was not typed at the terminal")
+                print("sisi approve: refused. The word was not typed at the terminal, so nothing was decided.",
+                      file=sys.stderr)
+                return 2
+        finally:
+            try:
+                tty.close()
+            except OSError:
+                pass
     try:
-        print(apply_pending(pid, yes, {"terminal": tty, "relayed": relayed}))
+        print(apply_pending(pid, yes, {"terminal": tty is not None, "relayed": relayed}))
         return 0
     except (CycleError, overlay.OverlayError, documents.DocumentError) as e:
         print("sisi approve: %s" % e, file=sys.stderr)
         return 2
 
 
-HELP = """sisi cycle: turn proposed learnings into mechanisms. JSON cycle file:
-  {"base": "<from `sisi cycle`>", "actions": [ ... ]}
-promote actions, by mechanism_kind:
-  command-check        {learning, cmd, expect?, before?, after?}  replayed in the origin project's trusted
-                       repository: it must exist at both commits, fail before and pass after
-  contract-requirement {learning, when, require_kind, max_rung?}
-  rule-text            {learning, rule_id, rule_text}   (protected rules refused)
-  library              {learning, library_kind: recipe|verifier, entry_text, entry_id?, replacing?}
-  risk                 {learning, pattern, profile}     -> overlay/risk-adjustments.json
-  routing              {learning, kind, difficulty?, prefer|avoid} -> overlay/routing-adjustments.json
-  benchmark            {learning, name, case:{...}}     -> overlay/benchmarks/<name>.json
-other actions: {action: revise|revert|reject, learning, why}; {action: disable-rule, rule_id}
-Every mechanism is written with its learning's id and the scope that learning has earned (its origin
-project unless it was seen in two units in two projects, or is an owner statement); a scope or
-every_project flag only asks for more. These wait for the owner (`sisi approve`, in a terminal):
-more scope than earned, a command not proven by replay, a risk pattern that lowers a profile, a
-replaced or disabled rule, a rule or library entry from a learning confined to one project.
-A cycle that ignores a flagged learning is refused. `sisi cycle revert` undoes only that cycle's changes.
-"""
+APPLY_LINES = 15  # what `apply` prints at most
+
+
+def _capped(lines, n=APPLY_LINES):
+    return lines if len(lines) <= n else lines[:n - 1] + ["... and %d more line(s)" % (len(lines) - n + 1)]
+
+
+def _summary(cid, lines):
+    """What took effect, what waits and what was refused, in at most APPLY_LINES lines."""
+    wait = [x for x in lines if "waits for the owner" in x]
+    took = [x for x in lines if x not in wait]
+    head = "%s applied: %d took effect, %d wait for the owner, 0 refused" % (cid, len(took), len(wait))
+    body = ["took effect: " + x for x in took] + ["waits: " + x.split(": `sisi approve`")[0] for x in wait]
+    if wait:
+        body.append("the owner decides: `sisi approve` lists each in full, then `sisi approve ID --yes|--no`")
+    return [head] + _capped(body, APPLY_LINES - 1)
+
+
+def _check_summary(plan):
+    cmds = sum(1 for p in plan if p["kind"] == "promote" and p["action"].get("mechanism_kind") == "command-check")
+    wait = sum(1 for p in plan if p["pending"] and not (p["kind"] == "promote"
+               and p["action"].get("mechanism_kind") == "command-check"))
+    lines = ["valid: %d action(s); %d apply at once, %d wait for the owner%s" % (
+        len(plan), len(plan) - wait - cmds, wait,
+        ", %d command check(s) are replayed only by `apply`, which decides whether each takes effect or waits" % cmds
+        if cmds else "")]
+    for p in plan:
+        if p["pending"] and p["reasons"] and not (p["kind"] == "promote"
+                                                   and p["action"].get("mechanism_kind") == "command-check"):
+            lines.append("waits: %s: %s" % (p["rec"]["id"] if p["rec"] else p["action"].get("rule_id"),
+                                             "; ".join(p["reasons"])))
+    return _capped(lines)
 
 
 def cmd_cycle(args):
     if args and args[0] == "help":
-        sys.stdout.write(HELP)
+        sys.stdout.write(format_text("<the base `sisi cycle` prints>"))
         return 0
     if args and args[0] == "apply" and len(args) > 1:
         try:
             cid, lines = apply_file(args[1])
         except (CycleError, OSError, documents.DocumentError, overlay.OverlayError) as e:
-            print("sisi cycle: %s" % e, file=sys.stderr)
+            msg = str(e).splitlines()
+            print("\n".join(_capped(["sisi cycle: " + msg[0]] + msg[1:])), file=sys.stderr)
             return 2
-        print("%s applied:" % cid)
-        for x in lines:
-            print("- " + x)
+        print("\n".join(_summary(cid, lines)))
         return 0
     if args and args[0] == "check" and len(args) > 1:
         try:
             with open(args[1], encoding="utf-8") as f:
                 doc = json.load(f)
-            plan = validate_doc(doc, L.load_learnings())
+            plan = validate_doc(doc, L.load_learnings(), run=False)
         except (CycleError, OSError, ValueError, documents.DocumentError, overlay.OverlayError) as e:
-            print("sisi cycle: %s" % e, file=sys.stderr)
+            msg = str(e).splitlines()
+            print("\n".join(_capped(["sisi cycle: " + msg[0]] + msg[1:])), file=sys.stderr)
             return 2
-        wait = sum(1 for p in plan if p["pending"])
-        print("valid: %d action(s) apply at once, %d wait for the owner" % (len(plan) - wait, wait))
+        print("\n".join(_check_summary(plan)))
         return 0
     if args and args[0] == "revert":
         try:

@@ -14,7 +14,7 @@ Standard library only. Replay of ``task`` cases goes through the existing delega
 (``sisi.workers.run_delegation``) unless a caller injects ``worker_runner`` or names a
 ``--worker-cmd``; tests always inject a fake, so no test calls a real AI tool.
 """
-import hashlib, json, math, os, re, shlex, shutil, statistics, subprocess, sys, tempfile, time, uuid
+import hashlib, json, math, os, re, shlex, shutil, signal, statistics, subprocess, sys, tarfile, tempfile, time, uuid
 
 from . import paths, store
 
@@ -396,6 +396,87 @@ class _Worktree:
         return False
 
 
+def _rmtree(path):
+    """Delete a tree even when a command made parts of it read-only."""
+    def fix(func, p, _exc):
+        try:
+            os.chmod(os.path.dirname(p), 0o700)
+            os.chmod(p, 0o700)
+            func(p)
+        except OSError:
+            pass
+    shutil.rmtree(path, onerror=fix)
+
+
+class _Export:
+    """The tree of one commit, exported into a temp dir with no `.git` directory (so a command
+    cannot read history), plus an empty directory to serve as HOME. Both are deleted on exit,
+    even on error. ``env()`` is all a replayed command is given: PATH, HOME (the empty
+    directory) and LANG, nothing from the caller's environment."""
+
+    def __init__(self, repo, commit):
+        self.repo, self.commit = repo, str(commit)
+        self.tmp = tempfile.mkdtemp(prefix="sisi-replay-")
+        self.path = os.path.join(self.tmp, "tree")
+        self.home = os.path.join(self.tmp, "home")
+
+    def env(self):
+        return {"PATH": os.environ.get("PATH") or "/usr/local/bin:/usr/bin:/bin", "HOME": self.home,
+                "LANG": os.environ.get("LANG") or "C.UTF-8"}
+
+    def __enter__(self):
+        try:
+            os.makedirs(self.path)
+            os.makedirs(self.home)
+            proc = subprocess.Popen(["git", "-C", self.repo, "archive", "--format=tar", self.commit],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            with tarfile.open(fileobj=proc.stdout, mode="r|") as tar:
+                for m in tar:
+                    name = os.path.normpath(m.name)
+                    if name.startswith(("/", "..")) or m.name.startswith("/"):
+                        continue
+                    if m.name == ".git" or m.name.startswith(".git/") or name == ".git":
+                        continue  # a tracked file called .git must not give the command a history
+                    if m.issym() or m.islnk():
+                        target = os.path.normpath(os.path.join(os.path.dirname(name), m.linkname))
+                        if os.path.isabs(m.linkname) or target.startswith(".."):
+                            continue  # a link out of the copy is not exported
+                    elif not (m.isfile() or m.isdir()):
+                        continue
+                    tar.extract(m, self.path)
+            err = proc.stderr.read().decode("utf-8", "replace")
+            proc.stdout.close()
+            proc.stderr.close()
+            if proc.wait() != 0:
+                raise RuntimeError(err.strip()[-300:] or "git archive failed")
+            return self
+        except BaseException as e:
+            _rmtree(self.tmp)
+            if isinstance(e, (OSError, tarfile.TarError)):
+                raise RuntimeError("cannot export %s into a temporary copy: %s" % (self.commit, e))
+            raise
+
+    def __exit__(self, *exc):
+        _rmtree(self.tmp)
+        return False
+
+
+def _run_shell(cmd, cwd, timeout_s, env=None):
+    """Run a shell command in its own process group; on timeout the whole group is killed.
+    Returns the exit status; raises subprocess.TimeoutExpired."""
+    p = subprocess.Popen(str(cmd), shell=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        return p.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        p.wait()
+        raise
+
+
 SHELL_BUILTINS = frozenset((":", "true", "false", "test", "[", "[[", "echo", "printf", "exit", "cd", "set",
                             "export", "unset", "read", "type", "command", "eval", "exec", "return", "source", ".",
                             "if", "then", "else", "elif", "fi", "for", "while", "until", "do", "done", "case",
@@ -468,9 +549,10 @@ def unresolved_program(cmd, cwd):
     return None
 
 
-def _run_checks(case, cwd, timeout_s):
-    """Run the case's checks in ``cwd``. Returns (rows, timed_out); rows carry exit/passed and
-    ``ran``: False when the command never really ran (program missing, exit 126/127, killed)."""
+def _run_checks(case, cwd, timeout_s, env=None):
+    """Run the case's checks in ``cwd`` (with ``env`` as the whole environment when given).
+    Returns (rows, timed_out); rows carry exit/passed and ``ran``: False when the command never
+    really ran (program missing, exit 126/127, killed)."""
     rows, timed_out = [], False
     for c in case.get("checks") or []:
         expect = (c.get("expect") or {})
@@ -485,11 +567,14 @@ def _run_checks(case, cwd, timeout_s):
                          "expected_exit": want, "passed": False, "error": why})
             continue
         try:
-            r = subprocess.run(str(c.get("cmd")), shell=True, cwd=cwd, capture_output=True,
-                               text=True, timeout=timeout_s)
-            rows.append({"id": c.get("id"), "cmd": c.get("cmd"), "exit": r.returncode,
-                         "ran": not exit_not_ran(r.returncode),
-                         "expected_exit": want, "passed": r.returncode == want})
+            if env is None:
+                code = subprocess.run(str(c.get("cmd")), shell=True, cwd=cwd, capture_output=True,
+                                      text=True, timeout=timeout_s).returncode
+            else:
+                code = _run_shell(c.get("cmd"), cwd, timeout_s, env)
+            rows.append({"id": c.get("id"), "cmd": c.get("cmd"), "exit": code,
+                         "ran": not exit_not_ran(code),
+                         "expected_exit": want, "passed": code == want})
         except subprocess.TimeoutExpired:
             timed_out = True
             rows.append({"id": c.get("id"), "cmd": c.get("cmd"), "exit": None, "ran": False,
@@ -501,7 +586,13 @@ def _run_checks(case, cwd, timeout_s):
 
 
 def _checks_at(case, repo, commit, timeout_s):
-    """(all_passed, rows, timed_out) for the case's checks at one commit, in a temp worktree."""
+    """(all_passed, rows, timed_out) for the case's checks at one commit: in a temp worktree, or,
+    for a case marked ``isolated`` (a command an agent wrote), in an exported copy of the tree
+    with no history and a reduced environment."""
+    if case.get("isolated"):
+        with _Export(repo, commit) as ex:
+            rows, timed_out = _run_checks(case, ex.path, timeout_s, env=ex.env())
+        return (bool(rows) and all(r["passed"] for r in rows)), rows, timed_out
     with _Worktree(repo, commit) as wt:
         rows, timed_out = _run_checks(case, wt, timeout_s)
     return (bool(rows) and all(r["passed"] for r in rows)), rows, timed_out
@@ -578,13 +669,29 @@ def validate_check(case, store_dir=None, timeout_s=None, record=False):
     return out
 
 
-def validate_command(repo, before, after, cmd, expect_exit=0, timeout_s=None, store_dir=None):
-    """Replay one command at two commits of a local, trusted repository: ``validated`` only when
-    it ran and failed at ``before`` and ran and passed at ``after``. Anything that stops the
-    command from really running (program missing at either commit, exit 126/127, a timeout, a
-    signal) is ``not-run`` with the reason, never a failure. ``before`` must be an ancestor of
-    ``after``; the repository must be a project on the trust list. Returns the replay outcome
-    dict (``outcome``, ``reason``, ``check_results``); nothing is recorded."""
+def _changed_paths(repo, before, after):
+    rc, out, _e = _git(repo, "diff", "--name-only", "-z", str(before), str(after))
+    return [x for x in out.split("\0") if x] if rc == 0 else []
+
+
+def mentions_changed_path(cmd, changed):
+    """Does the command's text name a path that differs between the two trees (the path, its file
+    name, or the module spelling of it)? A command that names none of them cannot tell the two
+    trees apart by looking at what changed."""
+    text = str(cmd or "")
+    for p in changed:
+        base = os.path.basename(p)
+        mod = re.sub(r"\.py$", "", p).replace("/", ".")
+        if p in text or (len(base) >= 2 and base in text) or (len(mod) >= 3 and mod in text):
+            return True
+    return False
+
+
+def replay_preflight(repo, before, after, cmd):
+    """None when a replay may go ahead, else the outcome dict that says why not. Only git is run
+    here, never the command: the repository must be a local, trusted directory, both commits must
+    exist with ``before`` an ancestor of ``after``, and the command must name a path that differs
+    between the two trees (``vacuous`` otherwise: it cannot show a difference the change made)."""
     from . import trust
     repo = os.path.realpath(str(repo or ""))
     if not os.path.isdir(repo) or _is_remote(repo):
@@ -599,7 +706,33 @@ def validate_command(repo, before, after, cmd, expect_exit=0, timeout_s=None, st
     if rc != 0:
         return {"outcome": "not-run", "check_results": [],
                 "reason": "the before commit is not an ancestor of the after commit"}
-    case = {"id": "replay", "kind": "check", "split": "dev",
+    changed = _changed_paths(repo, before, after)
+    if not changed:
+        return {"outcome": "vacuous", "check_results": [],
+                "reason": "the two commits have identical trees; a command cannot tell them apart"}
+    if not mentions_changed_path(cmd, changed):
+        return {"outcome": "vacuous", "check_results": [],
+                "reason": "the command names none of the paths that differ between the two trees (%s%s), so "
+                          "it is vacuous: it cannot show what the change made different"
+                          % (", ".join(changed[:4]), ", ..." if len(changed) > 4 else "")}
+    return None
+
+
+def validate_command(repo, before, after, cmd, expect_exit=0, timeout_s=None, store_dir=None):
+    """Replay one command at two commits of a local, trusted repository: ``validated`` only when
+    it ran and failed at ``before`` and ran and passed at ``after``. Each run is in an exported
+    copy of that commit's tree (no ``.git``), with an environment of PATH, HOME (an empty
+    directory) and LANG only, under a time limit; the copy is deleted afterwards. Anything that
+    stops the command from really running (program missing at either commit, exit 126/127, a
+    timeout, a signal) is ``not-run`` with the reason, never a failure. ``before`` must be an
+    ancestor of ``after``; the repository must be a project on the trust list; the command must
+    name a path that differs between the trees (``vacuous`` otherwise). Returns the replay
+    outcome dict (``outcome``, ``reason``, ``check_results``); nothing is recorded."""
+    stop = replay_preflight(repo, before, after, cmd)
+    if stop:
+        return stop
+    repo = os.path.realpath(str(repo))
+    case = {"id": "replay", "kind": "check", "split": "dev", "isolated": True,
             "project": {"repo": repo, "start_commit": str(before), "fix_commit": str(after)},
             "checks": [{"id": "c", "cmd": str(cmd), "expect": {"exit": expect_exit}}]}
     timeout_s = float(timeout_s or _eval_config(store_dir)["timeout_s"])
