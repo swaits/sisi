@@ -401,6 +401,41 @@ class SendBackSaysWhy(TG.GuardCase):
         self.assertIn("because the contract declares the integration profile", msg.splitlines()[0])
 
 
+class NoDeadlockAfterARefusedEdit(TG.GuardCase):
+    """Found by the live check: the transcript shows an edit the hook refused, the guard counted it as a change, and
+    from then on every shell command was refused, `sisi contract init 2>&1 | head` included."""
+
+    def transcript_shows_edit(self, rel=SRC):
+        sess = store.load_session(self.sid)
+        sess["attr_since_pass"] = [os.path.join(self.proj, rel)]
+        store.save_session(self.sid, sess)
+
+    def test_an_edit_the_tree_never_saw_is_not_a_change(self):
+        self.assertIn("sisi contract init", self.edit())
+        self.transcript_shows_edit()
+        self.assertIsNone(self.bash("python3 -c 'print(1)'"))
+        self.assertEqual(G.session_paths(store.load_session(self.sid)), [])
+
+    def test_an_edit_the_tree_did_see_still_is(self):
+        self.put(SRC, "def greet():\n    return 'yo'\n")
+        self.transcript_shows_edit()
+        msg = self.bash("python3 -c 'print(1)'")
+        self.assertIn("already changed", msg)
+        self.assertIn("sisi contract init", msg)
+
+    def test_the_way_out_is_never_refused_even_piped_through_a_filter(self):
+        self.put(SRC, "def greet():\n    return 'yo'\n")
+        self.transcript_shows_edit()
+        for cmd in ("sisi contract init", "sisi contract init 2>&1 | head -60", "sisi unit continue 2>&1 | tail -5",
+                    "sisi contract check | grep -n goal"):
+            self.assertIsNone(self.bash(cmd), cmd)
+        for cmd in ("sisi contract init > notes.txt", "sisi contract init | tee notes.txt"):
+            self.assertIsNotNone(self.bash(cmd), cmd)
+
+    def test_a_cache_folder_is_as_ignorable_as_the_files_in_it(self):
+        self.assertIsNone(self.bash("rm -rf src/__pycache__"))
+
+
 class CopySurvivesVanishingFiles(SisiCase):
     """Fix C."""
 

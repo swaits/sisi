@@ -323,9 +323,10 @@ def bound_fresh(sess, project, c):
 
 def _ignored(rel):
     import fnmatch
-    p = rel.replace(os.sep, "/").lower()
+    base = rel.replace(os.sep, "/").lower()
+    # a folder itself counts as what is inside it (`rm -rf src/__pycache__` is as ignorable as its files)
     return any(fnmatch.fnmatchcase(p, g.lower()) or (g.startswith("**/") and fnmatch.fnmatchcase(p, g[3:].lower()))
-               or (g.endswith("/**") and p.startswith(g[:-2].lower())) for g in _list("ignore_changed"))
+               or (g.endswith("/**") and p.startswith(g[:-2].lower())) for g in _list("ignore_changed") for p in (base, base + "/x"))
 
 
 def _rel_in_project(path, root, cwd):
@@ -393,7 +394,7 @@ def _absorb(sess, root):
     covered = set(sess.get("ug_covered") or [])
     sess["ug_covered"] = [p for p in covered if p in since]  # settled stops empty attr_since_pass: forget
     have = sess.setdefault("ug_paths", [])
-    new = False
+    new, dirty = False, None
     for p in since:
         rel = p
         if os.path.isabs(p):
@@ -402,9 +403,37 @@ def _absorb(sess, root):
                 continue
         if p in covered or rel in have or _is_sisi(rel) or _ignored(rel):
             continue
+        if dirty is None:
+            dirty = _changed_in_tree(root)
+        if dirty is not None and rel not in dirty:
+            continue  # the host's transcript shows the attempt; the tree shows it changed nothing (a refused edit, a failed one)
         have.append(rel)
         new = True
     return new
+
+
+def _changed_in_tree(root):
+    """The set of paths git sees as changed or new in the working tree (renames and deletions included), or None
+    when that cannot be told."""
+    try:
+        from . import gitutil
+        rc, out = gitutil._git(root, "status", "--porcelain", "-z", "--untracked-files=all")
+        if rc != 0:
+            return None
+        names, parts = set(), out.split("\0")
+        i = 0
+        while i < len(parts):
+            e = parts[i]
+            i += 1
+            if len(e) > 3:
+                names.add(e[3:])
+                if e[0] in "RC" and i < len(parts):
+                    names.add(parts[i])
+                    i += 1
+        return names
+    except Exception as e:
+        store.log_error("unitguard-tree", e)
+        return None
 
 
 def _cover(sess):
@@ -635,7 +664,11 @@ def _is_sisi_command(cmd):
             cur.append(t)
     segs.append(cur)
     segs = [s for s in segs if s]
-    return bool(segs) and all(os.path.basename(s[0]) == "sisi" for s in segs)
+    if any(t in (">", ">>") for t in toks):
+        return False  # a file written by redirection is a change of its own
+    # `sisi ... 2>&1 | head -40`: the filters after a pipe only read what sisi printed
+    return bool(segs) and os.path.basename(segs[0][0]) == "sisi" and all(
+        os.path.basename(s[0]) == "sisi" or os.path.basename(s[0]) in _list("output_filters") for s in segs[1:])
 
 
 def classify(tool, payload, cmd):

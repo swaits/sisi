@@ -35,6 +35,18 @@
     "review",
     "docs"
   ],
+  "output_filters": [
+    "head",
+    "tail",
+    "grep",
+    "wc",
+    "sort",
+    "uniq",
+    "cut",
+    "tr",
+    "cat",
+    "less"
+  ],
   "build_words": [
     "change",
     "fix",

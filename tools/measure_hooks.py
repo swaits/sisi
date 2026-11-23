@@ -25,7 +25,10 @@ cases={"before Read":("PreToolUse","Read",{"file_path":"/x"},None),
  "before Bash ls":("PreToolUse","Bash",{"command":"ls"},None),
  "after Bash ls":("PostToolUse","Bash",{"command":"ls"},{"tool_response":{"stdout":"a","exit_code":0}}),
  "before Edit":("PreToolUse","Edit",{"file_path":"/x"},None),
- "after Edit":("PostToolUse","Edit",{"file_path":"/x"},{"tool_response":"ok"})}
+ "after Edit":("PostToolUse","Edit",{"file_path":"/x"},{"tool_response":"ok"}),
+ # the contract guard on a project file: a document change (never refused) and a source change with no unit (refused)
+ "before Edit README (in project)":("PreToolUse","Edit",{"file_path":proj+"/README.md"},None),
+ "before Edit src (refused, no unit)":("PreToolUse","Edit",{"file_path":proj+"/src/app.py"},None)}
 for name,(ev,tool,inp,ex) in cases.items():
     m=med(lambda: one([sys.executable,B,"watch","--tool","claude-code"],payload(ev,tool,inp,ex)))
     print("%-26s median wall %6.1f ms  cpu %5.1f ms   (cpu over a bare python start: %.1f ms)"%(name,m[0],m[1],m[1]-base[1]))

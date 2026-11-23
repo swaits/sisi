@@ -363,8 +363,14 @@ session's own model exists. Every entry point fails open.
   only the outcome and the check. A worker other than the router's pick is allowed and recorded
   (`chosen_against_route`); `sisi workers` shows how often and how those turned out (too few under five).
   `sisi route --retry-of ID` keeps the same worker with an instruction to improve the brief after the first
-  rejection and moves to a stronger one (judged record, else benchmark standing, else host-native) after a
-  second.
+  rejection and then moves to a worker whose evidence is strictly better (`routing.retry_choice`: the cheapest
+  capable one with better evidence, else the strongest known usable one) after a second.
+- **One before-tool path, one refusal at a time.** `sisi/watch.py` runs, for every tool: workers and subagents
+  are exempt from all of it; then the contract guard (a call that would change a project file, or delegate a
+  build, with no valid unit: rule 3); then the delegation guard (a model is named and is not the main thread's
+  own; a routing decision exists); then the direct-work budget. The agent sees only the first refusal in that
+  order, so an agent told to delegate is never refused afterwards for a contract it was not told about. A
+  refused call is not counted by the meter. Every stage fails open on its own.
 - **Repeat failure.** The fourth identical failing shell command (whitespace-normalised) with no file changed
   in between is refused once (rule 5).
 - **Unavailable workers.** A limit, quota, login or connection failure arriving as a delegation result or as a

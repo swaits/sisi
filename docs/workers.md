@@ -99,7 +99,11 @@ the host's own tool is written to the ledger by the hooks as a pending run with 
 completed when it returns; `sisi delegate judge ID --outcome O --check C` then needs nothing else. A worker
 other than the router's pick is recorded as an override, and `sisi workers` ends with one line on how often
 and how they turned out. After a rejection `sisi delegate judge` prints `sisi route --retry-of ID`: the same
-worker with a better brief first, a stronger one after a second rejection.
+worker with a better brief first, then a worker whose evidence is strictly better (`routing.retry_choice`, the
+same ladder the capability routing uses). `sisi route --kind K` takes only the ledger's kinds (`impl`, `impl-multi`,
+`edit`, `tests`, `debug` build; `read`, `search`, `research`, `review`, `docs` do not; the list is data in
+canon/guard.json) and names them when given another; the decision is kept in the session's orchestration meter,
+which is also where the contract guard reads it to tell a build delegation from a read.
 
 When a worker fails for a reason that is not about its work (a quota, limit, login or connection failure,
 arriving as a delegation result or as a host notice), the hooks record it down until the reset time in the
