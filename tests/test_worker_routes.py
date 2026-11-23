@@ -78,5 +78,32 @@ class HostNativeTests(RouteCase):
         self.assertNotIn("wk-", r.stdout.splitlines()[0])
 
 
+class SessionStartTests(RouteCase):
+    def tick(self, sid, model="mystery-9", source="startup"):
+        return self.sisi("tick", stdin=json.dumps({"session_id": sid, "cwd": self.proj, "source": source,
+                                                  "model": model}))
+
+    def test_unknown_standing_says_nothing_about_delegating(self):
+        """R-7.1-1, R-17-3: with no facts and an unknown main model, session start argues
+        neither for nor against delegating; at most one line asks for facts, once per session."""
+        r = self.tick("s-unk")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        low = r.stdout.lower()
+        for bad in ("yourself", "rather than delegating", "on a guess", "do the work"):
+            self.assertNotIn(bad, low)
+        sisi_lines = [l for l in r.stdout.splitlines() if "worker facts" in l]
+        self.assertEqual(len(sisi_lines), 1, r.stdout)
+        again = self.tick("s-unk", source="resume")
+        self.assertNotIn("worker facts", again.stdout)
+
+    def test_unknown_standing_with_a_recorded_ledger(self):
+        """The same holds with a thick ledger and no discovered tools."""
+        self.seed_real_shape()
+        r = self.sisi("tick", stdin=json.dumps({"session_id": "s-led", "cwd": self.proj, "source": "startup",
+                                               "model": "mystery-9"}), env=dict(PATH=""))
+        self.assertNotIn("yourself", r.stdout.lower())
+        self.assertNotIn("rather than", r.stdout.lower())
+
+
 if __name__ == "__main__":
     unittest.main()

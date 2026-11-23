@@ -712,8 +712,8 @@ def facts_line(now=None):
     return ("sisi: %s: ask a fast, cheap worker to research current prices and "
             "software-engineering benchmark standing for the workers found here (`sisi workers`) "
             "and record each with its source: `sisi workers fact WORKER --price N --source S` "
-            "and `sisi workers fact WORKER --score N --source S`. Until then routing has no "
-            "price or prior to go on." % what)
+            "and `sisi workers fact WORKER --score N --source S`. Until then routing "
+            "goes by the judged record alone." % what)
 
 
 def estimate_cost(tokens, price_entry):
@@ -1105,9 +1105,7 @@ def strength_scores(candidates, records):
 def _cached_candidates(records=None):
     """Candidates from the discovery cache only: session start must stay fast and run no tool."""
     cached = load_discovery()
-    if not cached.get("tools"):
-        return [], []
-    return build_candidates(cached, read_records() if records is None else records), cached["tools"]
+    return build_candidates(cached, read_records() if records is None else records), cached.get("tools") or []
 
 
 def is_subagent_payload(payload):
@@ -1127,44 +1125,47 @@ def _with_facts(lines):
 
 
 def session_lines(model, payload=None):
-    """One or two plain lines at session start about delegating (plus one asking for worker
-    facts when they are missing or stale), or nothing for a session another agent started.
-    Uses only cached discovery and the record."""
+    """Plain lines at session start about delegating, or nothing for a session another agent
+    started. When the main model's standing is unknown it says nothing about whether to delegate:
+    a missing number never argues against orchestrating. At most one extra line asks for worker
+    facts to be researched when they are missing or stale (the caller shows these lines once per
+    session). Uses only cached discovery and the record."""
     if not model or is_subagent_payload(payload or {}):
         return []
     records = read_records()
     candidates, _tools = _cached_candidates(records)
     waiting = len(unjudged_runs(records))
     suffix = ""
-    if waiting:
-        suffix = " %d delegation%s waiting for a judgement: run `sisi workers` to see, then `sisi delegate judge`." \
-                 % (waiting, " is" if waiting == 1 else "s are")
-        if waiting == 1:
-            suffix = " One delegation is waiting for a judgement: run `sisi workers`, then `sisi delegate judge`."
-    if not candidates:
-        return _with_facts(["sisi: the strength of this session's model (%s) is unknown here: no workers have been "
-                "discovered yet (`sisi workers` finds them), so do the work yourself for now.%s" % (model, suffix)])
-    cand = resolve_worker(model, candidates)
-    scores = strength_scores(candidates, records)
+    if waiting == 1:
+        suffix = " One delegation is waiting for a judgement: run `sisi workers`, then `sisi delegate judge`."
+    elif waiting:
+        suffix = " %d delegations are waiting for a judgement: run `sisi workers` to see, then `sisi delegate judge`." % waiting
+    scores = strength_scores(candidates, records) if candidates else {}
+    cand = resolve_worker(model, candidates) if candidates else None
     own = scores.get(cand["worker"]) if cand else None
-    if own is None and cand is None:
+    if own is None:
         prior = load_strength_prior().get(model)
         if isinstance(prior, dict) and isinstance(prior.get("score"), (int, float)):
             own = (float(prior["score"]), "stored prior (%s, %s)" % (prior.get("source") or "no source stated",
                                                                      prior.get("date") or "no date stated"))
-    if own is None:
-        return _with_facts(["sisi: the strength of this session's model (%s) is unknown here (no stored prior and no "
-                "measured record yet), so do the work yourself rather than delegating on a guess.%s"
-                % (model, suffix)])
-    best_worker, (best_score, _how) = max(scores.items(), key=lambda kv: kv[1][0]) if scores else (None, (own[0], ""))
-    if own[0] >= best_score - routing.STRONG_BAND:
-        return _with_facts(["sisi: this session's model (%s) is among the strongest available here (%s): plan, ask `sisi route` who "
-                "should do each piece, start that worker with this tool's own subagents (use `sisi delegate` "
-                "only if it has none), and judge what comes back.%s" % (model, own[1], suffix)])
-    return _with_facts(["sisi: this session's model (%s) is not among the strongest available here (%s): do the work "
-            "yourself rather than delegating. Stronger models are available here, strongest first: %s.%s"
-            % (model, own[1], ", ".join(w for w, _s in sorted(scores.items(), key=lambda kv: -kv[1][0])[:3]
-                                         if scores[w][0] > own[0]), suffix)])
+    lines = []
+    if own is not None:
+        best_score = max([s for s, _h in scores.values()] + [own[0]])
+        if own[0] >= best_score - routing.STRONG_BAND:
+            lines.append("sisi: this session's model (%s) is among the strongest available here (%s): plan, ask `sisi route` who "
+                         "should do each piece, start that worker with this tool's own subagents (use `sisi delegate` "
+                         "only if it has none), and judge what comes back.%s" % (model, own[1], suffix))
+        else:
+            stronger = [w for w, _s in sorted(scores.items(), key=lambda kv: -kv[1][0])[:3] if scores[w][0] > own[0]]
+            lines.append("sisi: this session's model (%s) stands at %g (%s)%s. Ask `sisi route` who should do each piece, "
+                         "start that worker with this tool's own subagents (use `sisi delegate` only if it has none), "
+                         "and judge what comes back.%s"
+                         % (model, own[0], own[1],
+                            ("; stronger models available here, strongest first: %s" % ", ".join(stronger)) if stronger else "",
+                            suffix))
+    elif suffix:
+        lines.append("sisi:" + suffix)
+    return _with_facts(lines)
 
 
 # ---------------------------------------------------------------- commands
@@ -1333,7 +1334,7 @@ def cmd_route(args=()):
                   "are not candidates" % excluded)
         if cold:
             print("cold start: no worker here has a judged record, a known price or a benchmark "
-                  "prior yet, so this pick is a trial, not a recommendation from evidence. "
+                  "prior yet, so nothing is known yet about this pick. "
                   "Judge its result (`sisi delegate judge`) and record worker facts "
                   "(`sisi workers fact`) so the next choice has something to go on.")
             line = facts_line()
