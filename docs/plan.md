@@ -1,7 +1,7 @@
 # Plan: bringing sisi into conformance with SPEC.md
 
 The work list for the reconciliation. `docs/reconciliation/critique.md` says what is wrong,
-`docs/target.md` says what replaces it, `docs/spec/conformance.json` holds the status of every
+`docs/design.md` says what replaced it, `docs/spec/conformance.json` holds the status of every
 numbered requirement, and this file says in what order it is built and what the owner has
 asked for. Section numbers in brackets are sections of `SPEC.md`.
 

@@ -1,5 +1,5 @@
 """The work-unit record (SPEC 10), telemetry and the scorecard (SPEC 6.1, 13), `sisi status`, and
-scratch pruning (docs/target.md sections 2, 4, 6)."""
+scratch pruning (docs/design.md sections 2, 4, 6)."""
 import json, os, subprocess, time, unittest
 from unittest import mock
 from support import *
