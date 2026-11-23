@@ -656,6 +656,21 @@ def load_prefs():
     return out
 
 
+def effective_prefs(kind, difficulty, project):
+    """The user's avoid/prefer patterns plus the routing adjustments a learning cycle wrote that apply in
+    this project for this kind (and difficulty, when the adjustment names one). A learned entry carries
+    its learning id as its reason, so `sisi route --explain` shows where it came from."""
+    from . import cycle
+    prefs = load_prefs()
+    for a in cycle.routing_adjustments(project):
+        if a.get("kind") != kind or a.get("difficulty") not in (None, difficulty):
+            continue
+        for key in ("avoid", "prefer"):
+            if a.get(key):
+                prefs[key].append({"pattern": str(a[key]), "why": "learning %s" % a.get("learning")})
+    return prefs
+
+
 def _fact_dates():
     dates = []
     prices = load_prices()
@@ -994,9 +1009,9 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
         timeout = DEFAULT_RUN_TIMEOUT_S
     tried = []
     cand = explicit
-    prefs = load_prefs()
     while True:
         if cand is None:
+            prefs = effective_prefs(kind, difficulty, cwd)
             result = routing.choose(candidates, read_records(), read_availability(), kind, difficulty,
                                     review_of=review_of, now=time.time(), exclude=tried,
                                     avoid=prefs["avoid"], prefer=prefs["prefer"])
@@ -1303,7 +1318,7 @@ def cmd_route(args=()):
     kind, difficulty = setup
     records = read_records()
     candidates, cold, excluded = routable_candidates(build_candidates(), records)
-    prefs = load_prefs()
+    prefs = effective_prefs(kind, difficulty, os.getcwd())
     result = routing.choose(candidates, records, read_availability(), kind, difficulty,
                             review_of=_opt(args, "--review-of"), now=time.time(),
                             avoid=prefs["avoid"], prefer=prefs["prefer"])
