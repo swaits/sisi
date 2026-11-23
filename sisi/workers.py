@@ -501,10 +501,32 @@ def load_prices():
     return read_json(prices_path())
 
 
+def standing_of(entry):
+    """The benchmark standing in a stored fact, or None. Facts recorded before standing had its own
+    name carry it as "score": read the same way, with their source and date."""
+    if not isinstance(entry, dict):
+        return None
+    for field in ("standing", "score"):
+        v = entry.get(field)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+    return None
+
+
 def load_strength_prior():
     d = read_json(strength_path())
     models = d.get("models")
     return models if isinstance(models, dict) else {}
+
+
+def route_cfg():
+    cfg = store.config().get("route")
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def route_floors():
+    """{difficulty: percent of the best usable standing needed} from `route.standing_floor`."""
+    return routing.standing_floors(route_cfg().get("standing_floor"))
 
 
 def _price_for(prices, tool, model, worker):
@@ -561,15 +583,15 @@ def build_candidates(disc=None, records=None):
         cost = price.get("cost_per_million_tokens", price.get("cost"))
         prior_entry = next((prior[k] for k in (worker, model)
                             if k and isinstance(prior.get(k), dict)), {})
-        score = prior_entry.get("score")
+        standing = standing_of(prior_entry)
         c = {"worker": worker, "tool": tool, "model": model,
              "maker": price.get("maker") or prior_entry.get("maker") or routing.maker_of(model or worker),
              "plan": price.get("plan") or tool_plan,
              "cost": float(cost) if isinstance(cost, (int, float)) else None,
              "allowance_pct_left": allowance, "usable": usable, "reason": reason,
              "price_source": price.get("source"), "price_date": price.get("date"),
-             "prior_score": float(score) if isinstance(score, (int, float)) else None,
-             "prior_source": prior_entry.get("source"), "prior_date": prior_entry.get("date"),
+             "standing": standing,
+             "standing_source": prior_entry.get("source"), "standing_date": prior_entry.get("date"),
              "aliases": [worker, model, ("%s/%s" % (tool, model)) if tool and model else None,
                          tool if model is None else None]}
         c["aliases"] = [a for a in c["aliases"] if a]
@@ -825,7 +847,7 @@ def routable_candidates(candidates, records):
     keep = []
     for c in candidates:
         judged = sum(cell["n"] for cell in stats.get(c["worker"], {}).get("by_cell", {}).values())
-        if judged or c.get("price_source") or c.get("prior_score") is not None:
+        if judged or c.get("price_source") or c.get("standing") is not None:
             keep.append(c)
     if not keep:
         return list(candidates), True, 0
@@ -1104,7 +1126,7 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
             prefs = effective_prefs(kind, difficulty, cwd)
             result = routing.choose(candidates, read_records(), read_availability(), kind, difficulty,
                                     review_of=review_of, now=time.time(), exclude=tried,
-                                    avoid=prefs["avoid"], prefer=prefs["prefer"])
+                                    avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors())
             cand = result["choice"]
             if cand is None:
                 notes.append("sisi: no usable worker remains for kind %s at difficulty %s" % (kind, difficulty))
@@ -1434,7 +1456,7 @@ def cmd_route(args=()):
     candidates, limited = apply_limits(candidates, prefs)
     result = routing.choose(candidates, records, read_availability(), kind, difficulty,
                             review_of=_opt(args, "--review-of"), now=time.time(),
-                            avoid=prefs["avoid"], prefer=prefs["prefer"])
+                            avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors())
     result["passed_over"] = list(result["passed_over"]) + limited
     by_worker = {c["worker"]: c for c in everyone}
     down = _down_now(read_availability(), time.time())

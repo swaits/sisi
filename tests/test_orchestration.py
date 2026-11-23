@@ -366,8 +366,8 @@ class ExplorationTests(unittest.TestCase):
         ]
         # Same price: alpha (proven, stronger prior) is the usual pick. Every tenth judged
         # attempt for the kind and difficulty, the thin-record beta gets the task instead.
-        cands[0]["prior_score"] = 90.0
-        cands[1]["prior_score"] = 10.0
+        cands[0]["standing"] = 90.0
+        cands[1]["standing"] = 10.0
         records = [{"kind": "attempt", "id": "e%d" % i, "type": "read", "difficulty": 1,
                     "worker": "tool/alpha-1", "outcome": "accepted", "check": "tests"}
                    for i in range(9)]

@@ -4,7 +4,8 @@ import ast, collections, glob, os, re, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Seams that are documented and exercised by real-behaviour tests (docs/evaluation.md); keep them.
-SEAMS = {"validate_check", "capture_case", "compare_for_candidate"}
+# retry_choice is the pure ladder the `sisi route --retry-of` command calls; it lands with that command.
+SEAMS = {"validate_check", "capture_case", "compare_for_candidate", "retry_choice"}
 
 
 def _files():
