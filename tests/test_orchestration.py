@@ -237,7 +237,8 @@ class FactsTests(OrchCase):
                       "--source", "test fixture benchmark", env=self.env())
         self.assertEqual(r.returncode, 0, r.stderr)
         prior = json.load(open(os.path.join(self.data, "model-strength.json")))
-        self.assertEqual(prior["models"]["muse/beta-1"]["score"], 70)
+        self.assertEqual(prior["models"]["muse/beta-1"]["standing"], 70)
+        self.assertNotIn("score", prior["models"]["muse/beta-1"])
 
     def test_avoid_and_prefer_are_honoured(self):
         """A user's own avoid/prefer constraints shape the recommendation."""

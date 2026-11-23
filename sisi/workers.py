@@ -16,8 +16,9 @@ Personal files (all in the personal data folder):
                            {"plan": "flat"|"per-use", "cost_per_million_tokens": number,
                            "maker": name, "source": text, "date": "YYYY-MM-DD"}},
                            "tools": {"<tool>": same shape}}, written by `sisi workers fact`
-  model-strength.json      worker facts (benchmark standing): {"models": {"<model or worker>":
-                           {"score": 0..100, "source": text, "date": "YYYY-MM-DD"}}}
+  model-strength.json      worker facts (benchmark standing, a published figure; never the measured
+                           accepted rate): {"models": {"<model or worker>":
+                           {"standing": 0..100, "source": text, "date": "YYYY-MM-DD"}}}
   worker-prefs.json        the user's own routing constraints: {"avoid": [{"pattern", "why"}],
                            "prefer": [...], "only": [{"provider", "patterns", "why"}]}, written by
                            `sisi workers avoid|prefer|only`
@@ -519,6 +520,28 @@ def load_strength_prior():
     return models if isinstance(models, dict) else {}
 
 
+def migrate_standing_facts():
+    """Facts recorded before standing had its own name store it as "score". Rename each to "standing",
+    keeping its source, date and maker. Returns how many moved; repeating it moves none."""
+    path = strength_path()
+    data = read_json(path)
+    models = data.get("models")
+    if not isinstance(models, dict):
+        return 0
+    moved = 0
+    for key, entry in list(models.items()):
+        if isinstance(entry, dict) and "score" in entry:
+            rest = {k: v for k, v in entry.items() if k not in ("score", "standing")}
+            models[key] = dict({"standing": entry["standing"] if "standing" in entry else entry["score"]}, **rest)
+            moved += 1
+    if moved:
+        try:
+            write_json(path, data)
+        except OSError:
+            return 0
+    return moved
+
+
 def route_cfg():
     cfg = store.config().get("route")
     return cfg if isinstance(cfg, dict) else {}
@@ -823,7 +846,7 @@ def facts_line(now=None):
     return ("sisi: %s: ask a fast, cheap worker to research current prices and "
             "software-engineering benchmark standing for the workers found here (`sisi workers`) "
             "and record each with its source: `sisi workers fact WORKER --price N --source S` "
-            "and `sisi workers fact WORKER --score N --source S`. Until then routing "
+            "and `sisi workers fact WORKER --standing N --source S`. Until then routing "
             "goes by the judged record alone." % what)
 
 
@@ -905,7 +928,7 @@ def digest_lines(records=None, days=None, now=None):
              % (days, len(attempts), routing.MIN_ATTEMPTS)]
     if not attempts:
         lines.append("  No judged delegations yet. Judge each result with `sisi delegate judge`; "
-                     "until then routing goes on price and benchmark prior alone.")
+                     "until then routing goes on price and benchmark standing alone.")
         return lines
     cells = {}
     for a in attempts:
@@ -923,10 +946,10 @@ def digest_lines(records=None, days=None, now=None):
     rows = rows[:MAX_DIGEST_ROWS]
     rows.sort(key=lambda r: (str(r["type"]), r["diff"] or 0, -(r["ok"] / r["n"] if r["n"] else 0), -r["n"]))
     lines += ["", "Workers by task", "",
-              "Accepted counts results that passed the check and were not reported wrong later. "
+              "Accepted rate counts results that passed the check and were not reported wrong later. "
               "Checked well is the share of those verified by tests, a read, or a second reviewer; "
               "the rest were accepted on a lighter check.", "",
-              "| Type | Diff | Worker | Attempts | Accepted | Checked well | Later wrong | Median min |",
+              "| Type | Diff | Worker | Attempts | Accepted rate | Checked well | Later wrong | Median min |",
               "|---|---|---|---|---|---|---|---|"]
     for r in rows:
         thin = " (thin)" if r["n"] < routing.MIN_ATTEMPTS else ""
@@ -1193,29 +1216,21 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
 # ---------------------------------------------------------------- strength and session lines
 
 
-def strength_scores(candidates, records):
-    """{worker: (score, how)} from the judged record where it is thick enough, else from the
-    stored prior (model-strength.json, each figure with its source and date). No shipped ranking:
-    a model with neither is simply absent here, and its strength is unknown."""
+def strength_scores(candidates):
+    """{worker: (standing, how)} from the stored benchmark standing (model-strength.json, each figure with
+    its source and date). Only standings are here: the accepted rate measured from judged delegations is a
+    different scale and is never mixed in. No shipped ranking: a model with no stored standing is simply
+    absent, and its strength is unknown."""
     prior = load_strength_prior()
-    stats = routing.candidate_stats(candidates, records)
     out = {}
     for c in candidates:
-        cells = stats.get(c["worker"], {}).get("by_cell", {})
-        n = sum(v["n"] for v in cells.values())
-        good = sum(v["good"] for v in cells.values())
-        if n >= routing.MIN_ATTEMPTS:
-            out[c["worker"]] = (100.0 * good / n, "measured from %d judged delegations" % n)
-            continue
-        entry = None
         for key in [c["worker"], c.get("model")] + list(c.get("aliases") or []):
-            if key and isinstance(prior.get(key), dict):
+            standing = standing_of(prior.get(key)) if key else None
+            if standing is not None:
                 entry = prior[key]
+                out[c["worker"]] = (standing, "benchmark standing (%s, %s)" % (entry.get("source") or "no source stated",
+                                                                            entry.get("date") or "no date stated"))
                 break
-        if entry and isinstance(entry.get("score"), (int, float)):
-            how = "stored prior (%s, %s)" % (entry.get("source") or "no source stated",
-                                             entry.get("date") or "no date stated")
-            out[c["worker"]] = (float(entry["score"]), how)
     return out
 
 
@@ -1257,14 +1272,14 @@ def session_lines(model, payload=None):
         suffix = " One delegation is waiting for a judgement: run `sisi workers`, then `sisi delegate judge`."
     elif waiting:
         suffix = " %d delegations are waiting for a judgement: run `sisi workers` to see, then `sisi delegate judge`." % waiting
-    scores = strength_scores(candidates, records) if candidates else {}
+    scores = strength_scores(candidates) if candidates else {}
     cand = resolve_worker(model, candidates) if candidates else None
     own = scores.get(cand["worker"]) if cand else None
     if own is None:
         prior = load_strength_prior().get(model)
-        if isinstance(prior, dict) and isinstance(prior.get("score"), (int, float)):
-            own = (float(prior["score"]), "stored prior (%s, %s)" % (prior.get("source") or "no source stated",
-                                                                     prior.get("date") or "no date stated"))
+        if standing_of(prior) is not None:
+            own = (standing_of(prior), "benchmark standing (%s, %s)" % (prior.get("source") or "no source stated",
+                                                                       prior.get("date") or "no date stated"))
     lines = []
     if own is not None:
         best_score = max([s for s, _h in scores.values()] + [own[0]])
@@ -1347,6 +1362,7 @@ def cmd_workers(args=()):
         return _cmd_up(args[1:])
     if args[:1] == ["import"]:
         return _cmd_import(args[1:])
+    migrate_standing_facts()
     disc = discover(force="--refresh" in args)
     records = read_records()
     avail = read_availability()
@@ -1384,6 +1400,14 @@ def cmd_workers(args=()):
             print("  price: flat-rate plan (the tool reports an allowance, so one more task costs nothing extra)")
     if missing:
         print("Not found on PATH: %s" % ", ".join(missing))
+    standings = sorted(((standing_of(e), k, e) for k, e in load_strength_prior().items() if standing_of(e) is not None),
+                       key=lambda t: (-t[0], t[1]))
+    if standings:
+        print("Benchmark standing (a published figure; routing compares it only with other workers' standing, "
+              "never with the accepted rate measured below):")
+        for standing, worker, entry in standings:
+            print("  benchmark standing %g - %s: %s (%s)" % (standing, worker, entry.get("source") or "no source stated",
+                                                          entry.get("date") or "no date stated"))
     down_now = [(k, v) for k, v in sorted(avail.items()) if isinstance(v, dict)]
     for k, v in down_now:
         if k in {t["name"] for t in disc.get("tools") or []}:
@@ -1819,7 +1843,7 @@ def _cmd_import(args):
 
 def _cmd_fact(args):
     usage = ("usage: sisi workers fact WORKER --price N [--plan flat|per-use] [--maker M] --source S [--date YYYY-MM-DD]\n"
-             "       sisi workers fact WORKER --score 0..100 --source S [--date YYYY-MM-DD]")
+             "       sisi workers fact WORKER --standing 0..100 --source S [--date YYYY-MM-DD]   (--score is the old name)")
     if not args:
         print(usage)
         return 1
@@ -1827,12 +1851,18 @@ def _cmd_fact(args):
     source = _opt(args, "--source")
     date = _opt(args, "--date") or time.strftime("%Y-%m-%d", time.localtime())
     price, price_ok = _number_opt(args, "--price")
-    score, score_ok = _number_opt(args, "--score")
-    if not price_ok or not score_ok or (price is None and score is None):
+    standing, standing_ok = _number_opt(args, "--standing")
+    old_name, old_ok = _number_opt(args, "--score")
+    if standing is None:
+        standing = old_name
+    if not price_ok or not standing_ok or not old_ok or (price is None and standing is None):
         print(usage)
         return 1
     if not source:
         print("sisi: a fact needs its --source (where the figure came from); nothing recorded", file=sys.stderr)
+        return 1
+    if standing is not None and not (0 <= standing <= 100):
+        print("sisi: --standing wants a number from 0 to 100", file=sys.stderr)
         return 1
     if price is not None:
         plan = _opt(args, "--plan")
@@ -1852,21 +1882,20 @@ def _cmd_fact(args):
         prices["models"] = models
         write_json(prices_path(), prices)
         print("recorded price for %s: %g per million tokens (from %s, %s)" % (worker, price, source, date))
-    if score is not None:
-        if not (0 <= score <= 100):
-            print("sisi: --score wants a number from 0 to 100", file=sys.stderr)
-            return 1
+    if standing is not None:
+        migrate_standing_facts()
         data = read_json(strength_path())
         models = data.get("models") if isinstance(data.get("models"), dict) else {}
         entry = dict(models.get(worker) or {})
-        entry.update({"score": score, "source": source, "date": date})
+        entry.pop("score", None)
+        entry.update({"standing": standing, "source": source, "date": date})
         maker = _opt(args, "--maker")
         if maker:
             entry["maker"] = maker
         models[worker] = entry
         data["models"] = models
         write_json(strength_path(), data)
-        print("recorded benchmark standing for %s: %g (from %s, %s)" % (worker, score, source, date))
+        print("recorded benchmark standing for %s: %g (from %s, %s)" % (worker, standing, source, date))
     return 0
 
 
