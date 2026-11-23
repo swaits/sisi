@@ -47,12 +47,12 @@ The rule, in order:
   7. The newest usable version of a maker's class always wins over its older versions (see
      `superseded_by`): no better record and no cheaper plan on the older version brings it back.
      The older one competes again only while the newer one is unusable. The class is read from the
-     id and overridden by what the lead agent recorded (sisi/modelid.py); a model whose class is
-     unknown is never compared.
+     recorded facts (see lineage_from_fact): maker, class and release date; a model with no recorded class
+     is never compared.
   8. Load balancing: within the same price tier and price, the worker that has taken the least work
      relative to its remaining allowance goes first (recorded uses divided by allowance left, an
-     unknown allowance counting as half). Ties break on the more recently released model (a recorded
-     release date, else the version inside one maker's class), then on the worker id.
+     unknown allowance counting as half). Ties break on the more recently released model (its recorded
+     release date), then on the worker id.
 
 Candidates reach here already restricted to workers with a judged record, a known price or a
 benchmark standing (see workers.routable_candidates); on a cold start none qualifies and every
@@ -60,8 +60,6 @@ usable worker is offered, with the explanation saying so.
 """
 import functools
 import re
-
-from . import modelid
 
 MIN_ATTEMPTS = 8          # below this, a worker's record for a kind and difficulty is thin
 MIN_ACCEPTED_RATE = 0.6   # "good enough" among workers with at least MIN_ATTEMPTS attempts
@@ -72,6 +70,55 @@ EXPLORE_EVERY = 10        # about one low-stakes task in ten tries a cheaper thi
 DEFAULT_STANDING_FLOOR = {1: 0.0, 2: 60.0, 3: 85.0}  # percent of the best usable standing needed
 DEFAULT_CLASS_SPAN = {1: 100.0, 2: 70.0, 3: 35.0}  # how far down a maker's class order still counts as capable
 DEFAULT_PRICE_BLEND = 3.0  # parts of input price to one part of output price in a blended price
+
+
+# ---------------------------------------------------------------- a model's identity, from recorded facts only
+#
+# sisi reads nothing from a model's name. A model's maker, class and release date are facts, researched by a
+# cheap, fast worker (`sisi workers classify`) and recorded with `sisi workers fact`. A model with no recorded
+# maker and class has no identity and takes part in no comparison of versions.
+#   identity   (maker, class). For a maker whose lines are the classes, the class is the line's own name; for a
+#              maker with a "flash" beside its standard model, the class is "flash" or "standard". Different
+#              classes are different things and never replace each other.
+#   recency    the recorded release date (YYYY-MM-DD or YYYY-MM). A bare host alias with a recorded class and no
+#              release date counts as the newest version of its class.
+
+UNKNOWN = "unknown"
+
+
+def lineage_from_fact(fact=None, host_native=False):
+    """{key, maker, class, label, released, alias, source} from a model's recorded facts. source is "fact" when
+    both a maker and a class are recorded, else "unknown" (key None: no comparison of versions)."""
+    fact = fact if isinstance(fact, dict) else {}
+    cls = str(fact.get("class") or "").strip().lower()
+    maker = str(fact.get("maker") or "").strip().lower()
+    cls, maker = ("" if cls == UNKNOWN else cls), ("" if maker == UNKNOWN else maker)   # "unknown" is an answer, not a fact
+    released = str(fact["released"]) if fact.get("released") and fact["released"] != UNKNOWN else None
+    out = {"key": None, "maker": maker, "class": cls or UNKNOWN, "label": cls or UNKNOWN, "released": released,
+           "alias": False, "source": UNKNOWN}
+    if cls and maker:
+        out.update(key=(maker, cls), source="fact", alias=bool(host_native and not released))
+    return out
+
+
+def compare_release(a, b):
+    """1 when a is the more recently released model, -1 when b is, 0 when equal or unknowable. A bare alias is the
+    newest of its class; otherwise the recorded release dates decide."""
+    if a.get("alias") or b.get("alias"):
+        return (1 if a.get("alias") else 0) - (1 if b.get("alias") else 0)
+    da, db = days(a.get("released")), days(b.get("released"))
+    if da and db and da != db:
+        return 1 if da > db else -1
+    return 0
+
+
+def days(date):
+    """A YYYY-MM-DD or YYYY-MM date as a number that sorts correctly (months of 31 days: only the order matters);
+    0 when there is no date."""
+    d = str(date or "")
+    if len(d) >= 7 and d[:4].isdigit() and d[5:7].isdigit() and (len(d) == 7 or (len(d) >= 10 and d[8:10].isdigit())):
+        return int(d[0:4]) * 372 + int(d[5:7]) * 31 + (int(d[8:10]) if len(d) >= 10 else 0)
+    return 0
 
 
 def maker_of(name):
@@ -217,9 +264,9 @@ def _versions_newest_first(models):
     providers is one version)."""
     out = []
     ordered = sorted(models, key=lambda d: d["worker"])
-    ordered.sort(key=functools.cmp_to_key(lambda a, b: modelid.compare(_lineage(b), _lineage(a))))
+    ordered.sort(key=functools.cmp_to_key(lambda a, b: compare_release(_lineage(b), _lineage(a))))
     for d in ordered:
-        if out and modelid.compare(_lineage(out[-1][0]), _lineage(d)) == 0:
+        if out and compare_release(_lineage(out[-1][0]), _lineage(d)) == 0:
             out[-1].append(d)
         else:
             out.append([d])
@@ -241,7 +288,7 @@ def inherit_stats(candidates, stats, opts=None):
             groups.setdefault(tuple(l["key"]), []).append(c)
     for group in groups.values():
         for c in group:
-            older = [d for d in group if modelid.compare(_lineage(c), _lineage(d)) > 0]
+            older = [d for d in group if compare_release(_lineage(c), _lineage(d)) > 0]
             if not older:
                 continue
             levels = _versions_newest_first(older)
@@ -265,7 +312,7 @@ def has_predecessor(c, among, opts=None):
     """Whether some worker in `among` is an older version of the same maker and class as `c`."""
     l = _comparable(c, opts)
     return bool(l) and any(_comparable(d, opts) and tuple(_lineage(d)["key"]) == tuple(l["key"])
-                           and modelid.compare(l, _lineage(d)) > 0 for d in among)
+                           and compare_release(l, _lineage(d)) > 0 for d in among)
 
 
 def _price_tier(c):
@@ -444,18 +491,15 @@ def _lineage(c):
     return l if isinstance(l, dict) else None
 
 
-def _comparable(c, opts):
-    """The model's lineage when its class takes part in comparisons of versions: a class that could not be read
-    is never compared, and (with `supersede_guessed` off) neither is one that was only read from the id."""
+def _comparable(c, opts=None):
+    """The model's lineage when its maker and class are recorded; a model without them is never compared."""
     l = _lineage(c)
-    if l and l.get("key") and (l.get("source") == "fact" or (opts or {}).get("supersede_guessed", True)):
-        return l
-    return None
+    return l if l and l.get("key") else None
 
 
 def superseded_by(pool, opts=None):
     """{worker: the newest worker of its maker and class that replaces it}, over the usable `pool`. Workers
-    that share a maker, a line and a class are versions of one model whichever provider carries them; the
+    that share a recorded maker and class are versions of one model whichever provider carries them; the
     older version is replaced by the newest one whatever its record or price. Pure."""
     groups = {}
     for c in pool:
@@ -465,7 +509,7 @@ def superseded_by(pool, opts=None):
     out = {}
     for group in groups.values():
         for c in group:
-            newer = [d for d in group if modelid.compare(_lineage(d), _lineage(c)) > 0]
+            newer = [d for d in group if compare_release(_lineage(d), _lineage(c)) > 0]
             if newer:
                 out[c["worker"]] = _versions_newest_first(newer)[0][0]["worker"]
     return out
@@ -541,8 +585,7 @@ def _assess_all(eligible, stats, kind, difficulty, floors, opts=None):
 
 def recency_order(candidates):
     """{worker: (recorded release date as days, negated; position among the versions of its class, newest first)}.
-    Smaller sorts first, so the more recently released model goes first; what cannot be compared is (0, 0).
-    A recorded release date counts across makers; the version only inside one maker's class."""
+    Smaller sorts first, so the more recently released model goes first; what cannot be compared is (0, 0)."""
     out = {c["worker"]: (0, 0) for c in candidates}
     groups = {}
     for c in candidates:
@@ -552,7 +595,7 @@ def recency_order(candidates):
     for group in groups.values():
         for i, level in enumerate(_versions_newest_first(group)):
             for d in level:
-                out[d["worker"]] = (-modelid.days(_lineage(d).get("released")), i)
+                out[d["worker"]] = (-days(_lineage(d).get("released")), i)
     return out
 
 
@@ -699,26 +742,24 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
             "load_ratios": {c["worker"]: load_ratio(c) for c in candidates},
             "assessments": assessments, "basis": basis, "capable_count": capable_n, "judged_first": judged_first,
             "best_standing": best, "passed_detail": detail, "floors": floors,
-            "superseded": superseded, "class_ask": class_ask(eligible, opts),
+            "superseded": superseded, "class_ask": class_ask(eligible, pool, opts),
             "kind": kind, "difficulty": difficulty}
 
 
-def class_ask(eligible, opts=None):
-    """What the lead agent should be asked to record, because it is about to matter:
-      {"classify": [workers], "order": [(maker, [class labels])]}.
-    classify: a worker whose class could not be read from its id, when another usable worker has the same maker (the
-    two may be versions of one class). A class read from the id with confidence is not asked about; a recorded one
-    never is. order: a maker with two or more classes among the usable workers and no recorded class order."""
-    makers, labels = {}, {}
+def class_ask(eligible, pool, opts=None):
+    """What the lead agent should be asked to have recorded, because the answer could depend on it:
+      {"classify": [workers], "order": [(maker, [classes])]}.
+    classify: a worker with no classification (none stored, not even "unknown") that is in the pool competing for the
+    request while another usable worker exists; a worker kept out for lack of capability could not change the answer.
+    order: a maker with two or more recorded classes among the usable workers and no recorded class order."""
+    labels = {}
     for c in eligible:
-        l = _lineage(c)
+        l = _comparable(c)
         if l:
-            makers.setdefault(l.get("maker"), []).append(c["worker"])
-            if l.get("key"):
-                labels.setdefault(l.get("maker"), set()).add(l.get("label"))
+            labels.setdefault(l["maker"], set()).add(l["label"])
     recorded = (opts or {}).get("class_orders") or {}
-    return {"classify": sorted(c["worker"] for c in eligible if _lineage(c)
-                               and _lineage(c).get("source") == "unknown" and len(makers.get(_lineage(c).get("maker"), [])) > 1),
+    return {"classify": sorted(c["worker"] for c in pool if not _comparable(c) and not c.get("classified"))
+            if len(eligible) > 1 else [],
             "order": [(m, sorted(ls)) for m, ls in sorted(labels.items()) if len(ls) > 1 and m not in recorded]}
 
 

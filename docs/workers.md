@@ -20,9 +20,16 @@ or learned from judged results. The strategy is [canon/orchestration.md](../cano
   A fact without a source is refused. Ranking uses one blend of the two prices, by default three
   parts input to one part output (`route.price_blend_input_parts`); `sisi workers` shows both
   prices and the blend, and lists each benchmark standing apart from the accepted rates it prints.
-- `sisi workers fact WORKER --class NAME [--family NAME] [--maker M] [--released YYYY-MM-DD] --source S` — the
-  class, line and release date the lead agent decided for a model; a recorded fact beats the parser.
-  `sisi workers` lists each routable worker's maker, class (recorded, or a guess read from the id) and recency.
+- `sisi workers fact WORKER --maker M --class NAME [--released YYYY-MM-DD] --source S` — the maker, class and
+  release date researched for a model. `sisi workers` lists each routable worker's recorded maker, class and release date.
+- `sisi workers classify [--record FILE [--by WORKER]]` — sisi reads nothing from a model's name. Without
+  arguments it prints a short instruction and the ids of routable workers that have no classification; hand
+  that to a fast, cheap worker (it takes seconds). The answer is one small JSON object: for each id its maker,
+  class and release date (`unknown` where it does not know), and for each maker its classes from most to least
+  capable. `--record FILE` validates it (an id that was not asked about refuses the whole answer; `unknown` is
+  stored as unknown and changes nothing in routing) and stores the facts with the classifying worker as the
+  source; a class order already recorded is never overwritten. Session start names unclassified workers in its
+  one facts line, and `sisi route` adds one line only when an unclassified worker is in the running.
 - `sisi workers classes MAKER CLASS [CLASS...] --source S` — a maker's classes from most capable to least
   (`--remove` forgets them). A class is the tier word of one line (a "flash" beside the standard model) or,
   for a maker whose lines are the classes, the line's own name; `sisi workers` shows both as the class label.
@@ -91,22 +98,20 @@ one per group of workers passed over as not capable enough, and names an explora
 ## Newest version of a class, always
 
 Newer models are almost always better and almost always cheaper, so `sisi route` always uses the
-most recently released model of a class that is usable, and never an older version of it. A
-model's identity is its maker, its line and its class, read from the id by `sisi/modelid.py`
-(version numbers compared numerically, a date in the id as a date, tier words such as a "flash" or
-"mini" from `canon/model-words.json`) and overridden by what the lead agent records:
-`sisi workers fact WORKER --class NAME [--family NAME] [--maker M] [--released YYYY-MM-DD] --source S`.
-A recorded release date beats version numbers for recency. The same model through two providers is
-one model: if its newest version is usable through any provider, older versions do not compete
-through any provider, and the existing cost comparison picks the provider. There is no exception for
-a better old record or a cheaper old plan. The older version competes again only while the newer is
-unusable (marked down, allowance spent, avoided by the user, or limited away), or when its class is
-unknown. A newer model with a thick bad record is not replaced by its older version either: routing
-moves to another class or maker by the usual rules. Different classes are different things and never
-supersede each other. A class read from the id with confidence takes part at once
-(`route.supersede_guessed`, default true; false lets only recorded classes take part); a class that
-cannot be read (no version, or a word the data does not know) never does, and `sisi route` adds one
-line asking the lead agent to record it.
+most recently released model of a class that is usable, and never an older version of it. sisi reads
+nothing from a model's name: a model's maker, class and release date are facts, researched by a cheap,
+fast worker (session start and `sisi route` say when they are missing) and recorded with
+`sisi workers fact WORKER --maker M --class C --released YYYY-MM-DD --source S`. A model's identity is its
+maker and class; recency is its release date. For a maker whose lines are the classes the class is the
+line's own name; for a maker with a "flash" beside its standard model it is `flash` or `standard`. A model
+with no recorded maker and class is never compared with another. The same model through two providers is
+one model: if its newest version is usable through any provider, older versions do not compete through any
+provider, and the existing cost comparison picks the provider. There is no exception for a better old
+record or a cheaper old plan. The older version competes again only while the newer is unusable (marked
+down, allowance spent, avoided by the user, or limited away) or has no recorded class. A newer model with a
+thick bad record is not replaced by its older version either: routing moves to another class or maker by the
+usual rules. Different classes are different things and never supersede each other. A bare host alias with a
+recorded class and no release date counts as the newest version of its class.
 
 The class order is a prior and nothing more. A worker with no judged proof and no benchmark standing,
 whose class is in its maker's recorded order, is capable when the class sits high enough for the

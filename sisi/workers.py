@@ -22,11 +22,11 @@ Personal files (all in the personal data folder):
                            accepted rate): {"models": {"<model or worker>":
                            {"standing": 0..100, "source": text, "date": "YYYY-MM-DD"}}}
   worker-models.json       what the lead agent decided about each model: {"models": {"<model or worker>":
-                           {"class": name, "family": name, "maker": name, "released": "YYYY-MM-DD",
+                           {"class": name, "maker": name, "released": "YYYY-MM-DD",
                            "source": text, "date": "YYYY-MM-DD"}}, "classes": {"<maker>": {"order": [class,
                            most capable first], "source": text, "date": "YYYY-MM-DD"}}}, written by
-                           `sisi workers fact --class ...` and `sisi workers classes`. A recorded
-                           fact always beats what the parser reads from the id (sisi/modelid.py).
+                           `sisi workers fact --class ...` and `sisi workers classes`. sisi reads
+                           nothing from a model's name: these facts are researched by a cheap worker.
   worker-prefs.json        the user's own routing constraints: {"avoid": [{"pattern", "why"}],
                            "prefer": [...], "only": [{"provider", "patterns", "why"}]}, written by
                            `sisi workers avoid|prefer|only`
@@ -39,7 +39,7 @@ researched when they are missing or old. No price, score or model name ships in 
 import datetime, json, os, re, shutil, statistics, subprocess, sys, time, uuid
 
 from . import brief as brief_contract
-from . import modelid, paths, routing, store
+from . import paths, routing, store
 
 LIST_TIMEOUT_S = 30
 DEFAULT_REFRESH_AFTER_S = 24 * 3600
@@ -586,26 +586,12 @@ def load_model_facts():
     return models, classes
 
 
-_WORDS = []
-
-
-def model_words():
-    """The tier words and ignored words in canon/model-words.json (data the parser reads; cached)."""
-    if not _WORDS:
-        _WORDS.append(read_json(paths.canon("model-words.json")))
-    return _WORDS[0]
-
-
 def route_opts():
-    """Routing options: `route.supersede_guessed` (default true) lets a class read from the id with confidence, not yet
-    recorded by the lead agent, take part in the rule that the newest version of a class wins; the maker class orders
-    the lead agent recorded (`sisi workers classes`); and `route.class_span`, how far down an order each difficulty
-    reaches."""
-    v = route_cfg().get("supersede_guessed")
+    """Routing options: the maker class orders the lead agent recorded (`sisi workers classes`) and
+    `route.class_span`, how far down an order each difficulty reaches."""
     orders = {m: [str(x) for x in e["order"]] for m, e in load_model_facts()[1].items()
               if isinstance(e, dict) and isinstance(e.get("order"), list)}
-    return {"supersede_guessed": v if isinstance(v, bool) else True, "class_orders": orders,
-            "class_span": route_cfg().get("class_span")}
+    return {"class_orders": orders, "class_span": route_cfg().get("class_span")}
 
 
 def route_floors():
@@ -671,9 +657,8 @@ def build_candidates(disc=None, records=None):
         standing = standing_of(prior_entry)
         fact = next((model_facts[k] for k in (worker, model) if k and isinstance(model_facts.get(k), dict)), {})
         maker_fact = price.get("maker") or prior_entry.get("maker") or fact.get("maker")
-        lineage = modelid.resolve(worker, model_words(), fact=dict(fact, maker=maker_fact) if maker_fact else fact,
-                                  host_native=host_native)
-        c = {"worker": worker, "lineage": lineage, "tool": tool, "model": model,
+        lineage = routing.lineage_from_fact(dict(fact, maker=maker_fact) if maker_fact else fact, host_native=host_native)
+        c = {"worker": worker, "lineage": lineage, "classified": bool(fact), "tool": tool, "model": model,
              "maker": price.get("maker") or prior_entry.get("maker") or routing.maker_of(model or worker),
              "plan": price.get("plan") or tool_plan,
              "cost": cost,
@@ -900,11 +885,15 @@ def facts_status(now=None):
     return {"state": "ok", "newest": newest, "max_age_days": max_age}
 
 
-def facts_line(now=None):
-    """One session-start line asking for worker facts to be researched, or "" when they are fresh."""
+def facts_line(now=None, unclassified=0):
+    """One session-start line asking for worker facts to be researched, or "" when they are fresh and every routable
+    worker is classified. `unclassified` is how many routable workers have no recorded maker, class and release date."""
     status = facts_status(now)
+    ask = ("%d routable worker%s no recorded maker, class and release date, so %s never compared with a newer or older "
+           "version: run `sisi workers classify`, hand its output to a fast, cheap worker, then `sisi workers classify "
+           "--record FILE`." % (unclassified, " has" if unclassified == 1 else "s have", "it is" if unclassified == 1 else "they are"))
     if status["state"] == "ok":
-        return ""
+        return ("sisi: " + ask) if unclassified else ""
     if status["state"] == "missing":
         what = "worker facts are missing (no prices or benchmark standing recorded yet)"
     else:
@@ -912,9 +901,8 @@ def facts_line(now=None):
     return ("sisi: %s: ask a fast, cheap worker to research current prices and "
             "software-engineering benchmark standing for the workers found here (`sisi workers`) "
             "and record each with its source: `sisi workers fact WORKER --price N --source S` "
-            "and `sisi workers fact WORKER --standing N --source S`; also the release date of each "
-            "worker that lacks one: `sisi workers fact WORKER --released YYYY-MM-DD --source S`. Until then routing "
-            "goes by the judged record alone." % what)
+            "and `sisi workers fact WORKER --standing N --source S`. Until then routing "
+            "goes by the judged record alone.%s" % (what, (" Also: " + ask) if unclassified else ""))
 
 
 def estimate_cost(tokens, price_entry):
@@ -1322,8 +1310,8 @@ def is_subagent_payload(payload):
     return "/subagents/" in tp or tp.endswith("/subagents")
 
 
-def _with_facts(lines):
-    line = facts_line()
+def _with_facts(lines, unclassified=0):
+    line = facts_line(unclassified=unclassified)
     return lines + [line] if line else lines
 
 
@@ -1368,7 +1356,7 @@ def session_lines(model, payload=None):
                             suffix))
     elif suffix:
         lines.append("sisi:" + suffix)
-    return _with_facts(lines)
+    return _with_facts(lines, len(unclassified_workers(candidates, records)))
 
 
 # ---------------------------------------------------------------- commands
@@ -1426,31 +1414,17 @@ def _price_lines(tool_name, models, prices, shown_keys=None):
     return lines
 
 
-def _recency_text(l):
-    if l.get("alias"):
-        return "newest of its class (a bare host alias)"
-    bits = []
-    if l.get("released"):
-        bits.append("released %s (recorded)" % l["released"])
-    if l.get("version"):
-        bits.append("version %s" % ".".join(str(x) for x in l["version"]))
-    if l.get("date"):
-        bits.append("dated %s" % l["date"])
-    return ", ".join(bits) or "no version or date in the id"
-
-
 def model_lines(cands, limit=40):
-    """One line per routable worker: its maker, class (recorded, or a guess read from the id, or unknown) and
-    how recent it is. Workers whose class is only a guess say so; unknown ones say how to record it."""
+    """One line per routable worker: its recorded maker, class and release date, or that none is recorded."""
     out = []
     for c in sorted(cands, key=lambda c: c["worker"]):
         l = c.get("lineage") or {}
-        if l.get("source") == "unknown" or not l:
-            what = "class unknown: the id does not say it with confidence"
-        else:
-            what = "maker %s, class %s (%s)" % (l["maker"], l["label"], "recorded" if l["source"] == "fact"
-                                               else "a guess read from the id")
-        out.append("  %s: %s; %s" % (c["worker"], what, _recency_text(l)))
+        if l.get("source") != "fact":
+            out.append("  %s: no maker and class recorded" % c["worker"])
+            continue
+        when = ("released %s" % l["released"]) if l.get("released") else (
+            "newest of its class (a bare host alias)" if l.get("alias") else "no release date recorded")
+        out.append("  %s: maker %s, class %s; %s" % (c["worker"], l["maker"], l["label"], when))
     if len(out) > limit:
         out = out[:limit] + ["  ... and %d more" % (len(out) - limit)]
     return out
@@ -1468,6 +1442,8 @@ def cmd_workers(args=()):
         return _cmd_note(args[1:])
     if args[:1] == ["classes"]:
         return _cmd_classes(args[1:])
+    if args[:1] == ["classify"]:
+        return _cmd_classify(args[1:])
     if args[:1] == ["down"]:
         return _cmd_down(args[1:])
     if args[:1] == ["up"]:
@@ -1531,8 +1507,8 @@ def cmd_workers(args=()):
             print(_classes_line(maker, e))
     routable, cold, _excluded = routable_candidates(build_candidates(disc, records), records)
     if routable and not cold:
-        print("Model lines (the class of each routable worker; a guess is read from the id alone: confirm it "
-              "with `sisi workers fact WORKER --class NAME --source S`):")
+        print("Model lines (the recorded maker, class and release date of each routable worker; sisi reads nothing "
+              "from a name: `sisi workers classify` asks a cheap worker):")
         for line in model_lines(routable):
             print(line)
     down_now = [(k, v) for k, v in sorted(avail.items()) if isinstance(v, dict)]
@@ -1595,7 +1571,8 @@ def _route_setup(args):
 
 
 def class_line(result):
-    """The one line asking the lead agent to determine a class sisi cannot read from the id, or None."""
+    """The one line asking the lead agent to have the maker, class and release date recorded for the workers that
+    lack them (a cheap, fast worker does the research), or None."""
     ask = result.get("class_ask") or {}
     names = ask.get("classify") or []
     if not names and ask.get("order"):
@@ -1604,9 +1581,9 @@ def class_line(result):
                 "(classes seen: %s)" % (maker, maker, " ".join(labels), ", ".join(labels)))
     if not names:
         return None
-    return ("sisi: the class of %s%s cannot be read from its id: decide it and record it with "
-            "`sisi workers fact %s --class NAME --source S` (until then it is never compared with a newer or older version)"
-            % (names[0], (" and %d more" % (len(names) - 1)) if len(names) > 1 else "", names[0]))
+    return ("sisi: no maker, class and release date are recorded for %s%s, so it is never compared with a newer or older "
+            "version: run `sisi workers classify`, hand its output to a fast, cheap worker, then `sisi workers classify --record FILE`"
+            % (names[0], (" and %d more" % (len(names) - 1)) if len(names) > 1 else ""))
 
 
 def cmd_route(args=()):
@@ -1991,8 +1968,8 @@ def _cmd_fact(args):
     usage = ("usage: sisi workers fact WORKER --price-in N --price-out N [--plan flat|per-use] [--maker M] --source S [--date YYYY-MM-DD]\n"
              "       sisi workers fact WORKER --price N (one blended figure) [--plan ...] [--maker M] --source S\n"
              "       sisi workers fact WORKER --standing 0..100 --source S [--date YYYY-MM-DD]   (--score is the old name)\n"
-             "       sisi workers fact WORKER --class NAME [--family NAME] [--maker M] [--released YYYY-MM-DD] --source S\n"
-             "       (the class, family and release date the lead agent decided for a model; a recorded fact beats the parser)")
+             "       sisi workers fact WORKER --maker M --class NAME [--released YYYY-MM-DD] --source S\n"
+             "       (the maker, class and release date of a model, as researched; sisi reads nothing from a name)")
     if not args:
         print(usage)
         return 1
@@ -2087,11 +2064,11 @@ _NAME = re.compile(r"[a-z0-9][a-z0-9.+-]*")
 
 
 def _model_fact_args(args):
-    """{class, family, maker, released} from the command line, {} when none is given, False (after saying why)
-    when one is malformed. The maker alone belongs to a price or standing fact, so it is read here only
-    beside a class, family or release date."""
+    """{class, maker, released} from the command line, {} when none is given, False (after saying why) when one is
+    malformed. The maker alone belongs to a price or standing fact, so it is read here only beside a class or a
+    release date."""
     out = {}
-    for opt, field in (("--class", "class"), ("--family", "family"), ("--released", "released")):
+    for opt, field in (("--class", "class"), ("--released", "released")):
         v = _opt(args, opt)
         if v is None:
             continue
@@ -2109,6 +2086,109 @@ def _model_fact_args(args):
     if out and _opt(args, "--maker"):
         out["maker"] = _opt(args, "--maker").strip().lower()
     return out
+
+
+CLASSIFY_BATCH = 40
+CLASSIFY_INSTRUCTION = """Classify these AI models. For each id below give: its maker; its class (the line or tier of that maker it
+belongs to: a "flash" or "mini" beside a standard model, or a separately named line; one short lowercase word,
+"standard" for a plain flagship); and its release date (YYYY-MM-DD, or YYYY-MM when the day is unknown).
+For each maker also give its classes in order from most to least capable. Say "unknown" wherever you do not
+know; do not guess. Answer with one JSON object and nothing else, in this shape:
+{"workers": {"<id>": {"maker": "...", "class": "...", "released": "..."}},
+ "classes": {"<maker>": ["most capable class", "...", "least capable class"]}}
+Ids to classify:"""
+
+
+def unclassified_workers(candidates, records):
+    """Ids of routable workers with no classification stored (an answer of "unknown" counts as stored)."""
+    routable, cold, _ = routable_candidates(candidates, records)
+    return [] if cold else sorted(c["worker"] for c in routable if not c.get("classified"))
+
+
+def _classify_answer(text):
+    """The JSON object in a worker's answer (it may be wrapped in prose or a code fence), or None."""
+    for chunk in (text, text[text.find("{"):text.rfind("}") + 1] if "{" in text and "}" in text else ""):
+        try:
+            d = json.loads(chunk)
+        except ValueError:
+            continue
+        if isinstance(d, dict):
+            return d
+    return None
+
+
+def _valid_name(v):
+    return isinstance(v, str) and (v.strip().lower() == "unknown" or bool(_NAME.fullmatch(v.strip().lower())))
+
+
+def _cmd_classify(args):
+    """`sisi workers classify` prints the question for a cheap, fast worker: the routable workers with no
+    classification and the instruction. `--record FILE [--by WORKER]` validates the answer and stores it."""
+    records = read_records()
+    asked = unclassified_workers(build_candidates(records=records), records)
+    path = _opt(args, "--record")
+    if path is None:
+        if not asked:
+            print("every routable worker is classified.")
+            return 0
+        print(CLASSIFY_INSTRUCTION)
+        for w in asked[:CLASSIFY_BATCH]:
+            print(w)
+        if len(asked) > CLASSIFY_BATCH:
+            print("(%d more: ask again after recording these)" % (len(asked) - CLASSIFY_BATCH))
+        return 0
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        print("sisi: cannot read %s: %s" % (path, e), file=sys.stderr)
+        return 1
+    answer = _classify_answer(text)
+    given = answer.get("workers") if isinstance(answer, dict) else None
+    if not isinstance(given, dict):
+        print('sisi: the answer is not a JSON object with a "workers" object; nothing recorded', file=sys.stderr)
+        return 1
+    strangers = sorted(w for w in given if w not in set(asked))
+    if strangers:
+        print("sisi: not asked about (or already classified): %s; nothing recorded" % ", ".join(strangers[:5]), file=sys.stderr)
+        return 1
+    clean = {}
+    for w, e in given.items():
+        released = e.get("released", "unknown") if isinstance(e, dict) else None
+        ok = isinstance(e, dict) and _valid_name(e.get("maker")) and _valid_name(e.get("class"))
+        if ok and str(released).lower() != "unknown":
+            try:
+                ok = routing.days(released) > 0 and (len(released) == 7 or datetime.date.fromisoformat(released) is not None)
+            except (ValueError, TypeError):
+                ok = False
+        if not ok:
+            print("sisi: the entry for %s is not {maker, class, released} with short names and a YYYY-MM[-DD] date "
+                  "(or unknown); nothing recorded" % w, file=sys.stderr)
+            return 1
+        clean[w] = {"maker": e["maker"].strip().lower(), "class": e["class"].strip().lower(),
+                    "released": str(released).strip().lower() if str(released).lower() != "unknown" else "unknown"}
+    orders = answer.get("classes") if isinstance(answer.get("classes"), dict) else {}
+    source = "classified by %s" % (_opt(args, "--by") or "a cheap worker")
+    date = time.strftime("%Y-%m-%d", time.localtime())
+    data = read_json(models_path())
+    models = data.get("models") if isinstance(data.get("models"), dict) else {}
+    classes = data.get("classes") if isinstance(data.get("classes"), dict) else {}
+    for w, e in clean.items():
+        entry = {k: v for k, v in e.items() if not (k == "released" and v == "unknown")}
+        models[w] = dict(entry, source=source, date=date)
+    stored_orders = 0
+    for maker, order in orders.items():
+        names = [str(x).strip().lower() for x in order] if isinstance(order, list) else []
+        maker = str(maker).strip().lower()
+        if (maker and maker != "unknown" and maker not in classes and len(names) > 1 and len(set(names)) == len(names)
+                and all(_NAME.fullmatch(x) for x in names)):
+            classes[maker] = {"order": names, "source": source, "date": date}
+            stored_orders += 1
+    data["models"], data["classes"] = models, classes
+    write_json(models_path(), data)
+    unknown = sum(1 for e in clean.values() if "unknown" in (e["maker"], e["class"]))
+    print("recorded %d classification(s) (%d unknown) and %d class order(s), from %s" % (len(clean), unknown, stored_orders, source))
+    return 0
 
 
 def _cmd_classes(args):

@@ -4,7 +4,7 @@ Requirement ids: R-7.2-1, R-7.2-2, R-7.2-3."""
 import json, os, random, unittest
 from support import *
 from sisi import routing
-from test_model_supersession import cand, attempts, pick, NOW
+from test_model_supersession import cand, attempts, pick, NOW, R1, R2
 from test_worker_models import ModelCase
 
 ORDER = {"abc": ["fable", "opus", "sonnet", "haiku"]}
@@ -12,7 +12,7 @@ COST = {"fable": 9.0, "opus": 6.0, "sonnet": 3.0, "haiku": 1.0}
 
 
 def fleet(**extra):
-    return [cand("prov/abc-%s-5" % c, **dict({"cost": COST[c]}, **extra.get(c, {}))) for c in ("fable", "opus", "sonnet", "haiku")]
+    return [cand("prov/abc-%s-5" % c, **dict({"cost": COST[c], "cls": c}, **extra.get(c, {}))) for c in ("fable", "opus", "sonnet", "haiku")]
 
 
 def best(cands, difficulty, records=(), **kw):
@@ -62,13 +62,13 @@ class ClassOrderTests(unittest.TestCase):
         self.assertEqual((who, r["basis"]), ("prov/abc-sonnet-5", "strongest"))
 
     def test_another_makers_models_are_not_placed_by_this_order(self):
-        other = cand("prov/xyz-opus-5", cost=0.1, maker="xyz")
+        other = cand("prov/xyz-opus-5", cls="opus", cost=0.1, maker="xyz")
         who, r = best(fleet() + [other], 3)
         self.assertEqual(who, "prov/abc-opus-5")
         self.assertNotEqual(r["assessments"]["prov/xyz-opus-5"]["tier"], "class")
 
     def test_a_class_missing_from_the_order_is_not_placed(self):
-        extra = cand("prov/abc-ember-1", cost=0.1)
+        extra = cand("prov/abc-ember-1", cls="ember", cost=0.1)
         who, r = best(fleet() + [extra], 3)
         self.assertNotEqual(r["assessments"]["prov/abc-ember-1"]["tier"], "class")
 
@@ -77,13 +77,13 @@ class ClassOrderTests(unittest.TestCase):
         self.assertEqual(r["class_ask"]["order"], [("abc", ["fable", "haiku", "opus", "sonnet"])])
         r = best(fleet(), 3)[1]
         self.assertEqual(r["class_ask"]["order"], [])
-        one = pick([cand("prov/abc-opus-5"), cand("prov/abc-opus-6")], (), 3)[1]
+        one = pick([cand("prov/abc-opus-5", cls="opus", rel=R1), cand("prov/abc-opus-6", cls="opus", rel=R2)], (), 3)[1]
         self.assertEqual(one["class_ask"]["order"], [])   # one class only: nothing to order
 
     def test_property_the_order_never_outranks_a_record_or_a_standing(self):
         rng = random.Random(9)
         for _ in range(300 * ITERS):
-            cands = [cand("prov/abc-%s-5" % c, cost=rng.choice([1.0, 2.0, 5.0]),
+            cands = [cand("prov/abc-%s-5" % c, cls=c, cost=rng.choice([1.0, 2.0, 5.0]),
                           standing=rng.choice([None, None, 40.0, 90.0])) for c in rng.sample(list(COST), rng.randint(2, 4))]
             records = []
             for c in cands:
@@ -123,6 +123,7 @@ class ClassesCommandTests(ModelCase):
         models = ("abc-fable-5", "abc-opus-5", "abc-sonnet-5", "abc-haiku-5")
         for m in models:
             self.sisi("workers", "fact", "muse/" + m, "--price", str(COST[m.split("-")[1]]), "--source", "fixture", env=self.env(models))
+            self.record("muse/" + m, m.split("-")[1], models=models)
         first = self.route(3, models=models)
         self.assertIn("record the order", first.stdout)
         self.assertLessEqual(len(first.stdout.splitlines()), 7, first.stdout)

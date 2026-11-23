@@ -37,10 +37,11 @@ present; nothing here names one. Read on demand: `sisi delegate guide`.
   version of it: newer models are almost always better and almost always cheaper, so neither a
   better old record nor a cheaper old plan brings an older version back. A new version starts
   from its predecessor's judged record until it has its own. Two exceptions only: the newer model
-  is unusable right now (down, out of allowance, avoided), or its class is not known yet. Classes
-  are not versions of each other: a maker's "flash" is a different thing from its standard model,
-  and a maker's separately named lines are different classes. Determine the class of a model
-  before comparing it with another (`sisi workers fact W --class NAME`), and a maker's classes,
+  is unusable right now (down, out of allowance, avoided), or its class is not recorded yet.
+  Classes are not versions of each other: a maker's "flash" is a different thing from its
+  standard model, and a maker's separately named lines are different classes. Never guess a class
+  from a name: have a cheap, fast worker research each model's maker, class and release date,
+  record them (`sisi workers fact W --maker M --class C --released D`), and record a maker's classes,
   most capable first, with `sisi workers classes`. A newer model that measures badly is replaced
   by a different class or maker, never by its older version.
 - Ask `sisi route --kind K --difficulty N` before delegating; `--explain` says
