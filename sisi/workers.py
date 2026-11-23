@@ -935,6 +935,9 @@ def routable_candidates(candidates, records):
             keep.append(c)
     if not keep:
         return list(candidates), True, 0
+    # a new version of a model that has a record, price or standing starts from its predecessor's record
+    opts = route_opts()
+    keep = keep + [c for c in candidates if c not in keep and routing.has_predecessor(c, keep, opts)]
     return keep, False, len(candidates) - len(keep)
 
 

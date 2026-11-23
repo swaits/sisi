@@ -143,5 +143,23 @@ class RouteSupersessionTests(ModelCase):
         self.assertNotIn("cannot be read", self.route(1).stdout)
 
 
+class RouteInheritanceTests(ModelCase):
+    def test_a_new_release_with_no_data_of_its_own_gets_ordinary_work_at_once(self):
+        """R-7.2-1: discovered, unpriced, unjudged, yet routable and capable through its predecessor's record."""
+        self.seed([("muse/abc-5.3", 12, 12)], difficulty=2)
+        r = self.route(2, "--explain")
+        self.assertEqual(r.stdout.splitlines()[0], "muse/abc-5.4", r.stdout)
+        self.assertIn("the record of its predecessor muse/abc-5.3", r.stdout)
+        self.assertLessEqual(len(r.stdout.splitlines()), 20, r.stdout)
+        plain = self.route(2).stdout.splitlines()
+        self.assertLessEqual(len(plain), 6, plain)
+
+    def test_once_it_has_a_thick_record_of_its_own_the_inherited_one_stops_applying(self):
+        self.seed([("muse/abc-5.3", 12, 12), ("muse/abc-5.4", 9, 9)], difficulty=2)
+        r = self.route(2, "--explain")
+        self.assertEqual(r.stdout.splitlines()[0], "muse/abc-5.4", r.stdout)
+        self.assertNotIn("predecessor", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

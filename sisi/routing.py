@@ -183,6 +183,60 @@ def candidate_stats(candidates, records):
     return stats
 
 
+def _versions_newest_first(models):
+    """[[workers of one version], ...] from the newest version to the oldest (one model through several
+    providers is one version)."""
+    out = []
+    for d in sorted(models, key=lambda d: (modelid.recency_key(_lineage(d)), d["worker"])):
+        if out and modelid.compare(_lineage(out[-1][0]), _lineage(d)) == 0:
+            out[-1].append(d)
+        else:
+            out.append([d])
+    return out
+
+
+def inherit_stats(candidates, stats, opts=None):
+    """Judged cells as evidence sees them: a model with no thick record of its own for a kind and difficulty
+    starts from the thick record of the closest older version of the same maker and class (walking back one
+    version at a time, the first thick record decides). Only a record that proves the work is inherited: a
+    predecessor's bad record starts the newer model from its benchmark or from nothing, and a thin record of the
+    model's own that already repeats rejections is not papered over. The model's own thick record always stands
+    alone. An inherited cell carries `from`, the worker whose record it is."""
+    eff = {w: {"uses": st["uses"], "by_cell": dict(st["by_cell"])} for w, st in stats.items()}
+    groups = {}
+    for c in candidates:
+        l = _comparable(c, opts)
+        if l:
+            groups.setdefault(tuple(l["key"]), []).append(c)
+    for group in groups.values():
+        for c in group:
+            older = [d for d in group if modelid.compare(_lineage(c), _lineage(d)) > 0]
+            if not older:
+                continue
+            levels = _versions_newest_first(older)
+            own = stats[c["worker"]]["by_cell"]
+            for ck in sorted({k for d in older for k in stats[d["worker"]]["by_cell"]}, key=str):
+                mine = own.get(ck, _NO_CELL)
+                if _thick(mine) or _contradicts(mine):
+                    continue
+                for level in levels:
+                    cells = [(d["worker"], stats[d["worker"]]["by_cell"].get(ck)) for d in level]
+                    cells = [(w, x) for w, x in cells if x]
+                    merged = {"n": sum(x["n"] for _w, x in cells), "good": sum(x["good"] for _w, x in cells)}
+                    if _thick(merged):
+                        if _proven(merged):
+                            eff[c["worker"]]["by_cell"][ck] = dict(merged, **{"from": max(cells, key=lambda t: (t[1]["n"], t[0]))[0]})
+                        break
+    return eff
+
+
+def has_predecessor(c, among, opts=None):
+    """Whether some worker in `among` is an older version of the same maker and class as `c`."""
+    l = _comparable(c, opts)
+    return bool(l) and any(_comparable(d, opts) and tuple(_lineage(d)["key"]) == tuple(l["key"])
+                           and modelid.compare(l, _lineage(d)) > 0 for d in among)
+
+
 def _price_tier(c):
     if c.get("plan") == "flat":
         return 0
@@ -234,6 +288,8 @@ def _by_difficulty(stats, worker, kind):
         p = pooled.setdefault(d, {"n": 0, "good": 0})
         p["n"] += cell["n"]
         p["good"] += cell["good"]
+        if cell.get("from"):
+            p["from"] = cell["from"]
     return own, pooled
 
 
@@ -279,7 +335,8 @@ def assess(stats, worker, kind, difficulty, standing=None, best_standing=None, f
                     proof = ("b-all", wide[0], pooled[wide[0]])
     if proof is not None:
         tier, at, cell = proof
-        out.update(tier=tier, capable=True, level=3, at=at, n=cell["n"], good=cell["good"], measure=_rate(cell))
+        out.update(tier=tier, capable=True, level=3, at=at, n=cell["n"], good=cell["good"], measure=_rate(cell),
+                   inherited_from=cell.get("from"))
         return out
     if standing is not None:
         pct = _floor_pct(floors, d)
@@ -304,6 +361,8 @@ def strength(a):
     if a["bad"]:
         return (-1, 0, 0.0)
     if a["tier"] in _TIER_RANK:
+        if a.get("inherited_from"):
+            return (3, 1, a["measure"])   # a predecessor's record: above a benchmark, below the model's own
         return (4, -_TIER_RANK[a["tier"]], a["measure"])
     if a["standing"] is not None and not a["contradicted"]:
         return (3, 0, float(a["standing"]))
@@ -502,7 +561,7 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
     now = float(now or 0)
     eligible, passed, stats, author_maker, superseded = _prepare(candidates, records, availability, now, exclude,
                                                                  avoid, review_of, opts)
-    assessments, best = _assess_all(eligible, stats, kind, difficulty, floors)
+    assessments, best = _assess_all(eligible, inherit_stats(candidates, stats, opts), kind, difficulty, floors)
     key, rate, load_ratio = _make_key(stats, kind, difficulty, prefer)
 
     pool, basis = _select(eligible, assessments, difficulty) if eligible else ([], "none")
@@ -634,7 +693,8 @@ def retry_choice(candidates, records, availability, kind, difficulty, rejected, 
     now = float(now or 0)
     eligible, passed, stats, author_maker, _superseded = _prepare(candidates, records, availability, now, exclude,
                                                                   avoid, review_of, opts)
-    assessments, best = _assess_all(eligible, stats, kind, difficulty, floors)
+    eff = inherit_stats(candidates, stats, opts)
+    assessments, best = _assess_all(eligible, eff, kind, difficulty, floors)
     key, _rate, _load = _make_key(stats, kind, difficulty, prefer)
     out = {"choice": None, "step": None, "passed_over": passed, "stats": stats, "author_maker": author_maker,
            "assessments": assessments, "best_standing": best, "kind": kind, "difficulty": difficulty,
@@ -650,7 +710,7 @@ def retry_choice(candidates, records, availability, kind, difficulty, rejected, 
         return out
     gone = next((c for c in candidates if c["worker"] == rejected), None)
     floor = (strength(assessments[rejected]) if mine is not None else
-             strength(assess(stats, rejected, kind, difficulty, _standing_of(gone) if gone else None, best, floors)))
+             strength(assess(eff, rejected, kind, difficulty, _standing_of(gone) if gone else None, best, floors)))
     better = [c for c in others if assessments[c["worker"]]["capable"] and strength(assessments[c["worker"]]) > floor]
     better = _prefer_judged(better, assessments, difficulty)[0]
     if better:
@@ -685,6 +745,13 @@ def evidence_line(a, kind, difficulty, choice, basis):
     if a["bad"]:
         return ("evidence: none favourable; every usable worker has a poor record, so this one has the best "
                 "accepted rate (%d of %d for %s)" % (a["good"], a["n"], kind))
+    line = _evidence_line(a, kind, difficulty, choice, basis)
+    if a.get("inherited_from"):
+        line += " (the record of its predecessor %s; it has none of its own yet)" % a["inherited_from"]
+    return line
+
+
+def _evidence_line(a, kind, difficulty, choice, basis):
     tier = a["tier"]
     if tier == "a":
         return ("evidence (a), judged record: %d of %d accepted for %s at difficulty %d (%s, bar %s)"
