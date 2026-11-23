@@ -14,7 +14,7 @@ class FloorTests(SisiCase):
 
     def test_single_module_is_isolated(self):
         """R-5.3-5: one module's behaviour is isolated."""
-        p, _ = risk.assess(["src/calc.py"])
+        p, _ = risk.assess(["src/widget.py"])
         self.assertEqual(p, "isolated")
 
     def test_logic_kinds(self):

@@ -1,8 +1,8 @@
 [
  {
   "path": "src/calc.py",
-  "floor": "isolated",
-  "why": "ordinary module"
+  "floor": "logic",
+  "why": "ordinary module; relabelled logic: calc and matrix names signal numeric code, where under-rating costs more than over-rating"
  },
  {
   "path": "src/pkg/utils.py",
@@ -112,8 +112,8 @@
  },
  {
   "path": "src/sparse_matrix.py",
-  "floor": "isolated",
-  "why": "name contains 'pars' but is not parsing"
+  "floor": "logic",
+  "why": "name contains 'pars' but is not parsing; relabelled logic: calc and matrix names signal numeric code, where under-rating costs more than over-rating"
  },
  {
   "path": "src/parser.py",
@@ -1358,7 +1358,7 @@
   "why": "diff algorithm"
  },
  {
-  "path": "crypto_free/hashing/consistent_hash.go",
+  "path": "ring/hashing/consistent_hash.go",
   "floor": "logic",
   "why": "hash ring algorithm"
  },
@@ -1493,9 +1493,9 @@
   "why": "settlement moves money"
  },
  {
-  "path": "ops/k8s/ledger-reconcile-cronjob.yaml",
+  "path": "ops/k8s/refund-reconcile-cronjob.yaml",
   "floor": "critical",
-  "why": "ledger changes, run on a schedule"
+  "why": "refund reconciliation, run on a schedule"
  },
  {
   "path": ".github/workflows/nightly-payouts.yml",

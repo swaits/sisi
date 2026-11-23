@@ -23,7 +23,9 @@ How ONE path is classified (`classify_path`), in this order:
      "author", "card", never "auth"). Tokens match whole words; a trailing `*` is a prefix
      and is used only where no unrelated word starts that way (never for `pars`: parsley).
      A pattern may carry an "except" (glob/token) that cancels it, e.g. a front-end
-     "view model" or a machine-learning "model" is not an ORM model. The highest matching
+     "view model" or a machine-learning "model" is not an ORM model. A pattern may also carry
+     a "requires" (a second cue that must be in the same path: `key` AND `rotate`) and
+     "min_stem_tokens" (compound file names only). The highest matching
      profile wins. A source file that matches nothing is isolated.
   3. Override patterns (no "stage": project and user-store adjustments) only raise.
 How a CHANGE is classified (`assess`): the highest floor among its paths; a change that
@@ -144,6 +146,10 @@ def _token_match(path, wanted, scope):
 def _pattern_hits(path, pat):
     if isinstance(pat.get("except"), dict) and _pattern_hits(path, pat["except"]):
         return False  # a pattern's own exclusion (e.g. a front-end "view model" is not stored data)
+    if isinstance(pat.get("requires"), dict) and not _pattern_hits(path, pat["requires"]):
+        return False  # a pattern that needs a second cue in the same path (e.g. "key" AND "rotate")
+    if pat.get("min_stem_tokens") and len(_path_tokens(path)[1]) < pat["min_stem_tokens"]:
+        return False  # compound names only: `user_store`, not a bare `Store`
     if pat.get("glob") and any(_glob_match(path, g) for g in _as_list(pat["glob"])):
         return True
     if pat.get("token") and _token_match(path, _as_list(pat["token"]), pat.get("scope") or "any"):
