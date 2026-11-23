@@ -326,7 +326,11 @@ def new_turn(sid, cwd=None, prompt=None):
         # A host may put its own context in front of a child's first prompt, so the brief's opening line is
         # looked for near the top, not only at character zero. The session record is marked too: the contract
         # guard and the gate read `subagent` there, and a worker must be a worker on every path.
-        if m["prompts"] == 1 and any(ln.strip().lower().startswith(brief_line())
+        # Briefs written by hand open in more than one way; these openings (the template's own line first) all
+        # tell the reader it is a worker. They count only when they start a line near the top of the first prompt.
+        openings = (brief_line(), "you are a worker", "you are a subagent", "you are a sub-agent",
+                    "you are a delegate")
+        if m["prompts"] == 1 and any(ln.strip().lower().startswith(openings)
                                      for ln in text.lstrip()[:600].splitlines()):
             m["worker"] = True
             try:
