@@ -1179,7 +1179,8 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
     prefs = effective_prefs(kind, difficulty, cwd)
     if cand is not None and cand.get("host_native"):
         notes.append("sisi: %s is a host-native worker; start it with the host's own subagent tool "
-                     "(`sisi delegate` runs only command-line tools)" % cand["worker"])
+                     "(`sisi delegate` runs only command-line tools)" % cand["worker"] if not cand.get("host_mechanism") else
+                     "sisi: %s is reached through the host, not by `sisi delegate`: %s" % (cand["worker"], cand["host_mechanism"]))
         return None, None, notes
     candidates = [c for c in apply_limits(candidates, prefs)[0] if not c.get("host_native")]
     while True:

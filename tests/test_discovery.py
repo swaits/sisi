@@ -140,6 +140,18 @@ class NewToolOnPath(DiscoveryCase):
         self.assertEqual(discovery.session_start(now=1000.0 + 7 * 3600), "", "and not again after the age passes")
         self.assertEqual(self.runs(), [], "nothing on PATH is ever executed")
 
+    def test_a_name_that_leaves_and_comes_back_is_not_announced_again(self):
+        discovery.session_start(now=1.0)
+        time.sleep(0.02)
+        p = self.exe("wanderer")
+        self.assertIn("wanderer", discovery.session_start(now=2.0))
+        time.sleep(0.02)
+        os.unlink(p)
+        self.assertEqual(discovery.session_start(now=3.0), "")
+        time.sleep(0.02)
+        self.exe("wanderer")
+        self.assertEqual(discovery.session_start(now=4.0), "")
+
     def test_the_tick_hook_prints_the_notice_once_over_two_session_starts(self):
         env = {"PATH": self.userbin + os.pathsep + os.environ["PATH"]}
         first = self.sisi_proc("tick", stdin=json.dumps({"session_id": "a1", "source": "startup", "cwd": self.proj}), env=env)
@@ -222,6 +234,9 @@ class HostListing(DiscoveryCase):
         self.assertTrue(cands["alpha/m-1"]["usable"])
         self.assertFalse(cands["beta/b-1"]["usable"])
         self.assertIn("disabled", cands["beta/b-1"]["reason"])
+        self.assertFalse(cands["beta/b-1"].get("unproven_ok"))
+        self.assertNotIn("beta/b-1", workers.facts_line())
+        self.assertIn("alpha/m-1", workers.facts_line())
         self.assertNotIn("beta", self.sisi("route", "--kind", "read", "--difficulty", "1").stdout.splitlines()[0])
         shown = self.sisi("workers").stdout
         self.assertIn("beta - not usable now", shown)
@@ -238,6 +253,15 @@ class HostListing(DiscoveryCase):
         self.assertIn("target.providerInstanceId=alpha", lines[1])
         self.assertIn("target.model=m-1", lines[1])
         self.assertIn("unproven: check this result with at least the tests or a read of the diff", r.stdout)
+
+    def test_sisi_delegate_does_not_run_a_host_worker_it_says_how_the_host_starts_it(self):
+        self.feed(LISTING_TOOL, wrapped(LISTING))
+        brief = os.path.join(self.proj, "b.md")
+        open(brief, "w").write(BRIEF)
+        r = self.sisi("delegate", "--kind", "read", "--difficulty", "1", "--brief", brief, "--worker", "alpha/m-1")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("target.providerInstanceId=alpha", r.stdout)
+        self.assertIn("target.model=m-1", r.stdout)
 
     def test_a_worker_gone_from_enough_listings_is_dropped(self):
         self.feed(LISTING_TOOL, wrapped(LISTING))
@@ -288,6 +312,11 @@ class HostListing(DiscoveryCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(r.stdout.splitlines()), 1, r.stdout)
         self.assertIn("2 new workers", json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"])
+
+    def test_a_payload_that_is_not_an_object_does_nothing(self):
+        for payload in (None, [1], "x", 5, {}, {"tool_name": None}, {"tool_name": LISTING_TOOL}):
+            discovery.after_tool(payload)
+        self.assertFalse(os.path.exists(discovery.host_state_file()))
 
     def test_other_tools_cost_nothing_and_are_left_alone(self):
         self.assertEqual(self.feed("Read", {"x": 1}), "")
@@ -368,6 +397,14 @@ class LearnedDriver(DiscoveryCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("must both be 'fakeagent'", r.stdout)
         self.assertEqual(self.runs(), [])
+
+    def test_a_shell_or_interpreter_is_not_a_tool_even_when_the_name_matches(self):
+        self.exe("sh")  # a command on PATH that is not an agent tool
+        f = driver_file(os.path.join(self.tmp, "sh.json"), name="sh", exe="sh", run=["sh", "{prompt}"], list=None,
+                        list_kind=None, model_flag=None)
+        r = self.sisi("workers", "learn", "sh", "--check", f)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("shell or interpreter", r.stdout)
 
     def test_a_file_that_is_not_json_or_too_large_is_refused(self):
         self.exe("fakeagent")

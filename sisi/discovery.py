@@ -49,11 +49,12 @@ def data():
     return _DATA[0]
 
 
-def cfg(name):
+def conf():
+    """The `discovery` settings, each valid or its default; the config is read once per call."""
     c = store.config().get("discovery")
-    v = c.get(name) if isinstance(c, dict) else None
-    d = DEFAULTS[name]
-    return v if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0 else d
+    c = c if isinstance(c, dict) else {}
+    return {k: (c[k] if isinstance(c.get(k), (int, float)) and not isinstance(c.get(k), bool) and c[k] >= 0 else d)
+            for k, d in DEFAULTS.items()}
 
 
 # ---------------------------------------------------------------- small files
@@ -174,8 +175,9 @@ def session_start(now=None):
     marks = _marks(dirs)
     starts = int(st.get("starts") or 0) + 1
     first = not isinstance(st.get("names"), list)
-    due = (first or st.get("marks") != marks or now - float(st.get("checked") or 0) >= cfg("path_refresh_s")
-           or starts >= cfg("path_every_starts"))
+    c = conf()
+    due = (first or st.get("marks") != marks or now - float(st.get("checked") or 0) >= c["path_refresh_s"]
+           or starts >= c["path_every_starts"])
     if not due:
         st["starts"] = starts
         _save(f, st)
@@ -261,7 +263,7 @@ def host_state_file():
     return _state_file("host-workers.json")
 
 
-def apply_listing(state, host, parsed, now, drop_after):
+def apply_listing(state, host, parsed, now, drop_after, catalogue_over):
     """Fold a listing into the stored host workers. Returns how many usable workers are new and worth
     trying (a provider with more models than discovery.catalogue_over is a catalogue, not a menu).
     A worker missing from `drop_after` listings in a row is forgotten."""
@@ -272,7 +274,7 @@ def apply_listing(state, host, parsed, now, drop_after):
     for p in parsed:
         entry = provs.setdefault(p["provider"], {"models": {}})
         entry.update(kind=p["kind"], name=p["name"], usable=p["usable"], reason=p["reason"])
-        small = len(p["models"]) <= cfg("catalogue_over")
+        small = len(p["models"]) <= catalogue_over
         for m in p["models"]:
             mrec = entry["models"].get(m["id"])
             if mrec is None:
@@ -348,7 +350,9 @@ def after_tool(payload):
             parsed = parse_listing(_tool_result(payload), listing, data().get("blocking_constraint_words") or ())
             if not parsed:
                 return
-            fresh = apply_listing(state, listing["host"], parsed, now, int(cfg("drop_after_listings")) or 1)
+            c = conf()
+            fresh = apply_listing(state, listing["host"], parsed, now, int(c["drop_after_listings"]) or 1,
+                                  c["catalogue_over"])
             if fresh:
                 line = ("sisi: %s reachable through the host's cross-provider delegation (new and unproven: "
                         "routine work only until judged; `sisi workers` lists them, `sisi route` can choose them)."
@@ -599,7 +603,7 @@ def smoke(driver, timeout=None):
     bad-template or no-answer. The command is an argument list: the brief never reaches a shell."""
     import shutil, subprocess, tempfile, uuid
     from . import workers
-    timeout = float(cfg("smoke_timeout_s") if timeout is None else timeout)
+    timeout = float(conf()["smoke_timeout_s"] if timeout is None else timeout)
     nonce = "ok" + uuid.uuid4().hex[:8]
     tmp = tempfile.mkdtemp(prefix="sisi-smoke-")
     cmd = workers.build_command(driver, {"model": None, "worker": driver["name"] + "/default"},
@@ -673,7 +677,8 @@ def models_of(driver, timeout=30):
         return []
     if r.returncode != 0:
         return []
-    return workers._parse_models({"list_kind": "lines"}, r.stdout or "")[:500]
+    # a tool may print a progress line before the list: only a token shaped like an id (a digit or - _ . / :) counts
+    return [m for m in workers._parse_models({"list_kind": "lines"}, r.stdout or "") if re.search(r"[-_./:\d]", m)][:500]
 
 
 def prove(name, drivers, now=None):
@@ -964,7 +969,7 @@ def annotate(cands, records, tools):
         return cands
     from . import routing
     counts = judged_counts(records)
-    cap = cfg("catalogue_over")
+    cap = conf()["catalogue_over"]
     for c in cands:
         t = marked.get(c.get("tool"))
         if t is None:
@@ -973,7 +978,7 @@ def annotate(cands, records, tools):
         c["unproven"] = n < routing.MIN_ATTEMPTS
         if c["unproven"]:
             c["plan"] = c.get("plan") or "per-use"
-            if c.get("model") is None or len(t.get("models") or []) <= cap:
+            if c.get("usable", True) and (c.get("model") is None or len(t.get("models") or []) <= cap):
                 c["unproven_ok"] = True
         if t.get("host"):
             c["host_native"] = True
