@@ -213,7 +213,7 @@ def overlay_hash():
 
 def more_line(n):
     """The generated pointer under each rule: the command that prints the rule in full."""
-    return "More: `sisi rule %d` (reasons, history, lessons behind it, how it is enforced)." % n
+    return "More: `sisi rule %d`." % n
 
 
 def _render(pre, rules):
@@ -228,7 +228,8 @@ def _render(pre, rules):
     if pre.strip():
         parts.append(pre)
     for n, r in enumerate(rules, 1):
-        parts.append("## %d. %s {#%s}\n\n%s\n%s" % (n, r["title"], r["id"], r["body"], more_line(n)))
+        # the pointer rides on the body's last line: it costs no line of the always-loaded budget
+        parts.append("## %d. %s {#%s}\n\n%s %s" % (n, r["title"], r["id"], r["body"].rstrip("\n"), more_line(n)))
     return "\n\n".join(parts) + "\n"
 
 
