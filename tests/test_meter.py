@@ -11,7 +11,7 @@ from sisi import orchestration, store, workers
 def seed_workers(case, names=("alpha-small", "beta-large")):
     """A ledger with two usable workers (host-native, judged), the first the cheaper."""
     for i, w in enumerate(names):
-        for t in ("research", "implementation"):
+        for t in ("read", "impl"):
             workers.append_record({"kind": "attempt", "id": "%s%s" % (w[:3], t[:2]), "run_id": None, "ts": 1,
                                    "project": "p", "type": t, "difficulty": 1, "worker": w,
                                    "outcome": "accepted", "check": "read"})
@@ -532,7 +532,7 @@ class FallbackTests(MeterBase):
             json.dump({"models": {"provx/model-1": {"cost_per_million_tokens": 0.1},
                                   "alpha-small": {"cost_per_million_tokens": 1},
                                   "beta-large": {"cost_per_million_tokens": 9}}}, f)
-        for t in ("research", "implementation"):
+        for t in ("read", "impl"):
             workers.append_record({"kind": "attempt", "id": "px" + t[:2], "run_id": None, "ts": 1, "project": "p", "type": t,
                                    "difficulty": 1, "worker": "provx/model-1", "outcome": "accepted", "check": "read"})
 
@@ -570,6 +570,15 @@ class FallbackTests(MeterBase):
         self.assertIn("Do not ask the person, and do not report this to them", ctx)
         self.assertNotIn("tell them", ctx.lower())                    # worker availability is internal (SPEC 9.7, 17)
         self.assertIn("Cancel or interrupt", ctx)
+
+    def test_a_failure_notice_gets_the_fallback_and_no_recipe(self):
+        """The notice is a machine's message: the recipe matcher does not run on it, the fallback still goes through."""
+        self.prompt()
+        self.launch()
+        ctx = self.context(self.prompt(self.notice(self.QUOTA + " (task: cut a new release and tag it)")))
+        self.assertIn("provx/model-1 is unavailable", ctx)
+        self.assertNotIn("recipe", ctx)
+        self.assertNotIn("Done means", ctx)
 
     def test_the_same_through_a_delegation_tool_result(self):
         self.prompt()
@@ -832,17 +841,17 @@ class RouteDecisionTests(MeterBase):
 
     def test_after_sisi_route_the_delegation_is_allowed_and_its_run_carries_the_guess(self):
         self.prompt(route=False)
-        self.route("implementation", "2")
+        self.route("review", "2")
         denied, ctx, _ = self.deleg()
         self.assertFalse(denied)
-        self.assertIn("(implementation, difficulty 2)", ctx)
+        self.assertIn("(review, difficulty 2)", ctx)
         self.assertNotIn("--type", ctx)                                # judge needs only the outcome and the check
         run = self.finish("d1")
         self.assertEqual((run["type"], run["difficulty"], run["route_worker"], run["chosen_against_route"]),
-                         ("implementation", 2, "alpha-small", False))
+                         ("review", 2, "alpha-small", False))
         self.judge(run, "accepted")
         att = [r for r in workers.read_records() if r.get("kind") == "attempt" and r.get("run_id") == run["id"]][0]
-        self.assertEqual((att["type"], att["difficulty"]), ("implementation", 2))
+        self.assertEqual((att["type"], att["difficulty"]), ("review", 2))
 
     def test_a_stale_decision_is_no_decision(self):
         self.prompt(route=False)
@@ -907,9 +916,9 @@ class RouteDecisionTests(MeterBase):
         att2 = self.judge(second, "rejected")[0]
         r = self.sisi("route", "--retry-of", att2, env={"SISI_SESSION_ID": self.sid})
         self.assertEqual(r.stdout.splitlines()[0], "beta-large")        # the second rejection: excluded, the next one up
-        self.assertIn("alpha-small was rejected twice", r.stdout)
+        self.assertIn("retry after 2 rejection(s) by alpha-small", r.stdout)
 
-    def test_retry_of_uses_the_benchmark_standing_when_the_record_is_thin(self):
+    def test_retry_of_after_two_rejections_takes_the_cheapest_worker_with_strictly_better_evidence(self):
         with open(os.path.join(self.data, "model-strength.json"), "w") as f:
             json.dump({"models": {"alpha-small": {"score": 50, "source": "s", "date": "2026-01-01"},
                                   "beta-large": {"score": 70, "source": "s", "date": "2026-01-01"},
@@ -921,8 +930,9 @@ class RouteDecisionTests(MeterBase):
                                    "difficulty": 1, "worker": w, "outcome": "rejected", "check": "read",
                                    "retry_of": "rj0" if i else None})
         r = self.sisi("route", "--retry-of", "rj1", env={"SISI_SESSION_ID": self.sid})
-        self.assertEqual(r.stdout.splitlines()[0], "gamma-mid")
-        self.assertIn("stronger", r.stdout)
+        # routing.retry_choice: not the rejected worker; of those with better evidence, the cheapest (not the top standing)
+        self.assertEqual(r.stdout.splitlines()[0], "beta-large")
+        self.assertIn("strictly better evidence", r.stdout)
 
     def test_retry_of_an_unknown_or_unjudged_run_is_an_error(self):
         r = self.sisi("route", "--retry-of", "nope")

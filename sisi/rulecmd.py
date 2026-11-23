@@ -86,51 +86,51 @@ def _own_the_outcome():
 
 def _size_by_risk():
     return _say(enforced=["the end-of-turn gate computes the risk floor of the change, takes the profile the contract declares "
-                          "(lowering it needs a reason) and sends the agent back for whatever that profile requires"
+                          "(lowering it needs a reason) and sends the agent back for whatever that profile requires (sisi/gate.py, sisi/risk.py, sisi/assure.py)"
                           if _gate_wired() and _has("risk", "assess", "requirements_for")
                           and _has("assure", "effective_profile", "missing") else None,
-                          "a contract without a declared `risk.profile` is invalid"
+                          "a contract without a declared `risk.profile` is invalid (sisi/contract.py)"
                           if _has("contract", "RISK_PROFILES") and _has("assure", "missing") else None,
                           "the before-tool hook works out the risk floor of the path about to change (with what this session "
                           "already changed) and refuses %s unless a valid unit stands behind it; the floor wins over a lower "
-                          "declared profile without a reason" % _guard_scope() if _guard_scope() else None],
-                measured=["`sisi risk` prints the floor and what the profile requires, the unit record keeps the profile"
+                          "declared profile without a reason (sisi/unitguard.py, sisi/watch.py)" % _guard_scope() if _guard_scope() else None],
+                measured=["`sisi risk` prints the floor and what the profile requires, the unit record keeps the profile (sisi/risk.py, sisi/unit.py)"
                           if _has("risk", "assess") else None],
                 judgement=["raising the profile when you know better; lowering it needs a reason"])
 
 
 def _define_done():
-    return _say(enforced=["contract check refuses a check with no command or one that cannot fail (vacuous)"
+    return _say(enforced=["contract check refuses a check with no command or one that cannot fail (vacuous) (sisi/contract.py)"
                           if _has("contract", "vacuous_reason") else None,
                           "end-of-turn gate sends the agent back when the profile needs a contract and there is none, "
-                          "or when a check lacks what it covers, invariants or the requirement list are missing"
+                          "or when a check lacks what it covers, invariants or the requirement list are missing (sisi/gate.py, sisi/assure.py)"
                           if _gate_wired() and _has("assure", "missing") else None,
                           "%s is refused before it runs unless this session holds a valid unit: opened or continued by it "
                           "(`sisi unit continue`), not stale (`unit.stale_hours`), `sisi contract check` passing with no placeholder, "
-                          "and carrying what its risk profile needs before building" % _guard_scope()
+                          "and carrying what its risk profile needs before building (sisi/unitguard.py, called from sisi/watch.py)" % _guard_scope()
                           if _guard_scope() else None,
                           "`sisi unit pause` is refused without such a unit (a pause defers waiting checks and the retro, never the "
-                          "contract), and a pause silences the gate only for the session holding the unit"
+                          "contract), and a pause silences the gate only for the session holding the unit (sisi/unitguard.py, sisi/unit.py)"
                           if _has("unitguard", "pause_refusal") else None,
                           "the gate never judges a session's changes against a unit the session does not hold: it sends back "
-                          "to continue, park or init" if _gate_wired() and _has("unitguard", "bound_fresh") else None,
-                          "every refusal is kept in the unit record and counted by `sisi status`"
+                          "to continue, park or init (sisi/gate.py)" if _gate_wired() and _has("unitguard", "bound_fresh") else None,
+                          "every refusal is kept in the unit record and counted by `sisi status` (sisi/unitguard.py, sisi/scorecard.py)"
                           if _has("unitguard", "record_refusal") else None],
                 judgement=["the goal in the person's words, one check on the purpose, invariants captured before the first edit"])
 
 
 def _verify_enough():
-    return _say(enforced=["`sisi verify` runs the checks with five statuses (passed, failed, skipped, not-applicable, not-run), nothing unrun passes"
+    return _say(enforced=["`sisi verify` runs the checks with five statuses (passed, failed, skipped, not-applicable, not-run), nothing unrun passes (sisi/verify.py)"
                           if _has("verify", "STATUSES") else None,
-                          "the end-of-turn gate runs the fast checks and sends the agent back on a failure, with the failing evidence lines"
+                          "the end-of-turn gate runs the fast checks and sends the agent back on a failure, with the failing evidence lines (sisi/gate.py)"
                           if _gate_wired() and _has("assure", "failure_lines") else None,
                           "high-risk profiles need evidence from someone or something other than the author: a check marked "
                           "independent does not count when `by` is empty, the session's own model or a self-reference, and a "
-                          "review counts only from a worker other than the author's model, judged with a check stronger than none"
+                          "review counts only from a worker other than the author's model, judged with a check stronger than none (sisi/assure.py, sisi/unitguard.py)"
                           if _has("assure", "independent_evidence") and _has("unitguard", "is_self_reference") else
-                          ("high-risk profiles need evidence from someone or something other than the author"
+                          ("high-risk profiles need evidence from someone or something other than the author (sisi/assure.py)"
                            if _has("assure", "independent_evidence") else None)],
-                measured=["a commit or merge with no passing `sisi verify` for the tree gets a notice, never a block"
+                measured=["a commit or merge with no passing `sisi verify` for the tree gets a notice, never a block (sisi/watch.py)"
                           if _has("watch", "commit_notice") else None],
                 judgement=["choosing the technique, which checks the change can affect, watching a test fail once"])
 
@@ -152,37 +152,42 @@ def _pre_tool_wired():
 
 def _orchestrate():
     meter = _pre_tool_wired() and _has("orchestration", "before", "cmd_direct")
-    return _say(enforced=["a delegation brief without outcome, acceptance or files it may change is refused (`sisi delegate`)"
+    return _say(enforced=["a delegation brief without outcome, acceptance or files it may change is refused (`sisi delegate`; sisi/brief.py, sisi/workers.py)"
                           if _has("workers", "cmd_delegate") and _has("brief", "missing_required") else None,
                           "the before-tool hook counts the main thread's direct tool calls and result characters for every tool, and "
                           "refuses the next one past the budget (`orchestrate.direct_calls`, `orchestrate.direct_chars`), naming the router's "
-                          "workers; `sisi unit direct \"<reason>\"` extends the turn with a specific reason (a generic one is refused)"
+                          "workers, asked at difficulty 1 for reading and 2 for building; `sisi unit direct \"<reason>\"` extends the turn with a specific reason "
+                          "(a generic one is refused) (sisi/orchestration.py)"
                           if meter else None,
                           "a delegation that names no model, or the session's own model, is refused with the router's pick; an allowed "
-                          "one has its brief checked and is written to the ledger as a run"
+                          "one has its brief checked and is written to the ledger as a run (sisi/orchestration.py)"
                           if meter and _has("orchestration", "_before_delegation") else None,
-                          "the end-of-turn gate asks for the judgement of each finished delegation, once per set of runs"
+                          "the end-of-turn gate asks for the judgement of each finished delegation, once per set of runs (sisi/orchestration.py, sisi/gate.py)"
                           if _gate_wired() and _has("orchestration", "judgement_sendback") else None,
-                          "a shell command that failed three times in a row with no file changed is refused once (rule 5)"
+                          "a shell command that failed three times in a row with no file changed is refused once (rule 5) (sisi/orchestration.py)"
                           if meter else None,
                           "an unavailable worker (a limit, quota, login or connection failure arriving as a delegation result or as "
                           "a later notice) is recorded down with the reset time parsed from the message, the router's next worker "
                           "is handed over for the same brief; a question-dialog call right after it is refused once, ending the turn with no fallback "
-                          "started is sent back once, and so is a final message that names the unavailable worker"
+                          "started is sent back once, and so is a final message that names the unavailable worker (sisi/fallback.py, sisi/orchestration.py)"
                           if meter and _has("fallback", "handle", "fallback_text") else None,
                           "a delegation with no `sisi route` decision in the last minutes (`orchestrate.route_window_min`) is refused once; "
-                          "the run keeps the kind and difficulty guess, and a worker other than the router's pick is recorded as an override"
+                          "the run keeps the kind (one of the ledger's, else `sisi route` refuses it) and difficulty guess, and a worker other than the router's pick "
+                          "is recorded as an override (sisi/orchestration.py, sisi/workers.py)"
                           if meter and _has("orchestration", "record_route") else None,
-                          "`sisi route --retry-of ID` keeps the worker with a better brief after a first rejection and moves to a stronger "
-                          "one after a second"
-                          if _has("workers", "retry_context", "stronger_choice") else None],
-                measured=["the delegation ledger and `sisi delegate judge`, `sisi route` recommends the worker from that record"
+                          "`sisi route --retry-of ID` keeps the worker with a better brief after a first rejection, then moves to a worker whose "
+                          "evidence is strictly better (sisi/routing.py retry_choice, sisi/workers.py)"
+                          if _has("workers", "retry_context") and _has("routing", "retry_choice") else None,
+                          "the before-tool hook answers one refusal at a time, in a fixed order: workers are exempt, then the contract "
+                          "guard, then the delegation guard, then the direct-work budget (sisi/watch.py)"
+                          if meter and _guard_scope() else None],
+                measured=["the delegation ledger and `sisi delegate judge`, `sisi route` recommends the worker from that record (sisi/routing.py, sisi/workers.py)"
                           if _has("routing", "choose") and _has("workers", "cmd_delegate") else None,
                           "the unit record and `sisi status` show direct calls and characters, refusals, extensions with their reasons, "
-                          "delegations started, judged and unjudged, and the share of tool calls delegated"
+                          "delegations started, judged and unjudged, and the share of tool calls delegated (sisi/orchestration.py, sisi/scorecard.py)"
                           if _has("orchestration", "telemetry") else None,
                           "`sisi workers` shows how often the router was overridden and how the overrides turned out; a model discovery "
-                          "has not seen before is named once at session start as unproven"
+                          "has not seen before is named once at session start as unproven (sisi/workers.py)"
                           if _has("workers", "override_line", "new_worker_line") else None],
                 judgement=["who gets the task, how much to check what comes back, the quality of a brief"])
 
