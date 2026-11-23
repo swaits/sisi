@@ -378,7 +378,7 @@ def _decide(payload):
     if req.get("all_checks") and c is not None and not errs:
         try:
             from . import deep as D
-            ds = D.deep_state(c, project, fp)
+            ds = D.deep_state(c, project, D.tree_fp(project))
         except Exception as e:
             store.log_error("gate-deep", e)
     failing = V.blocking(results)
@@ -485,14 +485,26 @@ def _close(stop, cwd, c, path, project, profile, note):
     return stop.allow(cwd, "\n".join(x for x in (note, cyc) if x) or None)
 
 
+def profile_reason(profile, info, reasons):
+    """Why this profile applies: the first reason a changed path gives; when no path gave one (nothing changed
+    yet, or the unit stands on its declared profile), say that the contract declares it, or the floor's reason."""
+    real = [r for r in reasons or [] if r and r != risk.NO_PATHS]
+    if real:
+        return real[0]
+    if info.get("declared") == profile:
+        return "the contract declares the %s profile" % profile
+    return None
+
+
 def _send_back(stop, cwd, c, path, project, profile, info, reasons, miss, failing, results):
     uid = c["id"] if c else None
     why = ["%s" % m[0] for m in miss] + ["%s failed" % f["id"] for f in failing]
     if stop.exhausted():
         return _release(stop, cwd, c, path, project, why)
     lines = ["sisi: this %s change is not ready to hand over (send-back {n})." % profile]
-    if reasons:
-        lines[0] = lines[0][:-1] + " because %s." % reasons[0][:160]
+    because = profile_reason(profile, info, reasons)
+    if because:
+        lines[0] = lines[0][:-1] + " because %s." % because[:160]
     if info.get("refused"):
         lines.append("The contract declares %r, but the change is %r; add risk.why to lower it on the record."
                      % (info.get("declared"), info.get("floor")))
@@ -509,12 +521,37 @@ def _send_back(stop, cwd, c, path, project, profile, info, reasons, miss, failin
     return stop.block(assure.fit(lines), uid, project)
 
 
+def _orchestration_step(payload, action):
+    """Rule 6 at the end of a turn, main thread only: ask once for the judgement of this session's finished
+    delegations (a send-back like any other missing item); when the turn really ends, the meter starts over."""
+    try:
+        from . import orchestration, workers
+        if workers.is_subagent_payload(payload):
+            return None
+        cwd = _cwd(payload)
+        sid = _session_key(payload, cwd)
+        if store.load_session(sid).get("subagent"):
+            return None
+        if action == "allow":
+            text = (orchestration.fallback_sendback(payload, sid) or orchestration.judgement_sendback(payload, sid)
+                    or orchestration.report_sendback(payload, sid))
+            if text:
+                return "block", text
+            orchestration.end_turn(sid)
+    except Exception as e:  # the meter must never break the gate
+        store.log_error("gate-orchestration", e)
+    return None
+
+
 def decide(payload):
     """The gate's answer: the contract decision, then — only on an otherwise-clean stop —
     the rule-5 question check, which sends the agent back at most once per final message."""
     action, msg = _decide(payload)
     if action != "allow":
         return action, msg
+    j = _orchestration_step(payload, action)
+    if j:
+        return j
     try:
         from . import questions
         q = questions.sendback(payload)

@@ -211,6 +211,8 @@ def build_scorecard(c, results, telemetry, delivery_status):
             "overlapped_delegations": T("overlapped_delegations"),
             "worker_minutes": T("worker_minutes"),
             "wall_time_s": T("time_to_validated_completion_s"),
+            # who did the work: the main thread's own calls against delegated ones (sisi/orchestration.py)
+            **{"orch_" + k: v for k, v in (tel.get("orchestration") or {}).items()},
         },
         "human_experience": {
             "human_messages": T("human_messages"),
@@ -373,6 +375,12 @@ def open_units(cwd=None):
     started, basis = U.start_of(c, p)
     row = {"id": c["id"], "status": c.get("status", "open"), "age": _age(started), "goal": c.get("goal") or "",
            "age_basis": basis}
+    try:
+        from . import orchestration
+        t0 = harvest.epoch(started) if isinstance(started, str) else None
+        row["orchestration"] = orchestration.status_line(project, t0, time.time())
+    except Exception as e:
+        store.log_error("status-orchestration", e)
     if row["status"] == "paused":
         pz = next((x for x in reversed(c.get("pauses") or []) if isinstance(x, dict) and not x.get("until")), {})
         row["waiting_for"], row["paused_for"] = pz.get("what"), _age(pz.get("since"))
@@ -438,6 +446,8 @@ def format_open(rows):
             lines.append("open    %-24s age %s%s  %s" % (r["id"], r["age"], _basis_note(r), r["goal"][:80]))
         if r.get("refusals"):
             lines.append("          the guard refused %d building step(s) before a valid unit stood behind them" % r["refusals"])
+        if r.get("orchestration"):
+            lines.append("          " + r["orchestration"])
         if r.get("lowered"):
             lines.append("          lowered: " + r["lowered"])
         if r.get("unverified"):

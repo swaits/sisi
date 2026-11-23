@@ -118,6 +118,10 @@ _PLACEHOLDERS = [re.compile(r"\[Image[^\]]*\]"), re.compile(r"\[File:[^\]]*\]"),
 _NOT_HUMAN_PREFIX = ("<task-notification", "<local-command-", "<system-reminder", "<artifact-content-authored-by-others",
                      "This session is being continued", "Caveat:", "[Usage limit reached", "[Earlier usage",
                      "<agent-message", "<bash-input", "<bash-stdout", "<user-prompt-submit-hook")
+# a host's notice that a background or delegated task ended ("Delegated task ... [completed]: ...", "[failed]: ..."),
+# and an automated wake-up: sent to the agent in the person's seat, typed by nobody
+_MACHINE_NOTICE = re.compile(r"^\s*(?:(?:delegated|background|scheduled|automated)\b[^\n]{0,200}?\[(?:completed|failed|cancelled|canceled|killed|"
+                             r"stopped|error|timed out)\]|\[(?:completed|failed)\]|(?:scheduled|automated) (?:wake-?up|check)\b|<scheduled-task|<wake-?up)", re.I)
 _CMD_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
 
 
@@ -152,7 +156,7 @@ def typed_text(d, queued_prompt=None):
     s = content.strip()
     if s.startswith("[Request interrupted by user"):
         return None, 0, True
-    if s.startswith(_NOT_HUMAN_PREFIX):
+    if s.startswith(_NOT_HUMAN_PREFIX) or _MACHINE_NOTICE.match(s):
         return None, 0, False
     if s.startswith(("<command-name", "<command-message")):
         m = _CMD_ARGS.search(s)

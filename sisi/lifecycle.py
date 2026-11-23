@@ -34,21 +34,39 @@ def _union_lines(src, dst):
     return len(add)
 
 
+def _copy_tree(src, dst):
+    """Copy a folder as it is being used by others: a file or folder that disappears during the copy (a git lock
+    file, a temporary file) is not part of what was backed up, and is not an error."""
+    os.makedirs(dst, exist_ok=True)
+    try:
+        names = os.listdir(src)
+    except FileNotFoundError:
+        return
+    for n in names:
+        if n.endswith(".lock") or n == "gc.pid":
+            continue  # lock files are not data; git's background maintenance removes them while we copy
+        s, d = os.path.join(src, n), os.path.join(dst, n)
+        try:
+            if os.path.isdir(s):
+                _copy_tree(s, d)
+            else:
+                shutil.copy2(s, d)
+        except FileNotFoundError:
+            continue
+
+
 def _copy_into(src, bdir, rel):
     dst = os.path.join(bdir, rel)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    if os.path.isdir(src):
-        try:
-            # lock files are not data, and git's background maintenance removes them while we copy
-            shutil.copytree(src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.lock", "gc.pid"))
-        except shutil.Error as e:
-            # a file that vanished while being copied (git housekeeping in the personal repository) is not a failure
-            if not all(isinstance(x, tuple) and "No such file or directory" in str(x[2]) for x in e.args[0]):
-                raise
-    elif src.endswith(".db"):
-        _sqlite_copy(src, dst)
-    else:
-        shutil.copy2(src, dst)
+    try:
+        if os.path.isdir(src):
+            _copy_tree(src, dst)
+        elif src.endswith(".db"):
+            _sqlite_copy(src, dst)
+        else:
+            shutil.copy2(src, dst)
+    except FileNotFoundError:
+        pass
 
 
 def _sqlite_copy(src, dst):
@@ -598,9 +616,25 @@ def post_update():
     except pdata.DataError as e:
         print("sisi update: %s" % e)
         return 1
+    _rewire_existing()
     from . import cli
     print("doctor:")
     return cli.cmd_wiring("doctor")
+
+
+def _rewire_existing():
+    """An installation that exists is brought up to what this version registers (the tool hooks now run for
+    every tool, not only the shell). Idempotent and span-preserving; nothing happens without an installation."""
+    try:
+        from . import wiring
+        if not os.path.exists(wiring._mpath()):
+            return
+        rc, notes = wiring.install()
+        for n in notes:
+            if "hook" in n or rc:
+                print(n)
+    except Exception as e:
+        print("sisi update: re-registering the hooks failed (%r); run `sisi install`" % e)
 
 
 # ---- export / import ------------------------------------------------------------------------------

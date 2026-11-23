@@ -19,6 +19,27 @@ atomically, so a running tool never sees a half-written copy: a process that has
 keeps running the release it started with. `sisi doctor` shows which copy is live and
 whether the source folder is ahead of it.
 
+## The live orchestration check
+
+Before any release that touches the hooks or the rulebook, run
+
+    python3 tools/live_orchestration_check.py
+
+It starts the host's command-line tool headless with its least expensive model in small temporary
+projects, with the hooks from this checkout and a temporary `SISI_DATA` and `SISI_STATE` (the real sisi data is
+never read or written; the script asserts that it did not change). Scenario 3 starts from a project with no
+open unit and a task that needs more than six calls, with a witness hook recording whether a valid unit stood
+behind each call: no file may change before one does, and the agent must meet the guards in the order the rules
+give (the contract before the budget), each refusal in at most twelve lines. `--model NAME` sets the main
+thread's model. Scenario 1 asserts that the meter refused a
+tool call with its message, that the session then ran `sisi route` and delegated with a named model or recorded
+a reason with `sisi unit direct`, and that the ledger or events hold the matching record. Scenario 2 uses a fake
+provider that always answers with a quota error and a reset time: the provider must be marked down until that
+time, the session must go on with another worker, never call the question dialog and never mention the
+failure in its final message. It costs a few cents and needs the host's login, so it is not part of the unit
+suite; synthetic hook input is what let an earlier release ship broken. If the agent ignores a refusal or the
+host does not honour it, that is a finding: fix the hook output, do not weaken the assertion.
+
 ## Make a release
 
 Run from the clone (a release is made from the running launcher's folder):

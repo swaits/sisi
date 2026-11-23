@@ -10,7 +10,7 @@ The abuse cases are written from the side of an agent that wants to skip."""
 import contextlib, io, json, os, subprocess, sys, time, unittest
 from unittest import mock
 from support import *
-from sisi import assure, contract as C, gate, gitutil, store, unit as U, unitguard as G, watch
+from sisi import assure, contract as C, gate, gitutil, orchestration, store, unit as U, unitguard as G, watch
 
 SRC = "src/app.py"
 
@@ -477,9 +477,9 @@ class DelegationTests(GuardCase):
         return self.before(tool, {"description": "worker", "prompt": prompt, "subagent_type": "general-purpose"}, **kw)
 
     def route(self, kind):
-        s = store.load_session(self.sid)
-        s["route"] = {"kind": kind}
-        store.save_session(self.sid, s)
+        """A routing decision as `sisi route` records it: in the orchestration meter, the one place it lives."""
+        with orchestration.Meter(self.sid) as m:
+            m["route"] = {"kind": kind, "difficulty": 2, "worker": "w", "ts": time.time()}
 
     def test_delegating_a_build_with_no_unit_is_refused_and_says_where_the_acceptance_comes_from(self):
         for tool in ("Agent", "Task"):

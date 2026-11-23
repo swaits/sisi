@@ -28,6 +28,25 @@
     "tests",
     "debug"
   ],
+  "other_kinds": [
+    "read",
+    "search",
+    "research",
+    "review",
+    "docs"
+  ],
+  "output_filters": [
+    "head",
+    "tail",
+    "grep",
+    "wc",
+    "sort",
+    "uniq",
+    "cut",
+    "tr",
+    "cat",
+    "less"
+  ],
   "build_words": [
     "change",
     "fix",
@@ -58,6 +77,7 @@
     "without changing",
     "without modifying",
     "no changes",
+    "files you may change: none",
     "report only",
     "only report",
     "do not create"

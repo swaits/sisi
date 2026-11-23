@@ -26,7 +26,7 @@ def remove_hooks(obj):
     if not isinstance(hooks, dict):
         return False
     for ev, sub in (("SessionStart", "tick"), ("UserPromptSubmit", "prompt"), ("Stop", "gate"), ("SubagentStop", "gate"),
-                    ("PreToolUse", "watch"), ("PostToolUse", "watch")):
+                    ("PreToolUse", "watch"), ("PostToolUse", "watch"), ("PostToolUseFailure", "watch")):
         groups = hooks.get(ev)
         if not isinstance(groups, list):
             continue
@@ -259,15 +259,16 @@ class WiringTests(WiringBase):
 
 
 class WatchHookTests(WiringBase):
-    def test_watch_hooks_registered_with_bash_matcher_and_removed(self):
+    def test_watch_hooks_registered_for_every_tool_and_removed(self):
+        """R-7.1-1: the tool hooks carry no matcher, so the meter sees every tool, not only the shell."""
         before = snapshot(self.home)
         wiring.install()
         d = json.load(open(self.path(".claude/settings.json")))
-        for ev in ("PreToolUse", "PostToolUse"):
+        for ev in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
             groups = d["hooks"][ev]
             cmds = [h["command"] for g in groups for h in g["hooks"]]
             self.assertTrue(any("watch --tool claude-code" in c for c in cmds), (ev, cmds))
-            self.assertTrue(any(g.get("matcher") == "Bash" for g in groups), (ev, groups))
+            self.assertFalse(any(g.get("matcher") for g in groups), (ev, groups))
         self.assertEqual(wiring.doctor()[0]["status"], "wired")
         snap = snapshot(self.home)
         wiring.install()

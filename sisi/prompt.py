@@ -82,13 +82,32 @@ def _done_means(recipe):
     return bullets
 
 
-def build_context(query, session=None):
+def is_request(query, payload=None):
+    """Did a person type this message? One definition, harvest.typed_text, the rule the delivery timing uses. A
+    host's notice that a task finished or failed, an automated wake-up, and anything the hook cannot tell is not
+    a request (False): no recipe is attached to it."""
+    try:
+        from . import harvest
+        return harvest.typed_text(payload if isinstance(payload, dict) else {}, queued_prompt=query)[0] is not None
+    except Exception as e:
+        store.log_error("prompt-request", e)
+        return False
+
+
+def context_for(query, session=None, payload=None):
+    """The request-time context for one prompt hook call: recipe and lessons for a person's request, lessons
+    only for a message a machine sent."""
+    return build_context(query, session=session, recipe=is_request(query, payload))
+
+
+def build_context(query, session=None, recipe=True):
     """The context to inject for one human request, or "" when nothing strictly matches.
     Learnings come only from learning.delivery_text (earned scope, framed as information);
-    no showing is recorded, so nothing is promoted by being printed."""
+    no showing is recorded, so nothing is promoted by being printed. `recipe=False` leaves the recipe matcher
+    out (the message is not a person's request)."""
     if is_trivial(query):
         return ""
-    recipe = _best_recipe(query)
+    recipe = _best_recipe(query) if recipe else None
     lesson_text = _L.delivery_text(os.getcwd(), query).strip()
     lesson_lines = lesson_text.split("\n")[1:] if lesson_text else []
     if not recipe and not lesson_lines:
@@ -112,6 +131,19 @@ def build_context(query, session=None):
     return text
 
 
+def meter_new_turn(session, cwd, query):
+    """Every prompt the session receives goes to the orchestration meter (a human request starts its turn again;
+    a host notice that a worker is unavailable returns the fallback to hand over). Returns text or None; never
+    raises."""
+    try:
+        if session and query:
+            from . import orchestration
+            return orchestration.new_turn(session, cwd, query)
+    except Exception as e:
+        store.log_error("prompt-meter", e)
+    return None
+
+
 def extract_prompt(payload):
     """The human's request text from a hook payload, across the tools' documented field names."""
     if not isinstance(payload, dict):
@@ -131,7 +163,7 @@ def main(args=()):
         args = list(args)
         plain = "--plain" in args
         args = [a for a in args if a != "--plain"]
-        query, session = None, None
+        query, session, payload = None, None, None
         if args:
             query = " ".join(args)
             plain = True
@@ -150,7 +182,8 @@ def main(args=()):
                 os.chdir(cwd)
         if not query:
             return 0
-        text = build_context(query, session=session)
+        fb = meter_new_turn(session, os.getcwd(), query)
+        text = "\n".join(x for x in (fb, context_for(query, session, payload)) if x)
         if not text:
             return 0
         if plain:

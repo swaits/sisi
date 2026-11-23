@@ -16,6 +16,17 @@ def _lock_path(project):
     return os.path.join(paths.state(), "locks", "deep-" + key(project) + ".lock")
 
 
+def tree_fp(project):
+    """What deep results are fresh against: the working tree as the work, never sisi's own records. Everything
+    under .sisi/ (the contract included) is left out, as it is from the fast checks' reuse fingerprint, so
+    recording a pause or a note does not make a fresh deep result stale."""
+    from . import gitutil
+    try:
+        return gitutil.fingerprint(project)
+    except Exception:
+        return None
+
+
 def deep_items(c):
     return [x for x in c.get("checks", []) + c.get("invariants", [])
             if x.get("tier") == "deep" and x.get("cmd") and x.get("rung", 3) not in (5, 6)]

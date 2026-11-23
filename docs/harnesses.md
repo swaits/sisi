@@ -29,13 +29,33 @@ between each tool's hook JSON and the gate lives in `sisi/hookio.py`; the adapte
 skills shipped under `canon/skills` into `~/.agents/skills`; `sisi doctor` reports the linked
 state. Hooks fail open: any error lets the agent finish. Where a tool's hook input has no transcript path, the gate falls back to its pre-attribution behaviour (tree-change based, with no per-session edit attribution). Shell commands are attributed by measurement, not by their text, wherever the tool has confirmed before/after tool events (`sisi watch` takes a stat-only tree snapshot before and after the command and attributes the paths that changed to the session; provably read-only commands skip the pair); tools without confirmed before/after tool events keep the command-text classifier described in [docs/design.md](design.md).
 
+## The orchestration meter, per tool
+
+The before- and after-tool hooks count the main thread's direct tool calls and refuse past a budget (rule 6,
+[design.md](design.md) section 9). `sisi doctor` prints what it can do in each tool:
+
+| tool | meter | evidence |
+|---|---|---|
+| Claude Code | counts and refuses every tool (permission-deny output), delegation guard, fallback | observed live (`tools/live_orchestration_check.py`) |
+| Codex CLI | counts and can refuse every tool (exit status 2 with the reason) | the host's hook documentation; not run live here |
+| Gemini CLI | counts and can refuse every tool (exit status 2) | documentation; not run live |
+| Cursor | counts and can refuse every tool (exit status 2) | documentation; not run live |
+| GitHub Copilot CLI | only counts: its refusal contract is not confirmed | not run live |
+| Qwen, Pi, OpenCode, Muse, Grok, Crush and the rulebook-only tools | cannot run: no before-tool hook is wired | see each section |
+
+Host tool names (delegation, question dialog, planning, messaging) are data in
+`canon/orchestration-tools.json`; a tool named nowhere there still counts. Only Claude Code's delegation tool is
+named for the guard and the fallback; elsewhere delegation goes through `sisi delegate`, which is exempt.
+
 ## Claude Code
 
 Fully wired, as before: an `@import` line in `~/.claude/CLAUDE.md`, `SessionStart` → `sisi tick`,
 `UserPromptSubmit` → `sisi prompt` (the matching recipe and lessons for the human's request, as
 added context; silent when nothing strictly matches, and never able to block a turn),
-`Stop`/`SubagentStop` → `sisi gate` (blocking), and `PreToolUse`/`PostToolUse` with matcher `Bash` →
-`sisi watch` (before/after tree measurement) in `~/.claude/settings.json`. The gate also enforces
+`Stop`/`SubagentStop` → `sisi gate` (blocking), and `PreToolUse`/`PostToolUse`/`PostToolUseFailure` with no
+matcher (every tool) → `sisi watch` (the orchestration meter, and before/after tree measurement for shell
+commands) in `~/.claude/settings.json`. An installation from an earlier release (shell-only matchers) is
+changed by `sisi install` and by `sisi update`, span-preserving; `sisi uninstall` restores the original bytes. The gate also enforces
 the question-dialog rule here: `AskUserQuestion` exists and the transcript is readable, so ending a
 turn by asking in reply text without using the dialog is sent back once. Evidence: the hooks
 reference documents `UserPromptSubmit` and its added-context output. Nothing for you to do.
@@ -54,7 +74,7 @@ Rulebook symlink at `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md`), plus hook
 `~/.codex/hooks.json`: `SessionStart` → tick, `UserPromptSubmit` → prompt (the hooks page documents
 the event and its added-context output; it needs the same one-time trust below),
 `Stop`/`SubagentStop` → gate,
-`PreToolUse`/`PostToolUse` (matcher `Bash`) → `sisi watch`, blocking with
+`PreToolUse`/`PostToolUse` (every tool) → `sisi watch`, blocking with
 `{"decision":"block","reason":...}`. One step is yours: Codex only runs hooks you have trusted, by exact
 definition hash. After `sisi install`, open Codex, run `/hooks`, and trust the sisi hooks; repeat after
 any change to the hook commands (for example after moving the sisi clone). `sisi doctor` cannot verify

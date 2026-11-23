@@ -150,17 +150,18 @@ def gate_main(tool, args=()):
 
 
 def watch_main(tool, args=()):
-    """Before/after tool measurement for the other tools. Always exits 0 (fail open)."""
+    """Before/after tool measurement and the orchestration meter for the other tools. Fail open: any
+    error exits 0. A refusal is exit status 2 with the reason on standard error, where the tool's
+    before-tool event documents that contract (canon/orchestration-tools.json `refuse`)."""
     try:
         d = _payload(store.read_stdin())
         if d is not None:
-            from . import watch
+            from . import orchestration, watch
             norm = normalize(tool, d)
-            _t, _c, ev, _cwd, _sid = watch.extract(norm)
-            if "--before" in args or ev in watch.BEFORE_EVENTS:
-                watch.before(norm)
-            elif "--after" in args or ev in watch.AFTER_EVENTS:
-                watch.after(norm)
+            out = watch.run(norm, args, host=tool)
+            if out.get("deny") and orchestration.refuse_style(tool) == "exit-2":
+                sys.stderr.write(out["deny"] + "\n")
+                return 2
     except Exception as e:
         store.log_error("watch-%s" % tool, e)
     return 0
@@ -218,7 +219,8 @@ def prompt_main(tool, args=()):
             if cwd and _os.path.isdir(cwd):
                 _os.chdir(cwd)
             query = P.extract_prompt(norm)
-            text = P.build_context(query, session=norm.get("session_id")) if query else ""
+            fb = P.meter_new_turn(norm.get("session_id"), _os.getcwd(), query)
+            text = "\n".join(x for x in (fb, "" if not query else P.context_for(query, norm.get("session_id"), norm)) if x)
         out = _prompt_out(tool, text)
     except Exception as e:  # fail open: a prompt hook must never fail a turn
         store.log_error("prompt-%s" % tool, e)

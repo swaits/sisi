@@ -341,6 +341,64 @@ worker).
 - `sisi delegate --brief FILE …` still runs a worker through its own CLI when the host has no
   delegation of its own.
 
+**Enforcement** (`sisi/orchestration.py`, `sisi/fallback.py`; host tool names in `canon/orchestration-tools.json`).
+The before- and after-tool hooks run for every tool, not only the shell, and keep a per-session,
+per-turn meter in the scratch store (`sessions/<id>.meter.json`, under a file lock; every counted event is
+also appended to `orchestration.jsonl`). It meters main threads only: a session the host marks as a subagent,
+one whose first prompt opens with the brief template's first line, and one started by `sisi delegate` are
+workers and are never counted or refused; neither is anything refused when no usable worker other than the
+session's own model exists. Every entry point fails open.
+
+- **Direct-work budget.** Every tool call that is not a delegation, the question dialog, a planning or to-do
+  tool, a message or a `sisi` command counts, with the characters of its result. Past `orchestrate.direct_calls`
+  (6) or `orchestrate.direct_chars` (30000) the next counted call is refused with at most 12 lines: the count,
+  rule 6, the router's pick for reading and for building (taken from the routing code, with its mechanism
+  line) and two ways on: delegate with a brief, or `sisi unit direct "<reason>"`. A specific reason (a generic
+  one is refused) extends the turn by `orchestrate.extension` (10) calls and the matching share of characters;
+  each extension and its reason is stored and shown by `sisi status`. The turn starts again at each prompt (a
+  host's notice about a background worker is not a prompt) and when the gate lets the turn end.
+- **Delegation guard.** A delegation that names no model, or the session's own, is refused with the router's
+  pick; an allowed one is checked with `brief.check` (advice only) and written to the ledger as a pending run
+  (worker, project, session, start), completed with minutes and tokens when the result reports them, or, for an
+  async launch, when the host's completion notice arrives as a prompt. The gate asks once per set of finished,
+  unjudged runs for the judgements.
+- **The router is asked first.** `sisi route` writes a routing decision for the session (kind, difficulty
+  guess, pick, time). The first delegation with no decision inside `orchestrate.route_window_min` (15) is
+  refused once; afterwards the pending run carries the kind and difficulty, so `sisi delegate judge ID` needs
+  only the outcome and the check. A worker other than the router's pick is allowed and recorded
+  (`chosen_against_route`); `sisi workers` shows how often and how those turned out (too few under five).
+  `sisi route --retry-of ID` keeps the same worker with an instruction to improve the brief after the first
+  rejection and then moves to a worker whose evidence is strictly better (`routing.retry_choice`: the cheapest
+  capable one with better evidence, else the strongest known usable one) after a second.
+- **One before-tool path, one refusal at a time.** `sisi/watch.py` runs, for every tool: workers and subagents
+  are exempt from all of it; then the contract guard (a call that would change a project file, or delegate a
+  build, with no valid unit: rule 3); then the delegation guard (a model is named and is not the main thread's
+  own; a routing decision exists); then the direct-work budget. The agent sees only the first refusal in that
+  order, so an agent told to delegate is never refused afterwards for a contract it was not told about. A
+  refused call is not counted by the meter. Every stage fails open on its own.
+- **Repeat failure.** The fourth identical failing shell command (whitespace-normalised) with no file changed
+  in between is refused once (rule 5).
+- **Unavailable workers.** A limit, quota, login or connection failure arriving as a delegation result or as a
+  host notice is classified (`workers.classify_failure`), the worker's provider (or just the model) is marked
+  down until the reset time the message names, its pending run is marked `superseded` (never asked to be
+  judged), and the agent gets at most six lines: the router's next worker for the same kind of work, to fall
+  back now with the same brief, not to ask and not to report it (worker availability is internal, SPEC 9.7 and
+  17), and to cancel the failed task. A question-dialog call right after is refused once; ending the turn with
+  no fallback started is sent back (twice at most); a final message naming the failed worker or the failure is
+  sent back once. All state-based. The person hears of it only when nothing usable is left or the outcome or
+  its timing changes for them.
+- **New workers.** A model discovery finds that the previous one did not have is named once at session start
+  as unproven (low-stakes work first, checked more carefully); never one whose id marks a tier that trains on
+  its prompts.
+- **The record.** The unit record gains an `orchestration` part, and the scorecard's parallelism dimension the
+  same values, each class `measured`: direct calls and characters, refusals, extensions with reasons,
+  delegations started, judged and unjudged, and the share of tool calls delegated. `sisi status` prints it for
+  the unit in progress too. `sisi rule 6` lists what is enforced.
+- **Hosts.** Claude Code: the meter can refuse (observed live). Codex, Gemini and Cursor have before-tool
+  events and are wired for every tool; the refusal is exit status 2 with the reason as the host documents it,
+  not run live here. Copilot only counts. Hosts with no before-tool hook (Qwen, Pi, OpenCode and the
+  rulebook-only tools) cannot run the meter; `sisi doctor` says which.
+
 The owner's hand-written orchestrator (`orch.py`, its ledger, and the section of his Claude
 instructions) is replaced by this. Its ledger is merged into the user store with a row count
 check, then it is removed.

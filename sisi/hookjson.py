@@ -409,9 +409,37 @@ def _add_nested_event(text, event, s):
         ours = _nested_ours(text, event, s["sub"])
     if ours:
         want = _nested_entry(s)
+        text = _fit_group_matcher(text, event, s, ours[0])
+        ours = _nested_ours(text, event, s["sub"])
+        if not ours:  # the entry shared a group with another hook and was moved out: add it in a group of its own
+            return _add_nested_event(text, event, s)
         return _update_fields(text, lambda t: _nested_locate(t, event, _nested_ours(t, event, s["sub"])[0])[3], want)
     _r, hooks = _hooks_node(text)
     return append_element(text, member(hooks, event)[1], _dump(_nested_group(s)))
+
+
+def _group_matcher(g):
+    """(matcher text or None, its value node or None) of a group node."""
+    for k, _kn, v in g.members:
+        if k == "matcher":
+            return (v.value if v.kind == "str" else None), v
+    return None, None
+
+
+def _fit_group_matcher(text, event, s, loc):
+    """Make the group that holds our entry match what the spec wants: no matcher (every tool) when the spec has none,
+    else exactly its matcher. A group of ours alone is edited in place; one shared with another hook is left as it
+    is and our entry is moved out of it (the caller adds it back in a group of its own)."""
+    want = s.get("matcher") or None
+    _arr, g, hm, _e = _nested_locate(text, event, loc)
+    have, node = _group_matcher(g)
+    if (node is None and want is None) or have == want or (want is None and have in ("", "*")):
+        return text
+    if len(hm.items) == 1:
+        if want is None:
+            return remove_member(text, g, "matcher")
+        return replace_node(text, node, json.dumps(want)) if node is not None else insert_member(text, g, "matcher", json.dumps(want))
+    return _nested_remove_at(text, event, loc)
 
 
 def add_nested(text, spec, created_version=None):

@@ -532,8 +532,8 @@ class Codex(Adapter):
             "UserPromptSubmit": {"cmd": _cmd("prompt", "codex"), "timeout": 10, "sub": "prompt"},
             "Stop": {"cmd": _cmd("gate", "codex"), "timeout": _gate_timeout(), "sub": "gate"},
             "SubagentStop": {"cmd": _cmd("gate", "codex", True), "timeout": 30, "sub": "gate"},
-            "PreToolUse": {"cmd": _cmd("watch", "codex"), "timeout": 60, "sub": "watch", "matcher": "Bash"},
-            "PostToolUse": {"cmd": _cmd("watch", "codex"), "timeout": 60, "sub": "watch", "matcher": "Bash"},
+            "PreToolUse": {"cmd": _cmd("watch", "codex"), "timeout": 60, "sub": "watch"},
+            "PostToolUse": {"cmd": _cmd("watch", "codex"), "timeout": 60, "sub": "watch"},
         }
 
     def detect(self):

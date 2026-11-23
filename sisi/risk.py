@@ -223,6 +223,9 @@ def _diff_blocks(diff_text):
     return out
 
 
+NO_PATHS = "no changed paths"
+
+
 def assess(paths, diff_text=None, extra_patterns=None, patterns=None):
     """Return (floor_profile, reasons). Adding a path never lowers the floor."""
     pats = list(patterns if patterns is not None else _patterns_from(default_table()))
@@ -230,7 +233,7 @@ def assess(paths, diff_text=None, extra_patterns=None, patterns=None):
         pats += [p for p in extra_patterns if isinstance(p, dict) and p.get("profile") in _ORDER]
     clean = [str(p).replace(os.sep, "/") for p in (paths or []) if str(p).strip()]
     if not clean:
-        return "trivial", ["no changed paths"]
+        return "trivial", [NO_PATHS]
     best, reasons = "trivial", []
 
     def offer(prof, text):

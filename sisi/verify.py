@@ -430,12 +430,13 @@ def cmd_verify(args, cwd=None, out=print):
             out("  - " + e)
         return 1
     fp = tree_fp(project, path)
+    dfp = deep.tree_fp(project)  # deep freshness: the work, never sisi's own records (a pause must not make it stale)
     as_json = "--json" in args
     if "--deep" in args and "--all" in args:
         out("sisi: use either --deep or --all")
         return 1
     if "--state" in args:
-        ds = deep.deep_state(c, project, fp)
+        ds = deep.deep_state(c, project, dfp)
         if as_json:
             out(json.dumps(deep.public(ds), indent=2))
         else:
@@ -449,21 +450,21 @@ def cmd_verify(args, cwd=None, out=print):
         if not deep.deep_items(c):
             out("sisi: this contract has no deep items")
             return 0
-        started, info = deep.start_background(project, fp)
+        started, info = deep.start_background(project, dfp)
         if started:
             out("deep run started in the background; log: %s" % info)
             out("check progress with `sisi verify --state`")
         else:
             out("a deep run is already running for this project (pid %s, started %s ago, against %s). "
                 "Not starting another." % (info.get("pid"), deep._ago(time.time() - info.get("ts", time.time())),
-                                           "the current tree" if info.get("fp") == fp else "an older tree"))
+                                           "the current tree" if info.get("fp") == dfp else "an older tree"))
         return 0
     locked = False
     if "deep" in tiers and deep.deep_items(c):
-        locked, info = deep.adopt(project, fp) if "--worker" in args else deep.acquire(project, fp)
+        locked, info = deep.adopt(project, dfp) if "--worker" in args else deep.acquire(project, dfp)
         if not locked:
             out("a deep run is already running for this project (pid %s, against %s); not starting another."
-                % (info.get("pid"), "the current tree" if info.get("fp") == fp else "an older tree"))
+                % (info.get("pid"), "the current tree" if info.get("fp") == dfp else "an older tree"))
             tiers = tuple(t for t in tiers if t != "deep")
             if not tiers:
                 return 0
@@ -473,12 +474,12 @@ def cmd_verify(args, cwd=None, out=print):
                       contract_path=path, run_all="--all" in args)
         record(c, project, results, fp)
         if locked:
-            deep.save_state(project, c["id"], fp, results, [x["id"] for x in deep.deep_items(c)])
+            deep.save_state(project, c["id"], dfp, results, [x["id"] for x in deep.deep_items(c)])
     finally:
         if locked:
             deep.release(project)
     good = ok(results)
-    ds = deep.deep_state(c, project, fp)
+    ds = deep.deep_state(c, project, dfp)
     saved = time_saved(results)
     from . import unit as _unit
     standing = _unit.latest_results(c, _unit._unit_results(c, project, c.get("started")))

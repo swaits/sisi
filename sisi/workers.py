@@ -107,13 +107,20 @@ AUTH_SIGNATURES = (
     "authentication required", "run 'agent login'", 'run "agent login"',
     "you are not authenticated", "not authenticated", "no credentials", "no codex credentials",
     "invalid or missing api key", "run 'amp login'", "run codex login", "use /login",
-    "no models available", "401 unauthorized", "http 401",
+    "no models available", "401 unauthorized", "http 401", "api error 401", "api error 403", "http 403",
+    "403 forbidden", "not logged in", "login required", "please log in", "invalid api key",
 )
 LIMIT_SIGNATURES = (
     "provider.go-limit", "monthly usage limit reached", "usage limit reached", "usage limit",
     "rate limit", "you've hit the rate limit", "you've hit your session rate limit",
     "you've reached your weekly rate limit", "quota exceeded", "insufficient credits",
     "out of credits", "http 429", '"status":429', '"status": 429',
+    "api error 429", "error 429", "too many requests", "quota exhausted", "out of quota", "subscription quota",
+    "insufficient quota", "credit balance", "billing", "payment required", "http 402",
+)
+MISSING_SIGNATURES = (
+    "tool not found", "command not found", "provider not connected", "not connected", "provider not found",
+    "model not found", "unknown model",
 )
 ERROR_SIGNATURES = (
     "http 500", "http 502", "http 503", "http 529", "service unavailable", "bad gateway",
@@ -129,15 +136,40 @@ def classify_failure(text, returncode=0):
     m = re.search(r"retryafterms\D{0,4}(\d+)", low)
     if m:
         retry = int(m.group(1)) / 1000.0
+    elif "reset" in low:
+        until = parse_reset(text)
+        if until is not None:
+            retry = until - time.time()
     for sig in AUTH_SIGNATURES:
         if sig in low:
             return "auth", "not logged in (%s)" % _phrase(text, sig), retry
     for sig in LIMIT_SIGNATURES:
         if sig in low:
             return "limit", _phrase(text, sig), retry
+    for sig in MISSING_SIGNATURES:
+        if sig in low:
+            return "missing", _phrase(text, sig), retry
     for sig in ERROR_SIGNATURES:
         if sig in low:
             return "error", _phrase(text, sig), retry
+    return None
+
+
+_ISO_TIME = r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
+
+
+def parse_reset(text, now=None):
+    """The epoch second a limit message says the worker is back at (an ISO date-time or date, best after the
+    word "reset"), or None when it names none or only a past one."""
+    now = time.time() if now is None else now
+    t = text or ""
+    for pat in (r"reset\w*\s*(?:at|on|in|:)?\s*[:=]?\s*(%s)" % _ISO_TIME, r"(%s)" % _ISO_TIME):
+        for m in re.finditer(pat, t, re.I):
+            ts = _parse_time(m.group(1))
+            if ts is not None and ts > now:
+                return ts
+        if re.search(r"reset", t, re.I) is None:
+            break  # without the word, only the first (keyword) pattern was worth trying
     return None
 
 
@@ -316,8 +348,60 @@ def discover(force=False, now=None):
     if not force and cached.get("tools") and now - float(cached.get("checked") or 0) < age:
         return cached
     data = {"checked": now, "tools": [_discover_tool(d) for d in DRIVERS]}
+    if cached.get("tools"):  # models the previous discovery did not have wait for the next session start to be named
+        here = _model_names(data)
+        kept = [w for w in cached.get("new_unannounced") or [] if w in here]
+        data["new_unannounced"] = kept + sorted(w for w in here - _model_names(cached) if w not in kept)
     write_json(discovery_path(), data)
     return data
+
+
+def _model_names(disc):
+    return {_canonical(t["name"], m) for t in disc.get("tools") or [] for m in t.get("models") or []
+            if "contributor" not in str(m).lower()}  # a tier that trains on its prompts is never offered
+
+
+def new_worker_line():
+    """One line naming up to three models discovery found that the previous discovery did not have, once; they
+    are unproven, so low-stakes work first and a closer look at what they return, until their record is no longer
+    thin. None when there is nothing new (or it was said already)."""
+    disc = load_discovery()
+    records = read_records()
+    judged = {}
+    for r in records:
+        if r.get("kind") == "attempt":
+            judged[str(r.get("worker") or "").lower()] = judged.get(str(r.get("worker") or "").lower(), 0) + 1
+    new = [w for w in disc.get("new_unannounced") or []
+           if "contributor" not in w.lower() and judged.get(w.lower(), 0) < routing.MIN_ATTEMPTS]
+    if not disc.get("new_unannounced"):
+        return None
+    disc["new_unannounced"] = []
+    write_json(discovery_path(), disc)
+    if not new:
+        return None
+    more = " (and %d more)" % (len(new) - 3) if len(new) > 3 else ""
+    return ("sisi: new worker model(s) found since the last discovery: %s%s. They are unproven (no judged record): give them "
+            "low-stakes work first and check what they return one level more carefully, until their record is no longer "
+            "thin (%d judged attempts)." % (", ".join(new[:3]), more, routing.MIN_ATTEMPTS))
+
+
+def override_line(records=None):
+    """How often the router's pick was overridden and how the overrides turned out against the recommendations
+    that were followed; None when nothing was routed. Under five judged on either side it says too few."""
+    records = read_records() if records is None else records
+    routed = [r for r in merged_runs(records) if r.get("chosen_against_route") is not None]
+    if not routed:
+        return None
+    attempts = [r for r in records if r.get("kind") == "attempt" and r.get("chosen_against_route") is not None]
+
+    def rate(rows):
+        n = len(rows)
+        return "too few to say (%d judged, need 5)" % n if n < 5 else "%d%% accepted (%d judged)" % (
+            round(100.0 * sum(1 for r in rows if r.get("outcome") == "accepted") / n), n)
+    over = [r for r in attempts if r["chosen_against_route"]]
+    followed = [r for r in attempts if not r["chosen_against_route"]]
+    return ("Router overridden in %d of %d routed delegations. Overrides: %s. Recommendations followed: %s."
+            % (sum(1 for r in routed if r["chosen_against_route"]), len(routed), rate(over), rate(followed)))
 
 
 def mark_discovery_stale():
@@ -422,6 +506,64 @@ def record_down(keys, reason, note=None, now=None, retry_after_s=None, until_ts=
     return avail
 
 
+_MODEL_ONLY = re.compile(r"\bmodel\b.{0,80}(not found|not available|unavailable|not supported|overloaded|does not exist|"
+                         r"deprecated)|(unknown|invalid|unsupported) model", re.I | re.S)
+
+
+def identify_worker(text, candidates=None):
+    """The one candidate worker a message names (by worker id, model or alias, longest spelling first), or
+    None when it names none or more than one."""
+    low = (text or "").lower()
+    cands = _cached_candidates()[0] if candidates is None else candidates
+    found = {}
+    for c in cands:
+        names = [c.get("worker"), c.get("model")] + list(c.get("aliases") or [])
+        hits = [str(n).lower() for n in names if n and len(str(n)) >= 3 and str(n).lower() in low]
+        if hits:
+            found[c["worker"]] = max(len(h) for h in hits)
+    if not found:
+        return None
+    best = max(found.values())
+    top = [w for w, n in found.items() if n == best]
+    return top[0] if len(top) == 1 else None
+
+
+def mark_unavailable(worker, text, now=None):
+    """Record, without being asked, that the worker named failed for a reason that is not about its work
+    (limit, login, missing, passing error): its provider when the whole provider is out, the single model
+    when the text shows only the model is. The time it is back is parsed from the message when it gives one,
+    else the usual widening wait. Returns {"worker", "keys", "reason", "note", "until"} or None when the text
+    is no such failure. Never a quality judgement."""
+    failure = classify_failure(text)
+    if failure is None or not worker:
+        return None
+    reason, note, retry = failure
+    now = time.time() if now is None else now
+    cand = resolve_worker(worker, _cached_candidates()[0]) or {"worker": worker, "model": worker, "tool": None}
+    model = str(cand.get("model") or "")
+    if _MODEL_ONLY.search(text or ""):
+        keys = [cand["worker"]]
+    elif "/" in model:
+        keys = [cand["worker"], model.split("/", 1)[0]]
+    elif cand.get("tool") and not cand.get("host_native"):
+        keys = [cand["worker"], cand["tool"]]
+    else:
+        keys = [cand["worker"]]
+    until = parse_reset(text, now)
+    avail = record_down(keys, reason, note, now=now, retry_after_s=None if until else retry, until_ts=until)
+    shown = avail.get(str(keys[-1]).lower()) or {}
+    return {"worker": cand["worker"], "keys": keys, "reason": reason, "note": note,
+            "until": until if until is not None else shown.get("retry_at")}
+
+
+def earliest_due(now=None):
+    """(key, epoch) of the worker or provider due for another try soonest, or None when nothing is down."""
+    now = time.time() if now is None else now
+    rows = [(float(e.get("retry_at") or 0), k) for k, e in read_availability().items()
+            if isinstance(e, dict) and float(e.get("retry_at") or 0) > now]
+    return (min(rows)[1], min(rows)[0]) if rows else None
+
+
 def clear_down(worker):
     avail = read_availability()
     if not avail:
@@ -483,10 +625,35 @@ def import_ledger(src, now=None):
     return before, before + added, added
 
 
+def merged_runs(records=None):
+    """The ledger's runs, each with the later `run-end` fact for its id applied (a delegation the
+    host started: written when it begins, completed when it returns). A run still in flight keeps
+    status "pending"."""
+    records = read_records() if records is None else records
+    ends = {}
+    for r in records:
+        if r.get("kind") == "run-end" and r.get("run_id"):
+            ends[r["run_id"]] = r
+    out = []
+    for r in records:
+        if r.get("kind") != "run":
+            continue
+        end = ends.get(r.get("id"))
+        if end is not None:
+            r = dict(r, **{k: v for k, v in end.items() if k not in ("kind", "run_id", "ts") and v is not None})
+        out.append(r)
+    return out
+
+
+NOT_JUDGED_STATUSES = ("pending", "superseded")  # in flight, or replaced by a fallback: nothing to judge
+
+
 def unjudged_runs(records=None):
+    """Finished runs with no judgement. A run still in flight (status "pending") is not waiting yet, and one
+    replaced by a fallback (status "superseded") is never asked for."""
     records = read_records() if records is None else records
     judged = {r.get("run_id") for r in records if r.get("kind") == "attempt" and r.get("run_id")}
-    return [r for r in records if r.get("kind") == "run" and r.get("id") not in judged]
+    return [r for r in merged_runs(records) if r.get("id") not in judged and r.get("status") not in NOT_JUDGED_STATUSES]
 
 
 # ---------------------------------------------------------------- candidates
@@ -923,6 +1090,41 @@ def mechanism_for(cand, host=None):
     return "use `sisi delegate` (the host has no delegation of its own for this worker)"
 
 
+def same_model(a, b):
+    """Do two spellings name one model? Equal, or one an alias contained in the other's full name
+    (a short name against a dated id). Neither side may be empty or shorter than three characters."""
+    a, b = str(a or "").strip().lower(), str(b or "").strip().lower()
+    if len(a) < 3 or len(b) < 3:
+        return False
+    a, b = a.rsplit("/", 1)[-1], b.rsplit("/", 1)[-1]
+    return a == b or a in b or b in a
+
+
+def _own_workers(candidates, own_model):
+    return [c["worker"] for c in candidates
+            if own_model and any(same_model(own_model, x) for x in
+                                 [c.get("worker"), c.get("model")] + list(c.get("aliases") or []))]
+
+
+def recommend(kind, difficulty, cwd=None, own_model=None):
+    """The router's pick for a kind of task as (worker, mechanism line, usable_count), reading only
+    the cached discovery and the record, never printing. The session's own model is not offered:
+    delegating to the same model is what orchestration is meant to avoid. (None, None, 0) when no
+    other worker is usable."""
+    records = read_records()
+    candidates, _tools = _cached_candidates(records)
+    candidates, _cold, _x = routable_candidates(candidates, records)
+    prefs = effective_prefs(kind, difficulty, cwd or os.getcwd())
+    candidates, _limited = apply_limits(candidates, prefs)
+    result = routing.choose(candidates, records, read_availability(), kind, difficulty, now=time.time(),
+                            exclude=_own_workers(candidates, own_model), avoid=prefs["avoid"], prefer=prefs["prefer"],
+                            floors=route_floors())
+    choice = result["choice"]
+    if choice is None:
+        return None, None, 0
+    return choice["worker"], mechanism_for(choice), 1
+
+
 def _pct(ok, n):
     return ("%d%%" % round(100.0 * ok / n)) if n else "-"
 
@@ -1164,7 +1366,8 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
         notes.append("sisi: %s is a host-native worker; start it with the host's own subagent tool "
                      "(`sisi delegate` runs only command-line tools)" % cand["worker"])
         return None, None, notes
-    candidates = [c for c in apply_limits(candidates, prefs)[0] if not c.get("host_native")]
+    limited = apply_limits(candidates, prefs)[0]
+    candidates = [c for c in limited if not c.get("host_native")]
     while True:
         if cand is None:
             prefs = effective_prefs(kind, difficulty, cwd)
@@ -1173,7 +1376,15 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
                                     avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors())
             cand = result["choice"]
             if cand is None:
-                notes.append("sisi: no usable worker remains for kind %s at difficulty %s" % (kind, difficulty))
+                native = routing.choose([c for c in limited if c.get("host_native")], read_records(), read_availability(),
+                                        kind, difficulty, now=time.time(), exclude=tried,
+                                        avoid=prefs["avoid"], prefer=prefs["prefer"])["choice"]
+                if native is not None:  # every command-line worker is out: the host's own subagents take it, at once
+                    notes.append("sisi: no command-line worker remains for kind %s at difficulty %s. Fall back now with the "
+                                 "same brief: %s (model %s). Do not ask the person and do not report this to them: "
+                                 "which worker is out is internal." % (kind, difficulty, mechanism_for(native), native.get("model") or native["worker"]))
+                else:
+                    notes.append("sisi: no usable worker remains for kind %s at difficulty %s" % (kind, difficulty))
                 return None, None, notes
         tried.append(cand["worker"])
         if "contributor" in str(cand.get("model") or cand["worker"]).lower():
@@ -1208,7 +1419,8 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
         failure = classify_failure(out + "\n" + err, rc)
         if failure is not None:
             reason, note, retry = failure
-            record_down(_down_keys(cand, reason), reason, note, retry_after_s=retry)
+            until = parse_reset(out + "\n" + err)  # the time the message itself names, when it names one
+            record_down(_down_keys(cand, reason), reason, note, retry_after_s=None if until else retry, until_ts=until)
             mark_discovery_stale()
             notes.append("%s is unavailable (%s: %s); trying the next choice" % (cand["worker"], reason, note))
             cand = None
@@ -1262,14 +1474,7 @@ def _cached_candidates(records=None):
 
 
 def is_subagent_payload(payload):
-    if os.environ.get("SISI_WORKER_RUN"):
-        return True
-    if not isinstance(payload, dict):
-        return False
-    if payload.get("agent_id") or payload.get("agentId") or payload.get("agent_transcript_path"):
-        return True
-    tp = str(payload.get("transcript_path") or "")
-    return "/subagents/" in tp or tp.endswith("/subagents")
+    return store.is_subagent_payload(payload)
 
 
 def _with_facts(lines):
@@ -1470,6 +1675,9 @@ def cmd_workers(args=()):
         print(line)
     for ln in digest_lines(records):
         print(ln)
+    line = override_line(records)
+    if line:
+        print(line)
     return 0
 
 
@@ -1489,9 +1697,18 @@ def _down_lines(down, limit=3):
     return ["down now: %s%s" % ("; ".join(shown), more)]
 
 
-def _route_setup(args):
-    kind = _opt(args, "--kind")
+def _route_setup(args, derived=None):
+    kind = _opt(args, "--kind") or (derived or {}).get("kind")
+    if kind and not derived:
+        from . import unitguard
+        known = unitguard.ledger_kinds()
+        if known and kind not in known:
+            print("sisi route: kind %r is not one the ledger knows. Kinds: %s (building: %s)."
+                  % (kind, ", ".join(known), ", ".join(unitguard._list("build_kinds"))), file=sys.stderr)
+            return None
     difficulty = _opt(args, "--difficulty")
+    if difficulty is None and derived:
+        difficulty = derived.get("difficulty")
     if not kind or difficulty is None:
         return None
     try:
@@ -1503,10 +1720,76 @@ def _route_setup(args):
     return kind, difficulty
 
 
+def retry_context(retry_id, records=None):
+    """What `sisi route --retry-of ID` needs from the judged record: the attempt (ID is an attempt id, or the
+    id of a run that was judged), its kind and difficulty, and how many results in the retry chain behind it
+    were rejected in a row, newest first, with the workers that produced them. None when ID is unknown or
+    its run is not judged yet."""
+    records = read_records() if records is None else records
+    attempts = {r["id"]: r for r in records if r.get("kind") == "attempt" and r.get("id")}
+    by_run = {r["run_id"]: r for r in attempts.values() if r.get("run_id")}
+    a = attempts.get(retry_id) or by_run.get(retry_id)
+    if a is None:
+        return None
+    rejected, seen, cur = [], set(), a
+    while cur is not None and cur["id"] not in seen:
+        seen.add(cur["id"])
+        if cur.get("outcome") != "rejected":
+            break
+        rejected.append(cur.get("worker"))
+        cur = attempts.get(cur.get("retry_of"))
+    return {"attempt": a, "kind": a.get("type"), "difficulty": a.get("difficulty"), "rejected": rejected}
+
+
+RETRY_BRIEF_LINE = ("retry: most failures are brief failures. Improve the brief (what was missing, what is known now, "
+                    "the exact failure) and check it with `sisi delegate check`, then give it to this same worker once more.")
+
+
+def _route_retry(args, ctx, kind, difficulty, candidates, records, prefs):
+    """Print the pick for a retry and return it (or None). The ladder is routing.retry_choice: the same worker
+    with a better brief after the first rejection, then a worker whose evidence is strictly better, then the
+    strongest known."""
+    rejected = ctx["rejected"]
+    res = routing.retry_choice(candidates, records, read_availability(), kind, difficulty, rejected[0], len(rejected),
+                               now=time.time(), avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors())
+    pick = res["choice"]
+    if pick is None:
+        print("no usable worker for kind %s at difficulty %d after a rejection by %s"
+              % (kind, difficulty, ", ".join(sorted(set(rejected)))))
+        return None
+    print(pick["worker"])
+    print("mechanism: %s" % mechanism_for(pick))
+    if res["step"] == "same":
+        print(RETRY_BRIEF_LINE)
+    else:
+        print("retry after %d rejection(s) by %s: %s" % (len(rejected), ", ".join(sorted(set(rejected))), {
+            "better": "a worker with strictly better evidence than the rejected one",
+            "strongest": "nobody has better evidence, so the strongest known usable worker",
+            "only": "nobody else is usable, so the same worker once more"}[res["step"]]))
+    return pick
+
+
+def route_decision(kind, difficulty, worker, retry_of=None):
+    """Write the routing decision for the session this command runs in (see orchestration.record_route)."""
+    try:
+        from . import orchestration
+        orchestration.record_route(kind, difficulty, worker, os.getcwd(), retry_of)
+    except Exception as e:
+        store.log_error("route-decision", e)
+
+
 def cmd_route(args=()):
-    setup = _route_setup(args)
+    retry_id = _opt(args, "--retry-of")
+    ctx = None
+    if retry_id:
+        ctx = retry_context(retry_id)
+        if ctx is None:
+            print("sisi route: no judged delegation with id %s (judge the run first: `sisi delegate judge`)" % retry_id,
+                  file=sys.stderr)
+            return 1
+    setup = _route_setup(args, ctx)
     if setup is None:
-        print("usage: sisi route --kind K --difficulty 1|2|3 [--review-of WORKER] [--explain]")
+        print("usage: sisi route --kind K --difficulty 1|2|3 [--review-of WORKER] [--explain] | --retry-of ID")
         return 1
     kind, difficulty = setup
     records = read_records()
@@ -1514,6 +1797,10 @@ def cmd_route(args=()):
     prefs = effective_prefs(kind, difficulty, os.getcwd())
     everyone = candidates
     candidates, limited = apply_limits(candidates, prefs)
+    if ctx is not None and ctx["rejected"]:
+        pick = _route_retry(args, ctx, kind, difficulty, candidates, records, prefs)
+        route_decision(kind, difficulty, pick["worker"] if pick else None, ctx["attempt"]["id"])
+        return 0 if pick else 1
     result = routing.choose(candidates, records, read_availability(), kind, difficulty,
                             review_of=_opt(args, "--review-of"), now=time.time(),
                             avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors())
@@ -1521,6 +1808,7 @@ def cmd_route(args=()):
     by_worker = {c["worker"]: c for c in everyone}
     down = _down_now(read_availability(), time.time())
     if result["choice"] is None:
+        route_decision(kind, difficulty, None, ctx["attempt"]["id"] if ctx else None)
         print("no usable worker for kind %s at difficulty %d" % (kind, difficulty))
         for line in _down_lines(down):
             print(line)
@@ -1531,6 +1819,7 @@ def cmd_route(args=()):
             for line in routing.explain_choice(result, kind, difficulty)[1:]:
                 print(line)
         return 1
+    route_decision(kind, difficulty, result["choice"]["worker"], ctx["attempt"]["id"] if ctx else None)
     print(result["choice"]["worker"])
     print("mechanism: %s" % mechanism_for(result["choice"]))
     for line in _down_lines(down):
@@ -1697,7 +1986,7 @@ def _cmd_judge(args):
     records = read_records()
     run_id = args[0] if args and not args[0].startswith("--") else None
     if run_id is not None:
-        run = next((r for r in records if r.get("kind") == "run" and r.get("id") == run_id), None)
+        run = next((r for r in merged_runs(records) if r.get("id") == run_id), None)
         if run is None:
             print("sisi delegate: no delegation run with id %s" % run_id, file=sys.stderr)
             return 1
@@ -1708,10 +1997,15 @@ def _cmd_judge(args):
                "project": os.path.basename(str(run.get("cwd") or "").rstrip("/")) or None,
                "type": run.get("type"), "difficulty": run.get("difficulty"), "worker": run.get("worker"),
                "model": run.get("model"), "tool": run.get("tool"), "outcome": outcome, "check": check,
-               "minutes": None, "tokens": run.get("tokens"), "tokens_class": run.get("tokens_class"),
+               "minutes": run.get("minutes"), "tokens": run.get("tokens"), "tokens_class": run.get("tokens_class"),
                "cost": run.get("cost"), "cost_class": run.get("cost_class"),
                "started": run.get("started"), "ended": run.get("ended"),
-               "retry_of": run.get("retry_of"), "note": None}
+               "retry_of": run.get("retry_of"), "note": None,
+               "route_worker": run.get("route_worker"), "chosen_against_route": run.get("chosen_against_route")}
+        if _opt(args, "--type") or _opt(args, "--kind"):  # a run the host started carries no kind until judged
+            rec["type"] = _opt(args, "--type") or _opt(args, "--kind")
+        if _opt(args, "--difficulty") in ("1", "2", "3"):
+            rec["difficulty"] = int(_opt(args, "--difficulty"))
     else:
         worker = _opt(args, "--worker")
         kind = _opt(args, "--type") or _opt(args, "--kind")
@@ -1749,6 +2043,9 @@ def _cmd_judge(args):
     # it never marks the worker unavailable.
     clear_down(rec["worker"])
     print(rec["id"])
+    if rec["outcome"] == "rejected":
+        print("next: `sisi route --retry-of %s` names the worker for the retry (the same one with a better brief first, "
+              "a stronger one after a second rejection)" % rec["id"])
     return 0
 
 
