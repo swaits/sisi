@@ -1563,12 +1563,17 @@ def _cmd_brief_check(args):
     missing = brief_contract.missing_parts(text)
     if not missing:
         print("brief ok: all %d parts present" % len(brief_contract.PARTS))
-        return 0
-    print("brief lacks:")
-    for title in missing:
-        print("  - %s" % title)
-    print("`sisi delegate brief` prints the template.")
-    return 1
+    else:
+        print("brief lacks:")
+        for title in missing:
+            print("  - %s" % title)
+        print("`sisi delegate brief` prints the template.")
+    advice = brief_contract.advice(text)
+    if advice:
+        print("advice (does not block):")
+        for line in advice:
+            print("  - %s" % line)
+    return 1 if missing else 0
 
 
 def _cmd_down(args):
