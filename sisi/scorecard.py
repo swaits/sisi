@@ -366,6 +366,7 @@ def open_units(cwd=None):
         c = C.load(p) if p else None
     except (OSError, ValueError):
         return out
+    out += _parked_rows(cwd, C.project_dir(p) if p else None)
     if not isinstance(c, dict) or not c.get("id") or c.get("status") == "closed" or C.is_unedited_skeleton(c):
         return out
     project = C.project_dir(p)
@@ -382,8 +383,31 @@ def open_units(cwd=None):
         row["lowered"] = "declared %s below the floor %s: %s" % (rk.get("profile"), floor, rk.get("why"))
     if c.get("unverified"):
         row["unverified"] = "; ".join(c["unverified"].get("why") or [])
+    row["refusals"] = _refusal_count(project, c)
     out.append(row)
     return out
+
+
+def _refusal_count(project, c):
+    """How many times the before-tool guard refused building steps for this unit (rule 3)."""
+    try:
+        from . import unitguard
+        return len(unitguard.refusals_for(project, c.get("id"), c.get("started")))
+    except Exception as e:
+        store.log_error("status-refusals", e)
+        return 0
+
+
+def _parked_rows(cwd, project):
+    """Units set aside with `sisi unit park`, as display rows: how long ago, why, what each still owes."""
+    try:
+        from . import gitutil, unit as U
+        project = project or gitutil.root(cwd or os.getcwd()) or os.path.abspath(cwd or os.getcwd())
+        return [{"id": x["id"], "status": "parked", "age": _age(x.get("ts")), "goal": x.get("goal") or "",
+                 "why": x.get("why"), "owes": [tuple(o) for o in x.get("owes") or []]} for x in U.list_parked(project)]
+    except Exception as e:
+        store.log_error("status-parked", e)
+        return []
 
 
 def _lowered_note(u):
@@ -403,10 +427,17 @@ def _basis_note(r):
 def format_open(rows):
     lines = []
     for r in rows:
+        if r["status"] == "parked":
+            lines.append("parked  %-24s %s ago  %s" % (r["id"], r["age"], r["goal"][:60]))
+            lines.append("          set aside: %s; owes: %s" % (r.get("why") or "?",
+                         ", ".join("%s (%s)" % tuple(o) for o in r.get("owes") or []) or "nothing outstanding"))
+            continue
         if r["status"] == "paused":
             lines.append("paused  %-24s age %s%s  waiting for: %s (for %s)" % (r["id"], r["age"], _basis_note(r), r.get("waiting_for") or "?", r.get("paused_for")))
         else:
             lines.append("open    %-24s age %s%s  %s" % (r["id"], r["age"], _basis_note(r), r["goal"][:80]))
+        if r.get("refusals"):
+            lines.append("          the guard refused %d building step(s) before a valid unit stood behind them" % r["refusals"])
         if r.get("lowered"):
             lines.append("          lowered: " + r["lowered"])
         if r.get("unverified"):

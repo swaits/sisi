@@ -89,9 +89,11 @@ def independent_evidence(project, c, results, now=None):
     return out
 
 
-def missing(profile, c, project, results=None, errors=None, deep_state=None, now=None):
+def missing(profile, c, project, results=None, errors=None, deep_state=None, now=None, before_build=False):
     """[(what is missing, how to supply it)] for this profile. `c` is None when no contract is open.
-    `errors` are the contract's validation errors. Nothing is asked that the table does not require."""
+    `errors` are the contract's validation errors. Nothing is asked that the table does not require.
+    `before_build` asks only what must exist before building starts: independent evidence, the deep
+    checks and the retro belong to the end of the work."""
     req = requirements(profile)
     out = []
     if not req.get("contract"):
@@ -137,11 +139,11 @@ def missing(profile, c, project, results=None, errors=None, deep_state=None, now
                 or not [a for a in ap.get("alternatives") or [] if not C.is_placeholder(a)]:
             out.append(("the approach: what you chose, why, and an alternative you rejected",
                         '"approach": {"chosen", "why", "alternatives": [...]}'))
-    if req.get("independent_evidence") and not independent_evidence(project, c, results, now):
+    if req.get("independent_evidence") and not before_build and not independent_evidence(project, c, results, now):
         out.append(("independent evidence that someone or something else checked this",
                     "a reviewer's judged result (`sisi delegate judge --type review --outcome accepted "
                     "--check review`), or a passing check with \"independent\": true and \"by\": \"<who or what>\""))
-    if req.get("all_checks") and deep_state is not None and deep_state not in ("fresh-pass", "none"):
+    if req.get("all_checks") and not before_build and deep_state is not None and deep_state not in ("fresh-pass", "none"):
         out.append(("every check, deep ones included, passing on this tree (release)",
                     "`sisi verify --deep --background`, then `sisi verify --state`"))
     return out

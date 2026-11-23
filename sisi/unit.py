@@ -39,10 +39,47 @@ def list_archives(project):
     return out
 
 
+def parked_dir(project):
+    return os.path.join(project, ".sisi", "parked")
+
+
+def list_parked(project):
+    """The units set aside in this project: [{id, goal, ts, why, owes, session, path, contract}]."""
+    d = parked_dir(project)
+    out = []
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return out
+    for n in names:
+        if not n.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(d, n), encoding="utf-8") as f:
+                rec = json.load(f)
+        except (OSError, ValueError):
+            continue
+        c = rec.get("contract") if isinstance(rec, dict) else None
+        pk = rec.get("parked") if isinstance(rec.get("parked"), dict) else {}
+        if isinstance(c, dict) and c.get("id"):
+            out.append({"id": c["id"], "goal": c.get("goal") or "", "ts": pk.get("ts"), "why": pk.get("why"),
+                        "owes": pk.get("owes") or [], "session": pk.get("session"),
+                        "path": os.path.join(d, n), "contract": c, "started": c.get("started")})
+    return out
+
+
+def owed_checks(c, project):
+    """What the unit still owes: [(check id, status)] of its checks and invariants that have not passed."""
+    rows = _unit_results(c, project, c.get("started"))
+    return [(r["id"], r["status"]) for r in latest_results(c, rows)
+            if r["item"] in ("check", "invariant") and r["status"] != "passed" and not _justified_by_selection(r)]
+
+
 def fresh_id(base, project):
     """A unit id not already used by an archived or summarised unit in this project."""
     used = {r.get("id") for r in list_archives(project)}
     used |= {r.get("id") for r in store.read("units") if isinstance(r, dict) and r.get("project") == project}
+    used |= {r.get("id") for r in list_parked(project)}  # a parked unit still owns its id
     if base not in used:
         return base
     n = 2
@@ -759,6 +796,97 @@ def cmd_unit(args, cwd=None, out=print):
             if rec.get("deferred_checks"):
                 out("deferred checks: %s" % ", ".join(rec["deferred_checks"]))
         return 0 if ok else 1
+    if sub == "continue":
+        from . import unitguard as G
+        c, p, project = _open_contract(cwd, out)
+        if c is None:
+            return 2
+        if is_closed(c):
+            out("sisi: unit %s is closed; start new work with `sisi contract init`" % c.get("id"))
+            return 1
+        sid = G.cli_session()
+        if not sid:
+            out("sisi: cannot tell which session this is (SISI_SESSION_ID is not set and no session hook was seen); "
+                "run it from the agent's own shell")
+            return 1
+        G.bind(sid, project, c, "continue")
+        owed = owed_checks(c, project)
+        started, basis = start_of(c, p)
+        out("continuing unit %s: %s" % (c.get("id"), c.get("goal") or ""))
+        out("started %s%s; last activity %s" % (G.age_text(harvest.epoch(started) if started else None),
+                                                " (inferred)" if basis == "inferred" else "", G.age_text(G.last_activity(project, c))))
+        out("owes: %s" % (", ".join("%s (%s)" % x for x in owed) if owed else "no check outstanding"))
+        out("this session is now bound to the unit; it must be continued again after %g hours without activity"
+            % (G.stale_seconds() / 3600.0))
+        return 0
+    if sub == "park":
+        from . import unitguard as G
+        why = " ".join(args[1:]).strip()
+        if not why:
+            out('usage: sisi unit park "<why this work is set aside>"')
+            return 1
+        c, p, project = _open_contract(cwd, out)
+        if c is None:
+            return 2
+        if is_closed(c):
+            out("sisi: unit %s is closed; there is nothing to park" % c.get("id"))
+            return 1
+        owed = owed_checks(c, project)
+        d = parked_dir(project)
+        os.makedirs(d, exist_ok=True)
+        target = os.path.join(d, "%s.json" % store.safe_id(c["id"]))
+        rec = {"parked": {"ts": store.now(), "why": why, "session": G.cli_session(), "owes": [list(x) for x in owed]},
+               "contract": c}
+        tmp = "%s.tmp%d" % (target, os.getpid())
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(rec, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, target)
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+        out("parked unit %s: %s (kept in %s; it owes: %s). Bring it back with `sisi unit resume %s` when no unit is open."
+            % (c["id"], why, target, ", ".join("%s (%s)" % x for x in owed) or "nothing outstanding", c["id"]))
+        return 0
+    if sub == "resume":
+        from . import unitguard as G
+        if len(args) < 2:
+            out("usage: sisi unit resume ID   (`sisi unit list` shows the parked units)")
+            return 1
+        uid = args[1]
+        p = C.find(cwd)
+        project = C.project_dir(p) if p else (gitutil.root(cwd) or os.path.abspath(cwd))
+        cur = None
+        if p:
+            try:
+                cur = C.load(p)
+            except (OSError, ValueError):
+                cur = None
+        if isinstance(cur, dict) and not is_closed(cur):
+            out("sisi: unit %s is open; set it aside first with `sisi unit park \"<why>\"` or close it with `sisi unit close`"
+                % cur.get("id"))
+            return 1
+        hit = next((x for x in list_parked(project) if x["id"] == uid), None)
+        if hit is None:
+            out("sisi: no parked unit %r here (`sisi unit list` shows them)" % uid)
+            return 1
+        c = hit["contract"]
+        if c.get("status") == "paused":
+            c["status"] = "open"
+        cp = os.path.join(project, C.REL)
+        C.save(cp, c)
+        try:
+            os.unlink(hit["path"])
+        except OSError:
+            pass
+        sid = G.cli_session()
+        if sid:
+            G.bind(sid, project, c, "resume")
+        else:
+            G.touch(project, c)
+        out("resumed unit %s: %s" % (c["id"], c.get("goal") or ""))
+        return 0
     if sub == "pause":
         what = " ".join(args[1:]).strip()
         if not what:
@@ -822,10 +950,17 @@ def cmd_unit(args, cwd=None, out=print):
                 rows.append((rec.get("ended") or "", rec.get("id"), rec.get("delivery_status"), rec.get("goal") or ""))
         if c is not None and not is_closed(c):
             out("open     %-24s %s" % (c.get("id"), c.get("goal") or ""))
+        if project:
+            from . import unitguard as G
+            for x in list_parked(project):
+                out("parked   %-24s %s  (parked %s: %s; owes: %s)" % (
+                    x["id"], x["goal"], G.age_text(harvest.epoch(x["ts"]) if x.get("ts") else None), x.get("why") or "",
+                    ", ".join("%s (%s)" % tuple(o) for o in x["owes"]) or "nothing outstanding"))
         for ended, uid, status, goal in sorted(rows, reverse=True):
             out("%-8s %-24s %-24s %s" % (str(ended)[:10], uid, status, goal))
-        if c is None and not rows:
+        if c is None and not rows and not (project and list_parked(project)):
             out("no units in this project yet")
         return 0
-    out("usage: sisi unit close [--abandon \"<reason>\"] | pause \"<what it waits for>\" | show [ID] | list")
+    out("usage: sisi unit close [--abandon \"<reason>\"] | pause \"<what it waits for>\" | continue | "
+        "park \"<why>\" | resume ID | show [ID] | list")
     return 1
