@@ -14,8 +14,6 @@ ALLOWLIST = [
     ("sisi/gate.py", "Claude-Code-shaped", "host transcript format name, not a model id"),
     ("verifiers/intent/domain-evidence-report.md", "", "worked example with test-data amounts, not a price"),
     ("verifiers/intent/owner-acceptance-runbook.md", "", "worked example with test-data amounts, not a price"),
-    ("sisi/workers.py", "", "TEMPORARY: being rewritten by the orchestration worker under this same rule; remove at merge"),
-    ("sisi/routing.py", "", "TEMPORARY: being rewritten by the orchestration worker under this same rule; remove at merge"),
 ]
 HOST_IDS = {"claude-code", "gemini-cli"}
 
