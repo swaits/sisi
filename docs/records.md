@@ -31,6 +31,46 @@ plainly `delivered`. `sisi contract waive` records a deviation; it turns nothing
 A pause records what the unit waits for. While nothing in the tree changes the gate asks
 nothing; a change ends the wait. Waiting time is telemetry.
 
+## The end-of-turn gate
+
+At each stop the gate asks, in order: did **this session** change anything since its last settled
+stop (its own edits only, read from its transcript and the before/after shell measurement, never another
+session's work in the same tree)? If not, the turn ends silently, as it does for a paused unit with no
+new change and for a closed unit. Otherwise it works out the profile and enforces what that profile's
+row of `canon/risk.json` requires, and nothing else:
+
+| Profile | Required |
+|---|---|
+| trivial | nothing (the retro is asked once only if the unit shows two send-backs or a human correction) |
+| isolated | a contract with at least one check that can fail |
+| logic | as isolated; every check has `covers` |
+| integration | as logic; `invariants`, a `requirements` list (kind, text, decision), `risk.blast_radius` and `risk.rollback`, and an `approach` (chosen, why, an alternative) |
+| data, critical | as integration, plus independent evidence |
+| release | as data, plus every deep check passing on the tree |
+
+Independent evidence is an accepted `review` delegation in the ledger for this project inside the unit's
+window with a check stronger than `none`, or a passing check with `"independent": true` and a `"by"`
+naming who or what produced it. Text such as `TODO`, `n/a` or `none` fills no field.
+
+The profile is the floor (from the paths changed, see `sisi risk`) unless the contract declares a higher
+one. A contract may declare a lower one only with `risk.why`; the unit then runs at the declared profile and
+the record keeps floor, declared profile and reason, and `sisi status` shows it as lowered. Without a
+reason the floor applies. With no unit open the floor covers the paths this session changed since its last
+settled stop.
+
+One send-back lists everything missing, each with the command or field that supplies it, within 25 lines.
+When the checks pass and everything required is present, a unit with recorded retro findings is closed and
+the turn ends; otherwise the gate says once, for that state of the tree, the two ways on: `sisi retro`
+(which records the findings and so closes the unit) or `sisi unit pause "<what it waits for>"`. A pause
+ends when the tree changes; `sisi contract init` refuses while a unit is open or paused; `sisi status`
+lists open and paused units with their age. Send-backs are bounded (`gate.max_blocks`); when they run out
+the gate lets the turn end, the unit's delivery status is `unverified`, the record says why, and the
+agent is told to say so in its report. A subagent's stop never blocks and never asks for a retro; what it
+observed (that it edited, and which files) is recorded for its parent's gate. When a logic-or-higher unit
+has no check stronger than examples (rung 2 or better) the gate says so once, without blocking, and the
+record stores whether the unit had one. A `git commit` or `git merge` whose unit has no passing result for the
+current tree prints a one-line notice (`sisi verify`) and is never blocked.
+
 ## Verification
 
 Five statuses: `passed`, `failed`, `skipped`, `not-applicable`, `not-run`; the last three always

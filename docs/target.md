@@ -64,13 +64,17 @@ What a profile requires. The gate enforces exactly this table and nothing else:
 | trivial | no | the diff; a targeted check when one exists | no | no | no | only on an anomaly (two send-backs, or a human correction) |
 | isolated | yes | at least one that is not vacuous | no | no | no | yes |
 | logic | yes | as isolated, each with `covers` | no | no | no | yes |
-| integration | yes | as logic, plus invariants | yes | yes | no | yes |
+| integration | yes | as logic, plus invariants and an `approach` | yes | yes | no | yes |
 | data, critical | yes | as integration | yes | yes | yes | yes |
 | release | yes | every check (`--all`) | yes | yes | yes | yes |
 
-"Requirement model" is the contract's `requirements` list (section 4). "Risk note" is
-`risk.blast_radius` and `risk.rollback`. "Independent evidence" is a judged review delegation
-in the ledger for this unit, or a passing check marked `"independent": true`.
+"Requirement model" is the contract's `requirements` list (section 4); an `approach` is the
+contract's `approach` object with `chosen`, `why` and at least one alternative. Text such as `TODO`,
+`n/a` or `none` fills no field. The table is held as data in `canon/risk.json` (`requirements`, with
+machine keys beside the prose ones) and read by the gate. "Risk note" is
+`risk.blast_radius` and `risk.rollback`. "Independent evidence" is an accepted review delegation
+in the ledger for this project inside the unit's window with a check stronger than `none`, or a passing check
+marked `"independent": true` that names who or what produced it in `"by"`.
 
 ## 4. The work unit [10]
 
@@ -174,6 +178,11 @@ At the end of a turn in which the session changed something:
 4. If everything is green and the unit is not closed, offer the two ways on: record the retro
    (`sisi retro`), which closes the unit; or `sisi unit pause "<what it waits for>"`.
 5. A paused or closed unit with no new change passes silently.
+
+In this build the retro is offered once for each state of the tree and a trivial change is asked
+nothing (unless the unit shows an anomaly); a recorded retro closes the unit. A session is judged only on
+its own edits, so another session's work in the same tree never sends it back. The detail is in
+docs/records.md, "The end-of-turn gate".
 
 Send-backs stay bounded; when they run out the unit is released as `unverified` and recorded
 as such. Subagents are never sent back for a retro: a subagent's last message is its report to

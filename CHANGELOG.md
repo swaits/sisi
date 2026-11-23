@@ -17,9 +17,25 @@ All notable changes to this project are recorded here. The format follows
 - Telemetry with a class on every value, the eight-dimension scorecard, and `sisi status` as the
   one report (recent units, then trends by project, risk profile, model and policy version).
 - Scratch pruning of old session state, on a counter at session start.
+- The end-of-turn gate is rebuilt on risk profiles (docs/records.md, "The end-of-turn gate"): it
+  enforces exactly the `requirements` row of `canon/risk.json` for the profile (a contract, checks
+  with `covers`, invariants, a requirement list, a risk note, an `approach`, independent evidence),
+  in one send-back that lists everything missing; a retro is asked only when the checks are green and
+  a unit is open, and a recorded retro closes the unit. A contract may declare a profile below its
+  floor only with `risk.why`; `sisi status` shows such a unit as lowered and lists open and paused
+  units with their age. `independent` checks name who or what produced them (`by`). A unit the gate
+  released after its send-backs is `unverified` and says why. The gate notes, once, when a
+  logic-or-higher change has no check stronger than example tests. A commit or merge with no passing
+  `sisi verify` result for the tree prints a one-line notice. This repository's own `.sisi/risk.json`
+  is tracked.
 
 ### Removed
 
+- The gate's line-count thresholds (`gate.growth_lines`, `gate.growth_files`) and
+  `canon/floors.json` (minimum rungs by self-declared check kind); `C.floors()` and
+  `C.floor_failures()`; the `[floor ok]` marks of `sisi verifiers for --kind`; the gate's retro demand
+  on every stop that edited anything and on subagents; its "someone else broke it" notice (a session
+  is no longer sent back for another session's edits, so there is nothing to explain).
 - `sisi note` and `sisi propose`: use `sisi retro` or `sisi learn`. Existing notes and proposal
   files in a personal store are no longer read.
 - `sisi audit` and the audit module.
