@@ -337,7 +337,8 @@ def migrate_learnings():
         origin = L.normalize_project(old.get("project")) or (prov[0]["project"] if prov else "")
         if not prov:
             prov = [{"unit": "legacy:%s" % lid, "project": origin, "ts": old.get("created") or "", "kind": "origin"}]
-        status = {"applied": "implemented", "retired": "reverted"}.get(old.get("status"), "observed")
+        # an old open lesson waits for a cycle, as before: it stays counted by `sisi cycle due`
+        status = {"applied": "implemented", "retired": "reverted", "open": "proposed"}.get(old.get("status"), "observed")
         kind = old.get("change_kind")
         target = str(old.get("target") or "")
         rec = {
@@ -444,9 +445,9 @@ def cmd_update(args):
     try:
         top = _pgit("rev-parse", "--show-toplevel")
         if top.returncode != 0 or os.path.realpath(top.stdout.strip()) != os.path.realpath(paths.REPO):
-            say("sisi update: %s is not a git clone, so there is nothing to fetch. Replace it with a newer copy and run "
-                "`sisi update --post` to rebuild." % paths.REPO)
-            return 1
+            say("sisi update: %s is not a git clone, so the product itself is updated by a release; "
+                "backing up, migrating and rebuilding your data now." % paths.REPO)
+            return post_update()
         if _pgit("rev-parse", "--verify", "-q", "HEAD").returncode != 0:
             say("sisi update: the product repository has no commits yet; nothing to update.")
             return 1
@@ -483,11 +484,44 @@ def cmd_update(args):
     return p.returncode
 
 
+UPDATE_MARK = ".made-by-sisi-update"
+DEFAULT_KEEP_UPDATE_BACKUPS = 5
+
+
+def backups_to_keep():
+    """How many of the update step's own snapshots to keep (config backups.keep_update; at least 1)."""
+    try:
+        n = int((store.config().get("backups") or {}).get("keep_update", DEFAULT_KEEP_UPDATE_BACKUPS))
+    except (TypeError, ValueError):
+        n = DEFAULT_KEEP_UPDATE_BACKUPS
+    return max(n, 1)
+
+
+def prune_update_backups(current):
+    """Mark the snapshot just taken as made by the update step, then delete the oldest snapshots
+    carrying that mark beyond the configured number. A folder without the mark is never touched,
+    and the newest one is never deleted. Returns how many were deleted."""
+    base = paths.data_file("backups")
+    try:
+        open(os.path.join(current, UPDATE_MARK), "w").close()
+        mine = sorted(n for n in os.listdir(base) if os.path.isfile(os.path.join(base, n, UPDATE_MARK)))
+    except OSError:
+        return 0
+    doomed = mine[:-backups_to_keep()]
+    for n in doomed:
+        shutil.rmtree(os.path.join(base, n), ignore_errors=True)
+    return len(doomed)
+
+
 def post_update():
     """After the product changed: back up personal data, migrate its format, keep replacements, rebuild, check."""
     try:
         pdata.ensure()
-        print("backup: %s" % snapshot("update"))
+        bdir = snapshot("update")
+        print("backup: %s" % bdir)
+        pruned = prune_update_backups(bdir)
+        if pruned:
+            print("removed %d older update backup(s) (keeping %d)" % (pruned, backups_to_keep()))
         for n in run():
             print(n)
         for r in overlay.scan_retests():

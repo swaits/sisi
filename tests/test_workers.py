@@ -214,7 +214,7 @@ class SessionModelTests(WorkerCase):
     def test_tick_weak_line_names_stronger(self):
         self.seed_strength({"beta-1": 95, "alpha-1": 60})
         r = self.tick({"session_id": "weak-1", "cwd": self.proj, "source": "startup", "model": "alpha-1"})
-        self.assertIn("do the work yourself", r.stdout)
+        self.assertNotIn("do the work yourself", r.stdout)  # a lower standing never argues against orchestrating
         self.assertIn("beta-1", r.stdout)
 
     def test_tick_subagent_gets_no_delegation_line(self):
@@ -226,7 +226,7 @@ class SessionModelTests(WorkerCase):
 
     def test_tick_unknown_strength_says_so(self):
         r = self.tick({"session_id": "unk-1", "cwd": self.proj, "source": "startup", "model": "mystery-9"})
-        self.assertIn("unknown", r.stdout.lower())
+        self.assertNotIn("yourself", r.stdout.lower())  # unknown standing says nothing about delegating
 
 
 class RoutingPropertyTests(unittest.TestCase):

@@ -17,6 +17,16 @@ or learned from judged results. The strategy is [canon/orchestration.md](../cano
   [--maker M]` — record a price (per million tokens) or a benchmark standing (0–100), each with
   its source and date, in the user store. A fact without a source is refused.
 - `sisi workers avoid|prefer PATTERN --why TEXT` — the user's own routing constraints.
+- `sisi workers only PROVIDER PATTERN... --why TEXT` — only the matching models of that provider are
+  routable; anything else from it (a newly discovered model, say) is passed over with the reason.
+  `--remove` deletes the limit.
+- `sisi workers note PATTERN "TEXT" --why SOURCE` — a standing operational fact about workers that
+  match PATTERN. Shown in `sisi workers` and, for the chosen and passed-over workers it applies to,
+  in `sisi route`, as information for the agent. The product ships none; `--remove` deletes one.
+- A worker id with no provider prefix is a host-native worker (the host's own subagent model): it
+  needs no command-line tool, is usable unless marked down, and `sisi route` says to start it with
+  the host's own subagent tool. Everything `sisi workers` and `sisi delegate` write to the user
+  store is committed there, one small commit per command.
 - `sisi workers down WORKER --reason limit|auth|missing|error [--until DATE] [--note TEXT]` and
   `sisi workers up WORKER` — availability. Without `--until`, the wait widens on repeat failures.
 - `sisi workers import FILE` — merge another ledger file into the delegation ledger, idempotently,

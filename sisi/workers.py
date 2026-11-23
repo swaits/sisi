@@ -19,7 +19,11 @@ Personal files (all in the personal data folder):
   model-strength.json      worker facts (benchmark standing): {"models": {"<model or worker>":
                            {"score": 0..100, "source": text, "date": "YYYY-MM-DD"}}}
   worker-prefs.json        the user's own routing constraints: {"avoid": [{"pattern", "why"}],
-                           "prefer": [...]}, written by `sisi workers avoid|prefer`
+                           "prefer": [...], "only": [{"provider", "patterns", "why"}]}, written by
+                           `sisi workers avoid|prefer|only`
+  worker-notes.json        standing operational facts about workers: {"notes": [{"pattern", "text",
+                           "why", "date"}]}, written by `sisi workers note`; shown to the agent as
+                           information, never applied by sisi itself
 The fact tables start empty; unknown simply means unknown, and session start asks for them to be
 researched when they are missing or old. No price, score or model name ships in the product.
 """
@@ -615,6 +619,14 @@ def build_candidates(disc=None, records=None):
         w = r.get("worker")
         if not w or str(w).lower() in alias_set or r.get("kind") not in ("attempt", "run"):
             continue
+        if "/" not in str(w):
+            # No provider prefix: the host tool's own subagent model. It needs no discovered
+            # command-line tool and is usable unless marked down (routing checks that).
+            c = add(None, str(w), usable=True)
+            if c is not None:
+                c["host_native"] = True
+                alias_set.add(str(w).lower())
+            continue
         tool = _guess_tool(w, disc_tools)
         installed = any(t["name"] == tool and t.get("installed", True) for t in disc_tools) if tool else False
         c = add(tool, r.get("model") or str(w),
@@ -653,7 +665,101 @@ def load_prefs():
     for key in ("avoid", "prefer"):
         rows = d.get(key)
         out[key] = [r for r in rows if isinstance(r, dict) and r.get("pattern")] if isinstance(rows, list) else []
+    rows = d.get("only")
+    out["only"] = [r for r in rows if isinstance(r, dict) and r.get("provider") and isinstance(r.get("patterns"), list)
+                   and r["patterns"]] if isinstance(rows, list) else []
     return out
+
+
+def apply_limits(candidates, prefs):
+    """(kept, excluded): `sisi workers only PROVIDER PATTERN...` leaves only the matching models of
+    that provider routable; anything else from it is passed over with the reason."""
+    limits = {str(e["provider"]).lower(): e for e in prefs.get("only") or []}
+    if not limits:
+        return candidates, []
+    kept, excluded = [], []
+    for c in candidates:
+        worker = str(c.get("worker") or "")
+        prefix = worker.split("/", 1)[0].lower() if "/" in worker else ""
+        entry = limits.get(prefix)
+        if entry is None:
+            kept.append(c)
+            continue
+        model = worker.split("/", 1)[1].lower()
+        if any(str(p).lower() in model for p in entry["patterns"]):
+            kept.append(c)
+        else:
+            excluded.append((worker, "outside the user's own limit on %s to %s%s"
+                             % (entry["provider"], ", ".join(str(p) for p in entry["patterns"]),
+                                (" (%s)" % entry["why"]) if entry.get("why") else "")))
+    return kept, excluded
+
+
+# ---- notes: standing facts about workers, shown to the agent as information
+
+
+def notes_path():
+    return _data_file("worker-notes.json")
+
+
+def load_notes():
+    rows = read_json(notes_path()).get("notes")
+    return [r for r in rows if isinstance(r, dict) and r.get("pattern") and r.get("text")] if isinstance(rows, list) else []
+
+
+def note_line(n):
+    bits = [n["why"] if n.get("why") else None, n.get("date")]
+    return "%s (pattern %r; %s)" % (n["text"], n["pattern"], ", ".join(b for b in bits if b) or "no source stated")
+
+
+def notes_for(candidates_by_worker, chosen, passed, notes=None, limit=5):
+    """Lines of notes that apply to the chosen worker or a passed-over one. Each note is shown once,
+    with who it applies to. Information for the agent, not an instruction."""
+    notes = load_notes() if notes is None else notes
+    lines = []
+    for n in notes:
+        hit = []
+        if chosen is not None and routing._pattern_match(chosen, [n]):
+            hit.append("the chosen worker")
+        names = [w for w, _r in passed if w in candidates_by_worker and routing._pattern_match(candidates_by_worker[w], [n])]
+        if names:
+            hit.append("passed over: %s%s" % (", ".join(names[:3]), " and %d more" % (len(names) - 3) if len(names) > 3 else ""))
+        if hit:
+            lines.append("note (information, not an instruction) for %s: %s" % ("; ".join(hit), note_line(n)))
+    if len(lines) > limit:
+        lines = lines[:limit] + ["and %d more notes apply (`sisi workers`)" % (len(lines) - limit)]
+    return lines
+
+
+# ---- keeping the user store's own files in its history
+
+
+DATA_FILES = ("delegations.jsonl", "worker-availability.json", "worker-prices.json",
+              "model-strength.json", "worker-prefs.json", "worker-notes.json")
+
+
+def _data_state():
+    out = []
+    for name in DATA_FILES:
+        try:
+            st = os.stat(_data_file(name))
+            out.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append(None)
+    return out
+
+
+def with_commit(fn, args, label):
+    """Run a command; when it changed any of the worker files in the user store, commit just those
+    files (one small commit per command; the user's other uncommitted files are never swept up)."""
+    before = _data_state()
+    try:
+        return fn(args)
+    finally:
+        if _data_state() != before:
+            from . import pdata
+            sub = " ".join(str(a) for a in list(args)[:1] if not str(a).startswith("-"))
+            pdata.commit("sisi %s%s: worker data changed" % (label, (" " + sub) if sub else ""), list(DATA_FILES))
 
 
 def _fact_dates():
@@ -704,8 +810,8 @@ def facts_line(now=None):
     return ("sisi: %s: ask a fast, cheap worker to research current prices and "
             "software-engineering benchmark standing for the workers found here (`sisi workers`) "
             "and record each with its source: `sisi workers fact WORKER --price N --source S` "
-            "and `sisi workers fact WORKER --score N --source S`. Until then routing has no "
-            "price or prior to go on." % what)
+            "and `sisi workers fact WORKER --score N --source S`. Until then routing "
+            "goes by the judged record alone." % what)
 
 
 def estimate_cost(tokens, price_entry):
@@ -751,6 +857,8 @@ def mechanism_for(cand, host=None):
     """How to start the chosen worker: the host's own subagents first, its cross-provider
     delegation when the config says it has one (workers.host_cross_provider), else sisi itself."""
     host = host_tool() if host is None else host
+    if cand.get("host_native"):
+        return "use the host's own subagent tool with model %s" % (cand.get("model") or cand["worker"])
     if host and cand.get("tool") == host:
         return "use the host's own subagent mechanism (the worker belongs to the host tool)"
     if host and workers_cfg().get("host_cross_provider"):
@@ -995,6 +1103,11 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
     tried = []
     cand = explicit
     prefs = load_prefs()
+    if cand is not None and cand.get("host_native"):
+        notes.append("sisi: %s is a host-native worker; start it with the host's own subagent tool "
+                     "(`sisi delegate` runs only command-line tools)" % cand["worker"])
+        return None, None, notes
+    candidates = [c for c in apply_limits(candidates, prefs)[0] if not c.get("host_native")]
     while True:
         if cand is None:
             result = routing.choose(candidates, read_records(), read_availability(), kind, difficulty,
@@ -1095,9 +1208,7 @@ def strength_scores(candidates, records):
 def _cached_candidates(records=None):
     """Candidates from the discovery cache only: session start must stay fast and run no tool."""
     cached = load_discovery()
-    if not cached.get("tools"):
-        return [], []
-    return build_candidates(cached, read_records() if records is None else records), cached["tools"]
+    return build_candidates(cached, read_records() if records is None else records), cached.get("tools") or []
 
 
 def is_subagent_payload(payload):
@@ -1117,44 +1228,47 @@ def _with_facts(lines):
 
 
 def session_lines(model, payload=None):
-    """One or two plain lines at session start about delegating (plus one asking for worker
-    facts when they are missing or stale), or nothing for a session another agent started.
-    Uses only cached discovery and the record."""
+    """Plain lines at session start about delegating, or nothing for a session another agent
+    started. When the main model's standing is unknown it says nothing about whether to delegate:
+    a missing number never argues against orchestrating. At most one extra line asks for worker
+    facts to be researched when they are missing or stale (the caller shows these lines once per
+    session). Uses only cached discovery and the record."""
     if not model or is_subagent_payload(payload or {}):
         return []
     records = read_records()
     candidates, _tools = _cached_candidates(records)
     waiting = len(unjudged_runs(records))
     suffix = ""
-    if waiting:
-        suffix = " %d delegation%s waiting for a judgement: run `sisi workers` to see, then `sisi delegate judge`." \
-                 % (waiting, " is" if waiting == 1 else "s are")
-        if waiting == 1:
-            suffix = " One delegation is waiting for a judgement: run `sisi workers`, then `sisi delegate judge`."
-    if not candidates:
-        return _with_facts(["sisi: the strength of this session's model (%s) is unknown here: no workers have been "
-                "discovered yet (`sisi workers` finds them), so do the work yourself for now.%s" % (model, suffix)])
-    cand = resolve_worker(model, candidates)
-    scores = strength_scores(candidates, records)
+    if waiting == 1:
+        suffix = " One delegation is waiting for a judgement: run `sisi workers`, then `sisi delegate judge`."
+    elif waiting:
+        suffix = " %d delegations are waiting for a judgement: run `sisi workers` to see, then `sisi delegate judge`." % waiting
+    scores = strength_scores(candidates, records) if candidates else {}
+    cand = resolve_worker(model, candidates) if candidates else None
     own = scores.get(cand["worker"]) if cand else None
-    if own is None and cand is None:
+    if own is None:
         prior = load_strength_prior().get(model)
         if isinstance(prior, dict) and isinstance(prior.get("score"), (int, float)):
             own = (float(prior["score"]), "stored prior (%s, %s)" % (prior.get("source") or "no source stated",
                                                                      prior.get("date") or "no date stated"))
-    if own is None:
-        return _with_facts(["sisi: the strength of this session's model (%s) is unknown here (no stored prior and no "
-                "measured record yet), so do the work yourself rather than delegating on a guess.%s"
-                % (model, suffix)])
-    best_worker, (best_score, _how) = max(scores.items(), key=lambda kv: kv[1][0]) if scores else (None, (own[0], ""))
-    if own[0] >= best_score - routing.STRONG_BAND:
-        return _with_facts(["sisi: this session's model (%s) is among the strongest available here (%s): plan, ask `sisi route` who "
-                "should do each piece, start that worker with this tool's own subagents (use `sisi delegate` "
-                "only if it has none), and judge what comes back.%s" % (model, own[1], suffix)])
-    return _with_facts(["sisi: this session's model (%s) is not among the strongest available here (%s): do the work "
-            "yourself rather than delegating. Stronger models are available here, strongest first: %s.%s"
-            % (model, own[1], ", ".join(w for w, _s in sorted(scores.items(), key=lambda kv: -kv[1][0])[:3]
-                                         if scores[w][0] > own[0]), suffix)])
+    lines = []
+    if own is not None:
+        best_score = max([s for s, _h in scores.values()] + [own[0]])
+        if own[0] >= best_score - routing.STRONG_BAND:
+            lines.append("sisi: this session's model (%s) is among the strongest available here (%s): plan, ask `sisi route` who "
+                         "should do each piece, start that worker with this tool's own subagents (use `sisi delegate` "
+                         "only if it has none), and judge what comes back.%s" % (model, own[1], suffix))
+        else:
+            stronger = [w for w, _s in sorted(scores.items(), key=lambda kv: -kv[1][0])[:3] if scores[w][0] > own[0]]
+            lines.append("sisi: this session's model (%s) stands at %g (%s)%s. Ask `sisi route` who should do each piece, "
+                         "start that worker with this tool's own subagents (use `sisi delegate` only if it has none), "
+                         "and judge what comes back.%s"
+                         % (model, own[0], own[1],
+                            ("; stronger models available here, strongest first: %s" % ", ".join(stronger)) if stronger else "",
+                            suffix))
+    elif suffix:
+        lines.append("sisi:" + suffix)
+    return _with_facts(lines)
 
 
 # ---------------------------------------------------------------- commands
@@ -1209,6 +1323,10 @@ def cmd_workers(args=()):
         return _cmd_fact(args[1:])
     if args[:1] in (["avoid"], ["prefer"]):
         return _cmd_pref(args[0], args[1:])
+    if args[:1] == ["only"]:
+        return _cmd_only(args[1:])
+    if args[:1] == ["note"]:
+        return _cmd_note(args[1:])
     if args[:1] == ["down"]:
         return _cmd_down(args[1:])
     if args[:1] == ["up"]:
@@ -1272,12 +1390,33 @@ def cmd_workers(args=()):
         for entry in prefs[key]:
             print("%s: %s%s" % (key.capitalize(), entry["pattern"],
                                 (" (%s)" % entry["why"]) if entry.get("why") else ""))
+    for entry in prefs["only"]:
+        print("Only on %s: %s%s" % (entry["provider"], ", ".join(str(p) for p in entry["patterns"]),
+                                    (" (%s)" % entry["why"]) if entry.get("why") else ""))
+    for n in load_notes():
+        print("Note (information for the agent): %s" % note_line(n))
     line = facts_line()
     if line:
         print(line)
     for ln in digest_lines(records):
         print(ln)
     return 0
+
+
+def _down_now(avail, now):
+    """[(key, entry)] for every provider or worker marked down whose retry time is still ahead."""
+    return [(k, v) for k, v in sorted((avail or {}).items())
+            if isinstance(v, dict) and float(v.get("retry_at") or 0) > now]
+
+
+def _down_lines(down, limit=3):
+    """One line naming what is down and when each is due for another try, or nothing."""
+    if not down:
+        return []
+    shown = ["%s (%s, next try %s)" % (k, v.get("reason") or "down", _when(v.get("retry_at")))
+             for k, v in down[:limit]]
+    more = " and %d more" % (len(down) - limit) if len(down) > limit else ""
+    return ["down now: %s%s" % ("; ".join(shown), more)]
 
 
 def _route_setup(args):
@@ -1304,17 +1443,31 @@ def cmd_route(args=()):
     records = read_records()
     candidates, cold, excluded = routable_candidates(build_candidates(), records)
     prefs = load_prefs()
+    everyone = candidates
+    candidates, limited = apply_limits(candidates, prefs)
     result = routing.choose(candidates, records, read_availability(), kind, difficulty,
                             review_of=_opt(args, "--review-of"), now=time.time(),
                             avoid=prefs["avoid"], prefer=prefs["prefer"])
+    result["passed_over"] = list(result["passed_over"]) + limited
+    by_worker = {c["worker"]: c for c in everyone}
+    down = _down_now(read_availability(), time.time())
     if result["choice"] is None:
         print("no usable worker for kind %s at difficulty %d" % (kind, difficulty))
+        for line in _down_lines(down):
+            print(line)
+        print("nothing is usable right now: the main agent does this task itself meanwhile, "
+              "and tries `sisi route` again after the next-try time above%s."
+              % ("" if down else " or once a worker is recorded or fixed (`sisi workers`)"))
         if "--explain" in args:
             for line in routing.explain_choice(result, kind, difficulty)[1:]:
                 print(line)
         return 1
     print(result["choice"]["worker"])
     print("mechanism: %s" % mechanism_for(result["choice"]))
+    for line in _down_lines(down):
+        print(line)
+    for line in notes_for(by_worker, result["choice"], result["passed_over"]):
+        print(line)
     if "--explain" in args:
         for line in routing.explain_choice(result, kind, difficulty):
             print(line)
@@ -1323,7 +1476,7 @@ def cmd_route(args=()):
                   "are not candidates" % excluded)
         if cold:
             print("cold start: no worker here has a judged record, a known price or a benchmark "
-                  "prior yet, so this pick is a trial, not a recommendation from evidence. "
+                  "prior yet, so nothing is known yet about this pick. "
                   "Judge its result (`sisi delegate judge`) and record worker facts "
                   "(`sisi workers fact`) so the next choice has something to go on.")
             line = facts_line()
@@ -1636,6 +1789,9 @@ def _cmd_import(args):
     if not os.path.isfile(args[0]):
         print("sisi: no such ledger file: %s" % args[0], file=sys.stderr)
         return 1
+    if not any(r.get("kind") in ("attempt", "run", "amend", "down", "up") for r in read_records(args[0])):
+        print("sisi: warning: %s contains no ledger rows (no line with a kind of attempt, run, amend, "
+              "down or up); is it the right file?" % args[0], file=sys.stderr)
     before, after, added = import_ledger(args[0])
     print("imported %d rows from %s (before: %d, after: %d); the original file is unchanged"
           % (added, args[0], before, after))
@@ -1709,4 +1865,76 @@ def _cmd_pref(kind, args):
     prefs[kind].append({"pattern": pattern, "why": why})
     write_json(prefs_path(), prefs)
     print("%s %s recorded%s" % (kind, pattern, (" (%s)" % why) if why else ""))
+    return 0
+
+
+def _cmd_only(args):
+    usage = "usage: sisi workers only PROVIDER PATTERN [PATTERN...] --why TEXT | only PROVIDER --remove"
+    plain = _positional(args, ("--why",))
+    if not plain:
+        print(usage)
+        return 1
+    provider, patterns = plain[0].strip().lower().rstrip("/"), plain[1:]
+    prefs = load_prefs()
+    rows = [e for e in prefs["only"] if str(e["provider"]).lower() != provider]
+    if "--remove" in args:
+        removed = len(rows) != len(prefs["only"])
+        _store_only(rows)
+        print("limit on %s removed" % provider if removed else "no limit was recorded for %s" % provider)
+        return 0
+    if not patterns:
+        print(usage)
+        return 1
+    why = _opt(args, "--why")
+    rows.append({"provider": provider, "patterns": patterns, "why": why})
+    _store_only(rows)
+    print("only %s routable from %s%s" % (", ".join(patterns), provider, (" (%s)" % why) if why else ""))
+    return 0
+
+
+def _store_only(rows):
+    d = read_json(prefs_path())
+    d["only"] = rows
+    write_json(prefs_path(), d)
+
+
+def _positional(args, value_opts):
+    out, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in value_opts:
+            skip = True
+        elif not a.startswith("--"):
+            out.append(a)
+    return out
+
+
+def _cmd_note(args):
+    usage = ('usage: sisi workers note PATTERN "TEXT" --why SOURCE | note PATTERN --remove | note (lists)')
+    plain = _positional(args, ("--why",))
+    notes = load_notes()
+    if not plain:
+        for n in notes:
+            print("note: %s" % note_line(n))
+        if not notes:
+            print("no worker notes recorded")
+        return 0
+    pattern = plain[0]
+    if "--remove" in args:
+        keep = [n for n in notes if n["pattern"] != pattern]
+        write_json(notes_path(), {"notes": keep})
+        print("removed %d note(s) for %r" % (len(notes) - len(keep), pattern))
+        return 0
+    if len(plain) < 2:
+        print(usage)
+        return 1
+    why = _opt(args, "--why")
+    if not why:
+        print("sisi: a note needs its --why (where the fact came from); nothing recorded", file=sys.stderr)
+        return 1
+    notes = [n for n in notes if not (n["pattern"] == pattern and n["text"] == plain[1])]
+    notes.append({"pattern": pattern, "text": plain[1], "why": why, "date": time.strftime("%Y-%m-%d", time.localtime())})
+    write_json(notes_path(), {"notes": notes})
+    print("note recorded for %r (from %s)" % (pattern, why))
     return 0
