@@ -1,0 +1,2627 @@
+[
+  {
+    "id": "R-0-1",
+    "status": "partial",
+    "how": "SPEC.md is pinned by hash and extracted into requirements.json, and four read-only audits evaluated the current code before this table",
+    "evidence": "tests/test_spec.py",
+    "gap": "No sisi mechanism itself performs or records conformance evaluation; the audits and this table are one-off human work, not a repeatable in-product check."
+  },
+  {
+    "id": "R-0-2",
+    "status": "partial",
+    "how": "SPEC.md is pinned by hash and extracted into requirements.json, and four read-only audits evaluated the current code before this table",
+    "evidence": "tests/test_spec.py",
+    "gap": "No sisi mechanism itself performs or records conformance evaluation; the audits and this table are one-off human work, not a repeatable in-product check."
+  },
+  {
+    "id": "R-1-1",
+    "status": "partial",
+    "how": "The generated rulebook in canon/core.md states intent ownership, verification and quick delivery as prose for the host agent",
+    "evidence": "canon/core.md",
+    "gap": "No mechanism, record or measured policy enforces this characteristic; it is asked for in prose only."
+  },
+  {
+    "id": "R-1-2",
+    "status": "partial",
+    "how": "The generated rulebook in canon/core.md states intent ownership, verification and quick delivery as prose for the host agent",
+    "evidence": "canon/core.md",
+    "gap": "No mechanism, record or measured policy enforces this characteristic; it is asked for in prose only."
+  },
+  {
+    "id": "R-1-3",
+    "status": "partial",
+    "how": "The generated rulebook in canon/core.md states intent ownership, verification and quick delivery as prose for the host agent",
+    "evidence": "canon/core.md",
+    "gap": "No mechanism, record or measured policy enforces this characteristic; it is asked for in prose only."
+  },
+  {
+    "id": "R-1-4",
+    "status": "partial",
+    "how": "The generated rulebook in canon/core.md states intent ownership, verification and quick delivery as prose for the host agent",
+    "evidence": "canon/core.md",
+    "gap": "No mechanism, record or measured policy enforces this characteristic; it is asked for in prose only."
+  },
+  {
+    "id": "R-1-5",
+    "status": "partial",
+    "how": "The generated rulebook in canon/core.md states intent ownership, verification and quick delivery as prose for the host agent",
+    "evidence": "canon/core.md",
+    "gap": "No mechanism, record or measured policy enforces this characteristic; it is asked for in prose only."
+  },
+  {
+    "id": "R-1-6",
+    "status": "partial",
+    "how": "The generated rulebook in canon/core.md states intent ownership, verification and quick delivery as prose for the host agent",
+    "evidence": "canon/core.md",
+    "gap": "No mechanism, record or measured policy enforces this characteristic; it is asked for in prose only."
+  },
+  {
+    "id": "R-1-7",
+    "status": "partial",
+    "how": "The generated rulebook in canon/core.md states intent ownership, verification and quick delivery as prose for the host agent",
+    "evidence": "canon/core.md",
+    "gap": "No mechanism, record or measured policy enforces this characteristic; it is asked for in prose only."
+  },
+  {
+    "id": "R-1-8",
+    "status": "partial",
+    "how": "The generated rulebook in canon/core.md states intent ownership, verification and quick delivery as prose for the host agent",
+    "evidence": "canon/core.md",
+    "gap": "No mechanism, record or measured policy enforces this characteristic; it is asked for in prose only."
+  },
+  {
+    "id": "R-1-9",
+    "status": "partial",
+    "how": "The generated rulebook in canon/core.md states intent ownership, verification and quick delivery as prose for the host agent",
+    "evidence": "canon/core.md",
+    "gap": "No mechanism, record or measured policy enforces this characteristic; it is asked for in prose only."
+  },
+  {
+    "id": "R-2.3-1",
+    "status": "partial",
+    "how": "Contracts, the gate, retro and routing direct the host agent across part of this scope",
+    "evidence": "sisi/contract.py",
+    "gap": "sisi does not itself perform the engineering work and covers only part of this scope, with no per-area accountability record."
+  },
+  {
+    "id": "R-2.3-2",
+    "status": "partial",
+    "how": "Contracts, the gate, retro and routing direct the host agent across part of this scope",
+    "evidence": "sisi/contract.py",
+    "gap": "sisi does not itself perform the engineering work and covers only part of this scope, with no per-area accountability record."
+  },
+  {
+    "id": "R-2.3-3",
+    "status": "partial",
+    "how": "Contracts, the gate, retro and routing direct the host agent across part of this scope",
+    "evidence": "sisi/contract.py",
+    "gap": "sisi does not itself perform the engineering work and covers only part of this scope, with no per-area accountability record."
+  },
+  {
+    "id": "R-2.3-4",
+    "status": "partial",
+    "how": "Contracts, the gate, retro and routing direct the host agent across part of this scope",
+    "evidence": "sisi/contract.py",
+    "gap": "sisi does not itself perform the engineering work and covers only part of this scope, with no per-area accountability record."
+  },
+  {
+    "id": "R-2.3-5",
+    "status": "partial",
+    "how": "Contracts, the gate, retro and routing direct the host agent across part of this scope",
+    "evidence": "sisi/contract.py",
+    "gap": "sisi does not itself perform the engineering work and covers only part of this scope, with no per-area accountability record."
+  },
+  {
+    "id": "R-2.3-6",
+    "status": "partial",
+    "how": "Contracts, the gate, retro and routing direct the host agent across part of this scope",
+    "evidence": "sisi/contract.py",
+    "gap": "sisi does not itself perform the engineering work and covers only part of this scope, with no per-area accountability record."
+  },
+  {
+    "id": "R-2.3-7",
+    "status": "partial",
+    "how": "Contracts, the gate, retro and routing direct the host agent across part of this scope",
+    "evidence": "sisi/contract.py",
+    "gap": "sisi does not itself perform the engineering work and covers only part of this scope, with no per-area accountability record."
+  },
+  {
+    "id": "R-2.3-8",
+    "status": "partial",
+    "how": "Contracts, the gate, retro and routing direct the host agent across part of this scope",
+    "evidence": "sisi/contract.py",
+    "gap": "sisi does not itself perform the engineering work and covers only part of this scope, with no per-area accountability record."
+  },
+  {
+    "id": "R-2.3-9",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "sisi has no deployment, monitoring or recovery capability for user projects and does not direct the host to record it."
+  },
+  {
+    "id": "R-2.3-10",
+    "status": "partial",
+    "how": "Contracts, the gate, retro and routing direct the host agent across part of this scope",
+    "evidence": "sisi/contract.py",
+    "gap": "sisi does not itself perform the engineering work and covers only part of this scope, with no per-area accountability record."
+  },
+  {
+    "id": "R-3.1-1",
+    "status": "partial",
+    "how": "SPEC.md states the north-star objective and canon/core.md repeats value, correctness and speed aims",
+    "evidence": "SPEC.md",
+    "gap": "No objective function, weighting or measurement in code maximises this; it is a stated aim, not an optimised quantity."
+  },
+  {
+    "id": "R-3.1-2",
+    "status": "partial",
+    "how": "SPEC.md states the north-star objective and canon/core.md repeats value, correctness and speed aims",
+    "evidence": "SPEC.md",
+    "gap": "No objective function, weighting or measurement in code maximises this; it is a stated aim, not an optimised quantity."
+  },
+  {
+    "id": "R-3.2-1",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-2",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-3",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-4",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-5",
+    "status": "partial",
+    "how": "Failed, unverified and waived stops are labelled as such in gate output and results rows",
+    "evidence": "sisi/verify.py:108",
+    "gap": "awaiting-human counts as success in verify.ok and a three-strike or waived stop can still end the turn, so completion can be overstated."
+  },
+  {
+    "id": "R-3.2-6",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-7",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-8",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-9",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-10",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-11",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-12",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-13",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-14",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.2-15",
+    "status": "partial",
+    "how": "The gate blocks unverified work, trust gates contract commands, and waivers are labelled UNVERIFIED",
+    "evidence": "sisi/gate.py",
+    "gap": "The five-tier hierarchy is not encoded as a decision procedure and the gate can still be escaped by waiver or three blocked attempts."
+  },
+  {
+    "id": "R-3.3-1",
+    "status": "partial",
+    "how": "sisi improve and the scoreboard report several separate counts rather than one aggregate score",
+    "evidence": "sisi/cycle.py",
+    "gap": "There is no per-work-unit multidimensional scorecard for a single aggregate to be checked against."
+  },
+  {
+    "id": "R-3.3-2",
+    "status": "partial",
+    "how": "sisi improve and the scoreboard report several separate counts rather than one aggregate score",
+    "evidence": "sisi/cycle.py",
+    "gap": "There is no per-work-unit multidimensional scorecard for a single aggregate to be checked against."
+  },
+  {
+    "id": "R-3.4-1",
+    "status": "partial",
+    "how": "sisi improve explicitly labels intent fulfilment as not measured and reports recurrence alongside activity counts",
+    "evidence": "sisi/cycle.py",
+    "gap": "No counter-metric pairing or Goodhart guard is enforced when a count such as lessons or checks becomes the reported target."
+  },
+  {
+    "id": "R-3.4-2",
+    "status": "partial",
+    "how": "sisi improve explicitly labels intent fulfilment as not measured and reports recurrence alongside activity counts",
+    "evidence": "sisi/cycle.py",
+    "gap": "No counter-metric pairing or Goodhart guard is enforced when a count such as lessons or checks becomes the reported target."
+  },
+  {
+    "id": "R-4.1-1",
+    "status": "partial",
+    "how": "canon/core.md rule 1 asks the agent to choose the approach from the goal and the design section names alternatives",
+    "evidence": "canon/core.md",
+    "gap": "No intent model exists in code; the contract holds only a goal string and free-text assumptions, so this distinction is prose only."
+  },
+  {
+    "id": "R-4.1-2",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-4.1-3",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "Explicit requirements have no field distinct from the contract goal string."
+  },
+  {
+    "id": "R-4.1-4",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-4.1-5",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-4.1-6",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-4.1-7",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-4.2-1",
+    "status": "partial",
+    "how": "The contract records a goal, assumptions and questions, and the design section records alternatives",
+    "evidence": "sisi/contract.py",
+    "gap": "Most of this model is absent: there are no fields for implied or anticipated requirements, confidence, acceptance criteria as such, or deferrals."
+  },
+  {
+    "id": "R-4.2-2",
+    "status": "partial",
+    "how": "The contract records a goal, assumptions and questions, and the design section records alternatives",
+    "evidence": "sisi/contract.py",
+    "gap": "Most of this model is absent: there are no fields for implied or anticipated requirements, confidence, acceptance criteria as such, or deferrals."
+  },
+  {
+    "id": "R-4.2-3",
+    "status": "partial",
+    "how": "The contract records a goal, assumptions and questions, and the design section records alternatives",
+    "evidence": "sisi/contract.py",
+    "gap": "Most of this model is absent: there are no fields for implied or anticipated requirements, confidence, acceptance criteria as such, or deferrals."
+  },
+  {
+    "id": "R-4.2-4",
+    "status": "partial",
+    "how": "The contract records a goal, assumptions and questions, and the design section records alternatives",
+    "evidence": "sisi/contract.py",
+    "gap": "Most of this model is absent: there are no fields for implied or anticipated requirements, confidence, acceptance criteria as such, or deferrals."
+  },
+  {
+    "id": "R-4.2-5",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-4.2-6",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-4.2-7",
+    "status": "partial",
+    "how": "The contract records a goal, assumptions and questions, and the design section records alternatives",
+    "evidence": "sisi/contract.py",
+    "gap": "Most of this model is absent: there are no fields for implied or anticipated requirements, confidence, acceptance criteria as such, or deferrals."
+  },
+  {
+    "id": "R-4.2-8",
+    "status": "partial",
+    "how": "The contract records a goal, assumptions and questions, and the design section records alternatives",
+    "evidence": "sisi/contract.py",
+    "gap": "Most of this model is absent: there are no fields for implied or anticipated requirements, confidence, acceptance criteria as such, or deferrals."
+  },
+  {
+    "id": "R-4.2-9",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-4.3-1",
+    "status": "partial",
+    "how": "canon/core.md asks for necessary completeness and the design section requires alternatives to be considered",
+    "evidence": "canon/core.md",
+    "gap": "No expected-value, cost, confidence or disposition record exists for anticipated requirements; nothing distinguishes implement, architect-for, defer and ignore in data."
+  },
+  {
+    "id": "R-4.3-2",
+    "status": "partial",
+    "how": "canon/core.md asks for necessary completeness and the design section requires alternatives to be considered",
+    "evidence": "canon/core.md",
+    "gap": "No expected-value, cost, confidence or disposition record exists for anticipated requirements; nothing distinguishes implement, architect-for, defer and ignore in data."
+  },
+  {
+    "id": "R-4.3-3",
+    "status": "partial",
+    "how": "canon/core.md asks for necessary completeness and the design section requires alternatives to be considered",
+    "evidence": "canon/core.md",
+    "gap": "No expected-value, cost, confidence or disposition record exists for anticipated requirements; nothing distinguishes implement, architect-for, defer and ignore in data."
+  },
+  {
+    "id": "R-4.3-4",
+    "status": "partial",
+    "how": "canon/core.md asks for necessary completeness and the design section requires alternatives to be considered",
+    "evidence": "canon/core.md",
+    "gap": "No expected-value, cost, confidence or disposition record exists for anticipated requirements; nothing distinguishes implement, architect-for, defer and ignore in data."
+  },
+  {
+    "id": "R-4.3-5",
+    "status": "partial",
+    "how": "canon/core.md asks for necessary completeness and the design section requires alternatives to be considered",
+    "evidence": "canon/core.md",
+    "gap": "No expected-value, cost, confidence or disposition record exists for anticipated requirements; nothing distinguishes implement, architect-for, defer and ignore in data."
+  },
+  {
+    "id": "R-4.3-6",
+    "status": "partial",
+    "how": "canon/core.md asks for necessary completeness and the design section requires alternatives to be considered",
+    "evidence": "canon/core.md",
+    "gap": "No expected-value, cost, confidence or disposition record exists for anticipated requirements; nothing distinguishes implement, architect-for, defer and ignore in data."
+  },
+  {
+    "id": "R-4.3-7",
+    "status": "partial",
+    "how": "canon/core.md asks for necessary completeness and the design section requires alternatives to be considered",
+    "evidence": "canon/core.md",
+    "gap": "No expected-value, cost, confidence or disposition record exists for anticipated requirements; nothing distinguishes implement, architect-for, defer and ignore in data."
+  },
+  {
+    "id": "R-4.4-1",
+    "status": "partial",
+    "how": "The gate blocks a turn that ends in a question without a structured dialog, and the contract can list questions with defaults",
+    "evidence": "sisi/gate.py:523",
+    "gap": "The mechanism discourages questions generally rather than requiring them for consequential or irreversible uncertainty, and recorded answers reopen no dependent work."
+  },
+  {
+    "id": "R-4.4-2",
+    "status": "partial",
+    "how": "The gate blocks a turn that ends in a question without a structured dialog, and the contract can list questions with defaults",
+    "evidence": "sisi/gate.py:523",
+    "gap": "The mechanism discourages questions generally rather than requiring them for consequential or irreversible uncertainty, and recorded answers reopen no dependent work."
+  },
+  {
+    "id": "R-4.4-3",
+    "status": "partial",
+    "how": "The gate blocks a turn that ends in a question without a structured dialog, and the contract can list questions with defaults",
+    "evidence": "sisi/gate.py:523",
+    "gap": "The mechanism discourages questions generally rather than requiring them for consequential or irreversible uncertainty, and recorded answers reopen no dependent work."
+  },
+  {
+    "id": "R-4.4-4",
+    "status": "partial",
+    "how": "The gate blocks a turn that ends in a question without a structured dialog, and the contract can list questions with defaults",
+    "evidence": "sisi/gate.py:523",
+    "gap": "The mechanism discourages questions generally rather than requiring them for consequential or irreversible uncertainty, and recorded answers reopen no dependent work."
+  },
+  {
+    "id": "R-4.5-1",
+    "status": "partial",
+    "how": "The design section requires a named challenger and alternatives before large edits",
+    "evidence": "sisi/design.py",
+    "gap": "The challenge is structural text validated for shape, not evidence that a better solution was sought, and it fires by diff size rather than by flawed premises."
+  },
+  {
+    "id": "R-4.5-2",
+    "status": "partial",
+    "how": "The design section requires a named challenger and alternatives before large edits",
+    "evidence": "sisi/design.py",
+    "gap": "The challenge is structural text validated for shape, not evidence that a better solution was sought, and it fires by diff size rather than by flawed premises."
+  },
+  {
+    "id": "R-4.5-3",
+    "status": "partial",
+    "how": "The design section requires a named challenger and alternatives before large edits",
+    "evidence": "sisi/design.py",
+    "gap": "The challenge is structural text validated for shape, not evidence that a better solution was sought, and it fires by diff size rather than by flawed premises."
+  },
+  {
+    "id": "R-5.1-1",
+    "status": "partial",
+    "how": "The rung ladder, canon/floors.json and contract invariants ask for stronger evidence than a passing test",
+    "evidence": "canon/floors.json",
+    "gap": "A check still proves only that a command exited as expected; rung is agent-asserted and correctness kinds are not distinguished in any record."
+  },
+  {
+    "id": "R-5.1-2",
+    "status": "partial",
+    "how": "The rung ladder, canon/floors.json and contract invariants ask for stronger evidence than a passing test",
+    "evidence": "canon/floors.json",
+    "gap": "A check still proves only that a command exited as expected; rung is agent-asserted and correctness kinds are not distinguished in any record."
+  },
+  {
+    "id": "R-5.1-3",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-5.1-4",
+    "status": "partial",
+    "how": "The rung ladder, canon/floors.json and contract invariants ask for stronger evidence than a passing test",
+    "evidence": "canon/floors.json",
+    "gap": "A check still proves only that a command exited as expected; rung is agent-asserted and correctness kinds are not distinguished in any record."
+  },
+  {
+    "id": "R-5.1-5",
+    "status": "partial",
+    "how": "The rung ladder, canon/floors.json and contract invariants ask for stronger evidence than a passing test",
+    "evidence": "canon/floors.json",
+    "gap": "A check still proves only that a command exited as expected; rung is agent-asserted and correctness kinds are not distinguished in any record."
+  },
+  {
+    "id": "R-5.1-6",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-5.1-7",
+    "status": "partial",
+    "how": "The rung ladder, canon/floors.json and contract invariants ask for stronger evidence than a passing test",
+    "evidence": "canon/floors.json",
+    "gap": "A check still proves only that a command exited as expected; rung is agent-asserted and correctness kinds are not distinguished in any record."
+  },
+  {
+    "id": "R-5.2-1",
+    "status": "partial",
+    "how": "The verifiers library catalogues 140 techniques with a rung and a paste-able contract check each",
+    "evidence": "sisi/verifiers.py",
+    "gap": "Delivery is by a word-overlap matcher shown to mis-rank, 53 entries have never run here, and no technique is selected or executed by sisi itself."
+  },
+  {
+    "id": "R-5.2-2",
+    "status": "partial",
+    "how": "The verifiers library catalogues 140 techniques with a rung and a paste-able contract check each",
+    "evidence": "sisi/verifiers.py",
+    "gap": "Delivery is by a word-overlap matcher shown to mis-rank, 53 entries have never run here, and no technique is selected or executed by sisi itself."
+  },
+  {
+    "id": "R-5.2-3",
+    "status": "partial",
+    "how": "The verifiers library catalogues 140 techniques with a rung and a paste-able contract check each",
+    "evidence": "sisi/verifiers.py",
+    "gap": "Delivery is by a word-overlap matcher shown to mis-rank, 53 entries have never run here, and no technique is selected or executed by sisi itself."
+  },
+  {
+    "id": "R-5.2-4",
+    "status": "partial",
+    "how": "The verifiers library catalogues 140 techniques with a rung and a paste-able contract check each",
+    "evidence": "sisi/verifiers.py",
+    "gap": "Delivery is by a word-overlap matcher shown to mis-rank, 53 entries have never run here, and no technique is selected or executed by sisi itself."
+  },
+  {
+    "id": "R-5.2-5",
+    "status": "partial",
+    "how": "The verifiers library catalogues 140 techniques with a rung and a paste-able contract check each",
+    "evidence": "sisi/verifiers.py",
+    "gap": "Delivery is by a word-overlap matcher shown to mis-rank, 53 entries have never run here, and no technique is selected or executed by sisi itself."
+  },
+  {
+    "id": "R-5.2-6",
+    "status": "partial",
+    "how": "The verifiers library catalogues 140 techniques with a rung and a paste-able contract check each",
+    "evidence": "sisi/verifiers.py",
+    "gap": "Delivery is by a word-overlap matcher shown to mis-rank, 53 entries have never run here, and no technique is selected or executed by sisi itself."
+  },
+  {
+    "id": "R-5.3-1",
+    "status": "partial",
+    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
+    "evidence": "canon/floors.json",
+    "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
+  },
+  {
+    "id": "R-5.3-2",
+    "status": "met",
+    "how": "verify runs only the checks written in the contract and the gate runs only the fast tier, so no full suite is run by default",
+    "evidence": "tests/test_verify.py",
+    "gap": ""
+  },
+  {
+    "id": "R-5.3-3",
+    "status": "partial",
+    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
+    "evidence": "canon/floors.json",
+    "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
+  },
+  {
+    "id": "R-5.3-4",
+    "status": "partial",
+    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
+    "evidence": "canon/floors.json",
+    "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
+  },
+  {
+    "id": "R-5.3-5",
+    "status": "partial",
+    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
+    "evidence": "canon/floors.json",
+    "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
+  },
+  {
+    "id": "R-5.3-6",
+    "status": "partial",
+    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
+    "evidence": "canon/floors.json",
+    "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
+  },
+  {
+    "id": "R-5.3-7",
+    "status": "partial",
+    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
+    "evidence": "canon/floors.json",
+    "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
+  },
+  {
+    "id": "R-5.3-8",
+    "status": "partial",
+    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
+    "evidence": "canon/floors.json",
+    "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
+  },
+  {
+    "id": "R-5.3-9",
+    "status": "partial",
+    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
+    "evidence": "canon/floors.json",
+    "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
+  },
+  {
+    "id": "R-5.3-10",
+    "status": "partial",
+    "how": "canon/floors.json sets a minimum rung by self-declared check kind and the contract splits fast and deep tiers",
+    "evidence": "canon/floors.json",
+    "gap": "Floors compare the rung label only, so cmd true at rung 1 satisfies a floor, and no impact, likelihood, blast-radius or reversibility assessment selects the depth."
+  },
+  {
+    "id": "R-5.3-11",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-5.4-1",
+    "status": "partial",
+    "how": "verify runs contract checks under timeouts with a fast and deep split so not every check blocks every turn",
+    "evidence": "sisi/verify.py",
+    "gap": "No check records what failure mode it addresses, its relevance, expected evidence, estimated cost, a targeted alternative, or reuse eligibility."
+  },
+  {
+    "id": "R-5.4-2",
+    "status": "partial",
+    "how": "verify runs contract checks under timeouts with a fast and deep split so not every check blocks every turn",
+    "evidence": "sisi/verify.py",
+    "gap": "No check records what failure mode it addresses, its relevance, expected evidence, estimated cost, a targeted alternative, or reuse eligibility."
+  },
+  {
+    "id": "R-5.4-3",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-5.4-4",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No check records which changed behaviour or failure mode it addresses."
+  },
+  {
+    "id": "R-5.4-5",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-5.4-6",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-5.4-7",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-5.4-8",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-5.4-9",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-5.4-10",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-5.5-1",
+    "status": "partial",
+    "how": "tests/run_parallel.py runs test modules concurrently and deep results are reused by tree fingerprint",
+    "evidence": "tests/run_parallel.py",
+    "gap": "There is no change-impact test selection, flaky-test quarantine, cache invalidation policy, or duration-based selection in the product path."
+  },
+  {
+    "id": "R-5.6-1",
+    "status": "partial",
+    "how": "verify records each run result and the gate reports failures and UNVERIFIED releases",
+    "evidence": "sisi/verify.py:108",
+    "gap": "Statuses omit skipped, not applicable and not run, budget exhaustion is reported as timeout, and awaiting-human counts as success."
+  },
+  {
+    "id": "R-5.6-2",
+    "status": "partial",
+    "how": "verify records each run result and the gate reports failures and UNVERIFIED releases",
+    "evidence": "sisi/verify.py:108",
+    "gap": "Statuses omit skipped, not applicable and not run, budget exhaustion is reported as timeout, and awaiting-human counts as success."
+  },
+  {
+    "id": "R-5.6-3",
+    "status": "partial",
+    "how": "verify records each run result and the gate reports failures and UNVERIFIED releases",
+    "evidence": "sisi/verify.py:108",
+    "gap": "Statuses omit skipped, not applicable and not run, budget exhaustion is reported as timeout, and awaiting-human counts as success."
+  },
+  {
+    "id": "R-6.1-1",
+    "status": "partial",
+    "how": "delivery.py records request-to-allowed-stop seconds, send-backs and check seconds, summarised as median and p90",
+    "evidence": "sisi/delivery.py",
+    "gap": "Time to first useful result is never recorded, and the completion time is time to a gate-accepted stop rather than to user acceptance."
+  },
+  {
+    "id": "R-6.1-2",
+    "status": "partial",
+    "how": "delivery.py records request-to-allowed-stop seconds, send-backs and check seconds, summarised as median and p90",
+    "evidence": "sisi/delivery.py",
+    "gap": "Time to first useful result is never recorded, and the completion time is time to a gate-accepted stop rather than to user acceptance."
+  },
+  {
+    "id": "R-6.1-3",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "Time to first useful result is never timestamped; only request-to-allowed-stop is recorded."
+  },
+  {
+    "id": "R-6.1-4",
+    "status": "partial",
+    "how": "delivery.py records request-to-allowed-stop seconds, send-backs and check seconds, summarised as median and p90",
+    "evidence": "sisi/delivery.py",
+    "gap": "Time to first useful result is never recorded, and the completion time is time to a gate-accepted stop rather than to user acceptance."
+  },
+  {
+    "id": "R-6.1-5",
+    "status": "partial",
+    "how": "delivery.py records request-to-allowed-stop seconds, send-backs and check seconds, summarised as median and p90",
+    "evidence": "sisi/delivery.py",
+    "gap": "Time to first useful result is never recorded, and the completion time is time to a gate-accepted stop rather than to user acceptance."
+  },
+  {
+    "id": "R-6.2-1",
+    "status": "partial",
+    "how": "canon/core.md rule 9 asks for quick-first delivery and the gate lets a turn end once its own checks pass",
+    "evidence": "canon/core.md",
+    "gap": "No increment, partial-delivery or hostage-check mechanism exists; delivery states are not distinguished in any record."
+  },
+  {
+    "id": "R-6.2-2",
+    "status": "partial",
+    "how": "canon/core.md rule 9 asks for quick-first delivery and the gate lets a turn end once its own checks pass",
+    "evidence": "canon/core.md",
+    "gap": "No increment, partial-delivery or hostage-check mechanism exists; delivery states are not distinguished in any record."
+  },
+  {
+    "id": "R-6.2-3",
+    "status": "partial",
+    "how": "canon/core.md rule 9 asks for quick-first delivery and the gate lets a turn end once its own checks pass",
+    "evidence": "canon/core.md",
+    "gap": "No increment, partial-delivery or hostage-check mechanism exists; delivery states are not distinguished in any record."
+  },
+  {
+    "id": "R-6.3-1",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-6.3-2",
+    "status": "partial",
+    "how": "Gate, verify and hook budgets in config.default.json cap how long a turn or check may run",
+    "evidence": "config.default.json",
+    "gap": "No stall, retry, waiting or low-value-work detection exists, and nothing reassesses or changes strategy when progress stops."
+  },
+  {
+    "id": "R-6.3-3",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-6.3-4",
+    "status": "partial",
+    "how": "Gate, verify and hook budgets in config.default.json cap how long a turn or check may run",
+    "evidence": "config.default.json",
+    "gap": "No stall, retry, waiting or low-value-work detection exists, and nothing reassesses or changes strategy when progress stops."
+  },
+  {
+    "id": "R-6.3-5",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-6.4-1",
+    "status": "met",
+    "how": "The gate runs the contract fast tier at stop and deep checks run separately in the background, never the whole suite by default",
+    "evidence": "tests/test_verify.py",
+    "gap": ""
+  },
+  {
+    "id": "R-6.4-2",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "Nothing reads the diff, dependency graph or history to select relevant checks."
+  },
+  {
+    "id": "R-6.4-3",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-6.4-4",
+    "status": "partial",
+    "how": "The gate runs only the contract fast tier and verify can run independent checks in parallel",
+    "evidence": "sisi/verify.py:74",
+    "gap": "Checks are whatever the agent wrote in the contract; there is no change-impact analysis, recorded reason for an expensive suite, or mandatory versus optional distinction."
+  },
+  {
+    "id": "R-6.5-1",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-6.5-2",
+    "status": "partial",
+    "how": "sisi time reports median and p90 delivery seconds over recorded deliveries",
+    "evidence": "sisi/delivery.py:127",
+    "gap": "No baseline or target budget exists by task class or complexity, and tail latency is p90 rather than a tracked p50 and p95 by class."
+  },
+  {
+    "id": "R-7.1-1",
+    "status": "partial",
+    "how": "canon/core.md makes the host main agent accountable in prose and the gate re-verifies the combined tree at stop",
+    "evidence": "canon/core.md",
+    "gap": "sisi cannot own the host agent outcome; accountability, conflict reconciliation and integration review are not recorded or enforced beyond re-running checks."
+  },
+  {
+    "id": "R-7.1-2",
+    "status": "partial",
+    "how": "canon/core.md makes the host main agent accountable in prose and the gate re-verifies the combined tree at stop",
+    "evidence": "canon/core.md",
+    "gap": "sisi cannot own the host agent outcome; accountability, conflict reconciliation and integration review are not recorded or enforced beyond re-running checks."
+  },
+  {
+    "id": "R-7.2-1",
+    "status": "partial",
+    "how": "routing.py chooses among discovered workers by task kind, difficulty and judged record, preferring flat-rate workers",
+    "evidence": "sisi/routing.py",
+    "gap": "There are no prices, strength priors or token data for most workers, the catalogue floods candidates, and native delegation has zero recorded runs."
+  },
+  {
+    "id": "R-7.2-2",
+    "status": "partial",
+    "how": "routing.py chooses among discovered workers by task kind, difficulty and judged record, preferring flat-rate workers",
+    "evidence": "sisi/routing.py",
+    "gap": "There are no prices, strength priors or token data for most workers, the catalogue floods candidates, and native delegation has zero recorded runs."
+  },
+  {
+    "id": "R-7.2-3",
+    "status": "partial",
+    "how": "routing.py chooses among discovered workers by task kind, difficulty and judged record, preferring flat-rate workers",
+    "evidence": "sisi/routing.py",
+    "gap": "There are no prices, strength priors or token data for most workers, the catalogue floods candidates, and native delegation has zero recorded runs."
+  },
+  {
+    "id": "R-7.3-1",
+    "status": "partial",
+    "how": "workers.py can extract token usage from JSON-lines worker output and the ledger stores cost fields",
+    "evidence": "sisi/workers.py:608",
+    "gap": "Prices and strength files do not exist, most drivers emit text so cost stays null, and cost per accepted change is never computed."
+  },
+  {
+    "id": "R-7.3-2",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-7.3-3",
+    "status": "partial",
+    "how": "workers.py can extract token usage from JSON-lines worker output and the ledger stores cost fields",
+    "evidence": "sisi/workers.py:608",
+    "gap": "Prices and strength files do not exist, most drivers emit text so cost stays null, and cost per accepted change is never computed."
+  },
+  {
+    "id": "R-7.4-1",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "sisi delegate is serial; no parallel execution or coordination-cost measurement exists."
+  },
+  {
+    "id": "R-7.4-2",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "sisi delegate runs one worker serially, with no parallelism, dependency distinction, ownership boundaries or critical-path measurement."
+  },
+  {
+    "id": "R-7.4-3",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-7.4-4",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-7.5-1",
+    "status": "partial",
+    "how": "sisi delegate accepts a kind, a difficulty and a free-text brief file",
+    "evidence": "sisi/workers.py",
+    "gap": "The brief is opaque text: no outcome, scope, files-owned, acceptance, budget or escalation field is required, parsed or enforced."
+  },
+  {
+    "id": "R-7.5-2",
+    "status": "partial",
+    "how": "sisi delegate accepts a kind, a difficulty and a free-text brief file",
+    "evidence": "sisi/workers.py",
+    "gap": "The brief is opaque text: no outcome, scope, files-owned, acceptance, budget or escalation field is required, parsed or enforced."
+  },
+  {
+    "id": "R-7.5-3",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-7.5-4",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-7.5-5",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-7.5-6",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-7.5-7",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-7.5-8",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-7.5-9",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-7.5-10",
+    "status": "partial",
+    "how": "sisi delegate accepts a kind, a difficulty and a free-text brief file",
+    "evidence": "sisi/workers.py",
+    "gap": "The brief is opaque text: no outcome, scope, files-owned, acceptance, budget or escalation field is required, parsed or enforced."
+  },
+  {
+    "id": "R-7.6-1",
+    "status": "partial",
+    "how": "The prompt hook caps injected context at 2,000 characters and tick caps its lesson block",
+    "evidence": "sisi/prompt.py",
+    "gap": "Delegation re-sends a raw brief with no shared discovery artifact, and duplicate exploration across agents is neither prevented nor measured."
+  },
+  {
+    "id": "R-8.1-1",
+    "status": "partial",
+    "how": "canon/core.md and the done recipes ask for durable, simple results beyond the immediate edit",
+    "evidence": "canon/core.md",
+    "gap": "No maintainability, reliability or future-change-cost signal is measured or gated; this is prose for the host agent."
+  },
+  {
+    "id": "R-8.2-1",
+    "status": "partial",
+    "how": "The audits and design section favour the simplest coherent approach and sisi deletes or retires some dead surfaces",
+    "evidence": "sisi/design.py",
+    "gap": "Accidental complexity is not measured, and gate ceremony is triggered by diff size, which equates size with risk."
+  },
+  {
+    "id": "R-8.2-2",
+    "status": "partial",
+    "how": "The audits and design section favour the simplest coherent approach and sisi deletes or retires some dead surfaces",
+    "evidence": "sisi/design.py",
+    "gap": "Accidental complexity is not measured, and gate ceremony is triggered by diff size, which equates size with risk."
+  },
+  {
+    "id": "R-8.3-1",
+    "status": "partial",
+    "how": "handover.py files project facts into project documents and the backlog lists known tool debt",
+    "evidence": "sisi/handover.py",
+    "gap": "No architecture-decision record with rationale and revisit conditions exists, and debt visibility depends on an agent filing it."
+  },
+  {
+    "id": "R-8.3-2",
+    "status": "partial",
+    "how": "handover.py files project facts into project documents and the backlog lists known tool debt",
+    "evidence": "sisi/handover.py",
+    "gap": "No architecture-decision record with rationale and revisit conditions exists, and debt visibility depends on an agent filing it."
+  },
+  {
+    "id": "R-8.3-3",
+    "status": "partial",
+    "how": "handover.py files project facts into project documents and the backlog lists known tool debt",
+    "evidence": "sisi/handover.py",
+    "gap": "No architecture-decision record with rationale and revisit conditions exists, and debt visibility depends on an agent filing it."
+  },
+  {
+    "id": "R-8.3-4",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-8.4-1",
+    "status": "partial",
+    "how": "release.py provides timestamped copies, atomic switching and rollback for sisi itself",
+    "evidence": "sisi/release.py",
+    "gap": "Deployment, monitoring, alerting and recovery for the user project are outside sisi and are not directed, recorded or checked."
+  },
+  {
+    "id": "R-9-1",
+    "status": "partial",
+    "how": "tick, prompt, verify and gate hooks give each host session a start, per-prompt, check and stop sequence",
+    "evidence": "sisi/tick.py",
+    "gap": "The lifecycle is four hook moments, not a coherent per-request lifecycle with discovery, planning, integration and delivery states."
+  },
+  {
+    "id": "R-9.2-1",
+    "status": "partial",
+    "how": "The prompt hook prefers targeted recipe and lesson delivery over loading the whole library",
+    "evidence": "sisi/prompt.py",
+    "gap": "Measured delivery is near-zero recall, parallel research agents are not launched by sisi, and existing-functionality discovery is not recorded."
+  },
+  {
+    "id": "R-9.2-2",
+    "status": "partial",
+    "how": "The prompt hook prefers targeted recipe and lesson delivery over loading the whole library",
+    "evidence": "sisi/prompt.py",
+    "gap": "Measured delivery is near-zero recall, parallel research agents are not launched by sisi, and existing-functionality discovery is not recorded."
+  },
+  {
+    "id": "R-9.2-3",
+    "status": "partial",
+    "how": "The prompt hook prefers targeted recipe and lesson delivery over loading the whole library",
+    "evidence": "sisi/prompt.py",
+    "gap": "Measured delivery is near-zero recall, parallel research agents are not launched by sisi, and existing-functionality discovery is not recorded."
+  },
+  {
+    "id": "R-9.3-1",
+    "status": "partial",
+    "how": "A six-part design section is required before edits past 40 lines or 3 files",
+    "evidence": "sisi/design.py:100",
+    "gap": "Planning is triggered by diff size not risk, validates text shape rather than foreseeable rework, and records no dependencies or integration responsibilities."
+  },
+  {
+    "id": "R-9.4-1",
+    "status": "partial",
+    "how": "sisi delegate runs a briefed worker and records the run in the ledger",
+    "evidence": "sisi/workers.py",
+    "gap": "Workers do not report scope, risk or estimate discoveries back into any plan, and progress or resource use during execution is not monitored."
+  },
+  {
+    "id": "R-9.5-1",
+    "status": "partial",
+    "how": "The gate re-runs contract checks on the combined working tree before allowing a stop",
+    "evidence": "sisi/gate.py",
+    "gap": "Integration is only re-running the same checks; conflicting subagent findings and interface coherence are not reconciled by any mechanism."
+  },
+  {
+    "id": "R-9.7-1",
+    "status": "partial",
+    "how": "canon/core.md asks for a concise delivery summary and the gate failure report is capped at 4,000 characters",
+    "evidence": "canon/core.md",
+    "gap": "No delivery format is enforced, and internal orchestration detail is neither hidden nor summarised by a sisi mechanism."
+  },
+  {
+    "id": "R-9.8-1",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-10.1-1",
+    "status": "partial",
+    "how": "A contract bounds one task with a goal, checks and invariants in .sisi/contract.json",
+    "evidence": "sisi/contract.py:39",
+    "gap": "One contract file is overwritten task after task, and unit size is governed by diff-size thresholds rather than outcome coherence."
+  },
+  {
+    "id": "R-10.2-1",
+    "status": "partial",
+    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
+    "evidence": "sisi/contract.py:57",
+    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+  },
+  {
+    "id": "R-10.2-2",
+    "status": "partial",
+    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
+    "evidence": "sisi/contract.py:57",
+    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+  },
+  {
+    "id": "R-10.2-3",
+    "status": "partial",
+    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
+    "evidence": "sisi/contract.py:57",
+    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+  },
+  {
+    "id": "R-10.2-4",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-10.2-5",
+    "status": "partial",
+    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
+    "evidence": "sisi/contract.py:57",
+    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+  },
+  {
+    "id": "R-10.2-6",
+    "status": "partial",
+    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
+    "evidence": "sisi/contract.py:57",
+    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+  },
+  {
+    "id": "R-10.2-7",
+    "status": "partial",
+    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
+    "evidence": "sisi/contract.py:57",
+    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+  },
+  {
+    "id": "R-10.2-8",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-10.2-9",
+    "status": "partial",
+    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
+    "evidence": "sisi/contract.py:57",
+    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+  },
+  {
+    "id": "R-10.2-10",
+    "status": "partial",
+    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
+    "evidence": "sisi/contract.py:57",
+    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+  },
+  {
+    "id": "R-10.2-11",
+    "status": "met",
+    "how": "verify.record appends every check action and result with contract id, rung, status and duration to the results store",
+    "evidence": "tests/test_verify.py:25",
+    "gap": ""
+  },
+  {
+    "id": "R-10.2-12",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "Deferred checks, limitations and unresolved risks have no field and are never gated."
+  },
+  {
+    "id": "R-10.2-13",
+    "status": "partial",
+    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
+    "evidence": "sisi/contract.py:57",
+    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+  },
+  {
+    "id": "R-10.2-14",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No per-unit scorecard is produced or stored."
+  },
+  {
+    "id": "R-10.2-15",
+    "status": "partial",
+    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
+    "evidence": "sisi/contract.py:57",
+    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+  },
+  {
+    "id": "R-10.3-1",
+    "status": "partial",
+    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
+    "evidence": "sisi/gate.py:52",
+    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+  },
+  {
+    "id": "R-10.3-2",
+    "status": "partial",
+    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
+    "evidence": "sisi/gate.py:52",
+    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+  },
+  {
+    "id": "R-10.3-3",
+    "status": "partial",
+    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
+    "evidence": "sisi/gate.py:52",
+    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+  },
+  {
+    "id": "R-10.3-4",
+    "status": "partial",
+    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
+    "evidence": "sisi/gate.py:52",
+    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+  },
+  {
+    "id": "R-10.3-5",
+    "status": "partial",
+    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
+    "evidence": "sisi/gate.py:52",
+    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+  },
+  {
+    "id": "R-10.3-6",
+    "status": "partial",
+    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
+    "evidence": "sisi/gate.py:52",
+    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+  },
+  {
+    "id": "R-10.3-7",
+    "status": "met",
+    "how": "The gate need_retro block refuses an edited stop until a retro lesson is recorded for the session",
+    "evidence": "tests/test_gate.py",
+    "gap": ""
+  },
+  {
+    "id": "R-10.3-8",
+    "status": "partial",
+    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
+    "evidence": "sisi/gate.py:52",
+    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+  },
+  {
+    "id": "R-11.1-1",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.1-2",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.1-3",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.1-4",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.1-5",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.1-6",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.1-7",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.1-8",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.1-9",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.1-10",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.1-11",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.1-12",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.1-13",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.1-14",
+    "status": "met",
+    "how": "cmd_retro persists each learning review as a structured lesson row with occurrences in the personal store",
+    "evidence": "tests/test_retro.py",
+    "gap": ""
+  },
+  {
+    "id": "R-11.1-15",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.1-16",
+    "status": "partial",
+    "how": "The gate requires a retro with moment, cause and change fields after edited work, stored in the personal retro store",
+    "evidence": "sisi/retro.py:337",
+    "gap": "The retro is one lesson per stop rather than a scored review: no expected effect, validation approach, prioritisation or not-worth-promoting record is required, and trivial edits are forced to invent one."
+  },
+  {
+    "id": "R-11.2-1",
+    "status": "partial",
+    "how": "The retro template asks what happened, why, and what exact change follows",
+    "evidence": "sisi/retro.py:949",
+    "gap": "Thirteen of the fourteen required questions have no field, prompt or check; only the mechanism-change question is structurally asked."
+  },
+  {
+    "id": "R-11.2-2",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.2-3",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.2-4",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.2-5",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.2-6",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.2-7",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.2-8",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.2-9",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.2-10",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.2-11",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.2-12",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.2-13",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.2-14",
+    "status": "partial",
+    "how": "The retro template asks what happened, why, and what exact change follows",
+    "evidence": "sisi/retro.py:949",
+    "gap": "Thirteen of the fourteen required questions have no field, prompt or check; only the mechanism-change question is structurally asked."
+  },
+  {
+    "id": "R-11.3-1",
+    "status": "partial",
+    "how": "effect_for maps a lesson kind to a field note, recipe, learned note or backlog item, delivered later by tick and prompt hooks",
+    "evidence": "sisi/retro.py:551",
+    "gap": "Every effect in live data is prompt text; the executable enforced-check path requires strength 3 and has never fired, so no mechanism changes future behaviour except prose."
+  },
+  {
+    "id": "R-11.3-2",
+    "status": "partial",
+    "how": "effect_for maps a lesson kind to a field note, recipe, learned note or backlog item, delivered later by tick and prompt hooks",
+    "evidence": "sisi/retro.py:551",
+    "gap": "Every effect in live data is prompt text; the executable enforced-check path requires strength 3 and has never fired, so no mechanism changes future behaviour except prose."
+  },
+  {
+    "id": "R-11.4-1",
+    "status": "partial",
+    "how": "Lessons are structured rows in sqlite with moment, cause, change, scope, status and occurrence provenance",
+    "evidence": "sisi/retro.py:106",
+    "gap": "There is no impact, measurable expected effect, validation method or benchmark, mechanism version or confidence field."
+  },
+  {
+    "id": "R-11.4-2",
+    "status": "met",
+    "how": "Lessons are stored in a sqlite database with a jsonl export, a durable files-plus-database representation",
+    "evidence": "sisi/retro.py:94",
+    "gap": ""
+  },
+  {
+    "id": "R-11.5-1",
+    "status": "partial",
+    "how": "Lessons carry status, cycles apply under a base-version lock and revert_cycle restores prior files byte for byte",
+    "evidence": "sisi/cycle.py:1667",
+    "gap": "Observed-to-prose is where live changes stop: no originating-case or held-out validation, no monitoring per change, and no stronger approval for security or global-policy changes."
+  },
+  {
+    "id": "R-11.5-2",
+    "status": "partial",
+    "how": "Lessons carry status, cycles apply under a base-version lock and revert_cycle restores prior files byte for byte",
+    "evidence": "sisi/cycle.py:1667",
+    "gap": "Observed-to-prose is where live changes stop: no originating-case or held-out validation, no monitoring per change, and no stronger approval for security or global-policy changes."
+  },
+  {
+    "id": "R-11.5-3",
+    "status": "partial",
+    "how": "Lessons carry status, cycles apply under a base-version lock and revert_cycle restores prior files byte for byte",
+    "evidence": "sisi/cycle.py:1667",
+    "gap": "Observed-to-prose is where live changes stop: no originating-case or held-out validation, no monitoring per change, and no stronger approval for security or global-policy changes."
+  },
+  {
+    "id": "R-11.5-4",
+    "status": "partial",
+    "how": "Lessons carry status, cycles apply under a base-version lock and revert_cycle restores prior files byte for byte",
+    "evidence": "sisi/cycle.py:1667",
+    "gap": "Observed-to-prose is where live changes stop: no originating-case or held-out validation, no monitoring per change, and no stronger approval for security or global-policy changes."
+  },
+  {
+    "id": "R-11.5-5",
+    "status": "partial",
+    "how": "Lessons carry status, cycles apply under a base-version lock and revert_cycle restores prior files byte for byte",
+    "evidence": "sisi/cycle.py:1667",
+    "gap": "Observed-to-prose is where live changes stop: no originating-case or held-out validation, no monitoring per change, and no stronger approval for security or global-policy changes."
+  },
+  {
+    "id": "R-11.5-6",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No change is evaluated against its originating or regression cases before taking effect; docs/learning.md states this as policy."
+  },
+  {
+    "id": "R-11.5-7",
+    "status": "partial",
+    "how": "Lessons carry status, cycles apply under a base-version lock and revert_cycle restores prior files byte for byte",
+    "evidence": "sisi/cycle.py:1667",
+    "gap": "Observed-to-prose is where live changes stop: no originating-case or held-out validation, no monitoring per change, and no stronger approval for security or global-policy changes."
+  },
+  {
+    "id": "R-11.5-8",
+    "status": "partial",
+    "how": "Lessons carry status, cycles apply under a base-version lock and revert_cycle restores prior files byte for byte",
+    "evidence": "sisi/cycle.py:1667",
+    "gap": "Observed-to-prose is where live changes stop: no originating-case or held-out validation, no monitoring per change, and no stronger approval for security or global-policy changes."
+  },
+  {
+    "id": "R-11.5-9",
+    "status": "met",
+    "how": "revert_cycle restores the exact prior files and lesson rows for an applied cycle",
+    "evidence": "sisi/cycle.py:1667",
+    "gap": ""
+  },
+  {
+    "id": "R-11.5-10",
+    "status": "partial",
+    "how": "Lessons carry status, cycles apply under a base-version lock and revert_cycle restores prior files byte for byte",
+    "evidence": "sisi/cycle.py:1667",
+    "gap": "Observed-to-prose is where live changes stop: no originating-case or held-out validation, no monitoring per change, and no stronger approval for security or global-policy changes."
+  },
+  {
+    "id": "R-11.5-11",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.6-1",
+    "status": "partial",
+    "how": "scope.py tiers lessons core, user and project and refuses a universal scope that names one project",
+    "evidence": "sisi/scope.py:170",
+    "gap": "Scope is the recording agent claim checked for naming only, one incident can go core at once, and no counterexample, shadow or canary validation exists."
+  },
+  {
+    "id": "R-11.6-2",
+    "status": "partial",
+    "how": "scope.py tiers lessons core, user and project and refuses a universal scope that names one project",
+    "evidence": "sisi/scope.py:170",
+    "gap": "Scope is the recording agent claim checked for naming only, one incident can go core at once, and no counterexample, shadow or canary validation exists."
+  },
+  {
+    "id": "R-11.6-3",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.6-4",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-11.6-5",
+    "status": "partial",
+    "how": "scope.py tiers lessons core, user and project and refuses a universal scope that names one project",
+    "evidence": "sisi/scope.py:170",
+    "gap": "Scope is the recording agent claim checked for naming only, one incident can go core at once, and no counterexample, shadow or canary validation exists."
+  },
+  {
+    "id": "R-11.6-6",
+    "status": "met",
+    "how": "revert_cycle restores an applied cycle and release rollback restores the prior sisi copy, both byte for byte",
+    "evidence": "tests/test_release.py:159",
+    "gap": ""
+  },
+  {
+    "id": "R-11.7-1",
+    "status": "partial",
+    "how": "Patterns and recurrence trends let cycles notice repeated failures, and SPEC.md changes are owner-only by pinned hash",
+    "evidence": "docs/spec/README.md",
+    "gap": "Cycles can disable or replace rules including the retro and strongest-check rules, so the improvement system can weaken its own constraints without owner approval."
+  },
+  {
+    "id": "R-11.7-2",
+    "status": "partial",
+    "how": "Patterns and recurrence trends let cycles notice repeated failures, and SPEC.md changes are owner-only by pinned hash",
+    "evidence": "docs/spec/README.md",
+    "gap": "Cycles can disable or replace rules including the retro and strongest-check rules, so the improvement system can weaken its own constraints without owner approval."
+  },
+  {
+    "id": "R-11.7-3",
+    "status": "partial",
+    "how": "Patterns and recurrence trends let cycles notice repeated failures, and SPEC.md changes are owner-only by pinned hash",
+    "evidence": "docs/spec/README.md",
+    "gap": "Cycles can disable or replace rules including the retro and strongest-check rules, so the improvement system can weaken its own constraints without owner approval."
+  },
+  {
+    "id": "R-12-1",
+    "status": "partial",
+    "how": "pdata.py keeps a private personal git store, retro lessons persist across sessions, and handover files project facts into project docs",
+    "evidence": "sisi/pdata.py",
+    "gap": "Layers are partial: no workstream layer, no confidence or validity fields, no contradiction or staleness detection for lesson content, and relevance matching has near-zero measured recall."
+  },
+  {
+    "id": "R-12-2",
+    "status": "partial",
+    "how": "pdata.py keeps a private personal git store, retro lessons persist across sessions, and handover files project facts into project docs",
+    "evidence": "sisi/pdata.py",
+    "gap": "Layers are partial: no workstream layer, no confidence or validity fields, no contradiction or staleness detection for lesson content, and relevance matching has near-zero measured recall."
+  },
+  {
+    "id": "R-12-3",
+    "status": "partial",
+    "how": "pdata.py keeps a private personal git store, retro lessons persist across sessions, and handover files project facts into project docs",
+    "evidence": "sisi/pdata.py",
+    "gap": "Layers are partial: no workstream layer, no confidence or validity fields, no contradiction or staleness detection for lesson content, and relevance matching has near-zero measured recall."
+  },
+  {
+    "id": "R-12-4",
+    "status": "partial",
+    "how": "pdata.py keeps a private personal git store, retro lessons persist across sessions, and handover files project facts into project docs",
+    "evidence": "sisi/pdata.py",
+    "gap": "Layers are partial: no workstream layer, no confidence or validity fields, no contradiction or staleness detection for lesson content, and relevance matching has near-zero measured recall."
+  },
+  {
+    "id": "R-12-5",
+    "status": "partial",
+    "how": "pdata.py keeps a private personal git store, retro lessons persist across sessions, and handover files project facts into project docs",
+    "evidence": "sisi/pdata.py",
+    "gap": "Layers are partial: no workstream layer, no confidence or validity fields, no contradiction or staleness detection for lesson content, and relevance matching has near-zero measured recall."
+  },
+  {
+    "id": "R-12-6",
+    "status": "partial",
+    "how": "pdata.py keeps a private personal git store, retro lessons persist across sessions, and handover files project facts into project docs",
+    "evidence": "sisi/pdata.py",
+    "gap": "Layers are partial: no workstream layer, no confidence or validity fields, no contradiction or staleness detection for lesson content, and relevance matching has near-zero measured recall."
+  },
+  {
+    "id": "R-12-7",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-12-8",
+    "status": "partial",
+    "how": "pdata.py keeps a private personal git store, retro lessons persist across sessions, and handover files project facts into project docs",
+    "evidence": "sisi/pdata.py",
+    "gap": "Layers are partial: no workstream layer, no confidence or validity fields, no contradiction or staleness detection for lesson content, and relevance matching has near-zero measured recall."
+  },
+  {
+    "id": "R-12-9",
+    "status": "partial",
+    "how": "pdata.py keeps a private personal git store, retro lessons persist across sessions, and handover files project facts into project docs",
+    "evidence": "sisi/pdata.py",
+    "gap": "Layers are partial: no workstream layer, no confidence or validity fields, no contradiction or staleness detection for lesson content, and relevance matching has near-zero measured recall."
+  },
+  {
+    "id": "R-12-10",
+    "status": "partial",
+    "how": "pdata.py keeps a private personal git store, retro lessons persist across sessions, and handover files project facts into project docs",
+    "evidence": "sisi/pdata.py",
+    "gap": "Layers are partial: no workstream layer, no confidence or validity fields, no contradiction or staleness detection for lesson content, and relevance matching has near-zero measured recall."
+  },
+  {
+    "id": "R-12-11",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-12-12",
+    "status": "partial",
+    "how": "pdata.py keeps a private personal git store, retro lessons persist across sessions, and handover files project facts into project docs",
+    "evidence": "sisi/pdata.py",
+    "gap": "Layers are partial: no workstream layer, no confidence or validity fields, no contradiction or staleness detection for lesson content, and relevance matching has near-zero measured recall."
+  },
+  {
+    "id": "R-13.1-1",
+    "status": "partial",
+    "how": "scoreboard.py and improve report corrections, questions, contract share, send-backs and delivery time",
+    "evidence": "sisi/scoreboard.py",
+    "gap": "No per-work-unit scorecard exists and none of intent, correctness, cost, human attention or lifecycle quality is measured per unit or aggregated by policy version."
+  },
+  {
+    "id": "R-13.2-1",
+    "status": "partial",
+    "how": "Recurrence, send-backs per delivery and delivery-time windows are computed from recorded rows",
+    "evidence": "sisi/retro.py:509",
+    "gap": "Requirement surprise, cost per accepted change, verification efficiency, delegation benefit, improvement realisation and first-pass acceptance are not tracked as defined."
+  },
+  {
+    "id": "R-13.2-2",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-13.2-3",
+    "status": "partial",
+    "how": "Recurrence, send-backs per delivery and delivery-time windows are computed from recorded rows",
+    "evidence": "sisi/retro.py:509",
+    "gap": "Requirement surprise, cost per accepted change, verification efficiency, delegation benefit, improvement realisation and first-pass acceptance are not tracked as defined."
+  },
+  {
+    "id": "R-13.2-4",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No token or cost field is populated, so cost per accepted change cannot be computed."
+  },
+  {
+    "id": "R-13.2-5",
+    "status": "partial",
+    "how": "Recurrence, send-backs per delivery and delivery-time windows are computed from recorded rows",
+    "evidence": "sisi/retro.py:509",
+    "gap": "Requirement surprise, cost per accepted change, verification efficiency, delegation benefit, improvement realisation and first-pass acceptance are not tracked as defined."
+  },
+  {
+    "id": "R-13.2-6",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-13.2-7",
+    "status": "partial",
+    "how": "Recurrence, send-backs per delivery and delivery-time windows are computed from recorded rows",
+    "evidence": "sisi/retro.py:509",
+    "gap": "Requirement surprise, cost per accepted change, verification efficiency, delegation benefit, improvement realisation and first-pass acceptance are not tracked as defined."
+  },
+  {
+    "id": "R-13.2-8",
+    "status": "partial",
+    "how": "Recurrence, send-backs per delivery and delivery-time windows are computed from recorded rows",
+    "evidence": "sisi/retro.py:509",
+    "gap": "Requirement surprise, cost per accepted change, verification efficiency, delegation benefit, improvement realisation and first-pass acceptance are not tracked as defined."
+  },
+  {
+    "id": "R-13.2-9",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-13.2-10",
+    "status": "partial",
+    "how": "Recurrence, send-backs per delivery and delivery-time windows are computed from recorded rows",
+    "evidence": "sisi/retro.py:509",
+    "gap": "Requirement surprise, cost per accepted change, verification efficiency, delegation benefit, improvement realisation and first-pass acceptance are not tracked as defined."
+  },
+  {
+    "id": "R-13.2-11",
+    "status": "partial",
+    "how": "Recurrence, send-backs per delivery and delivery-time windows are computed from recorded rows",
+    "evidence": "sisi/retro.py:509",
+    "gap": "Requirement surprise, cost per accepted change, verification efficiency, delegation benefit, improvement realisation and first-pass acceptance are not tracked as defined."
+  },
+  {
+    "id": "R-13.3-1",
+    "status": "partial",
+    "how": "harvest.py mines transcripts, groundtruth.py attaches repo and test evidence, and escapes.py flags verified-then-corrected sessions",
+    "evidence": "sisi/harvest.py",
+    "gap": "Scoring remains self-assessment from the implementing agent; there is no independent evaluator in the loop and token, model and cost telemetry is largely absent."
+  },
+  {
+    "id": "R-13.3-2",
+    "status": "partial",
+    "how": "harvest.py mines transcripts, groundtruth.py attaches repo and test evidence, and escapes.py flags verified-then-corrected sessions",
+    "evidence": "sisi/harvest.py",
+    "gap": "Scoring remains self-assessment from the implementing agent; there is no independent evaluator in the loop and token, model and cost telemetry is largely absent."
+  },
+  {
+    "id": "R-13.3-3",
+    "status": "partial",
+    "how": "harvest.py mines transcripts, groundtruth.py attaches repo and test evidence, and escapes.py flags verified-then-corrected sessions",
+    "evidence": "sisi/harvest.py",
+    "gap": "Scoring remains self-assessment from the implementing agent; there is no independent evaluator in the loop and token, model and cost telemetry is largely absent."
+  },
+  {
+    "id": "R-13.3-4",
+    "status": "partial",
+    "how": "harvest.py mines transcripts, groundtruth.py attaches repo and test evidence, and escapes.py flags verified-then-corrected sessions",
+    "evidence": "sisi/harvest.py",
+    "gap": "Scoring remains self-assessment from the implementing agent; there is no independent evaluator in the loop and token, model and cost telemetry is largely absent."
+  },
+  {
+    "id": "R-13.3-5",
+    "status": "partial",
+    "how": "harvest.py mines transcripts, groundtruth.py attaches repo and test evidence, and escapes.py flags verified-then-corrected sessions",
+    "evidence": "sisi/harvest.py",
+    "gap": "Scoring remains self-assessment from the implementing agent; there is no independent evaluator in the loop and token, model and cost telemetry is largely absent."
+  },
+  {
+    "id": "R-13.3-6",
+    "status": "partial",
+    "how": "harvest.py mines transcripts, groundtruth.py attaches repo and test evidence, and escapes.py flags verified-then-corrected sessions",
+    "evidence": "sisi/harvest.py",
+    "gap": "Scoring remains self-assessment from the implementing agent; there is no independent evaluator in the loop and token, model and cost telemetry is largely absent."
+  },
+  {
+    "id": "R-13.4-1",
+    "status": "partial",
+    "how": "sisi improve prints an explicit Not measured line for intent fulfilment instead of inventing a number",
+    "evidence": "sisi/cycle.py:1780",
+    "gap": "Scores carry no measured, inferred, estimated or unavailable label per dimension, and missing telemetry is not turned into an observability task."
+  },
+  {
+    "id": "R-13.4-2",
+    "status": "partial",
+    "how": "sisi improve prints an explicit Not measured line for intent fulfilment instead of inventing a number",
+    "evidence": "sisi/cycle.py:1780",
+    "gap": "Scores carry no measured, inferred, estimated or unavailable label per dimension, and missing telemetry is not turned into an observability task."
+  },
+  {
+    "id": "R-13.4-3",
+    "status": "partial",
+    "how": "sisi improve prints an explicit Not measured line for intent fulfilment instead of inventing a number",
+    "evidence": "sisi/cycle.py:1780",
+    "gap": "Scores carry no measured, inferred, estimated or unavailable label per dimension, and missing telemetry is not turned into an observability task."
+  },
+  {
+    "id": "R-13.5-1",
+    "status": "partial",
+    "how": "No single aggregate score is computed; improve shows separate activity and delivery lines",
+    "evidence": "sisi/cycle.py:1780",
+    "gap": "No decision procedure inspects a scorecard, hard gates, confidence and counter-metrics together, because the scorecard itself does not exist."
+  },
+  {
+    "id": "R-14.1-1",
+    "status": "partial",
+    "how": "Cycles promote low-risk lesson folds autonomously and hooks act without asking once installed",
+    "evidence": "sisi/cycle.py:1531",
+    "gap": "Autonomy boundaries are config and prose; sisi does not classify an action by risk before acting."
+  },
+  {
+    "id": "R-14.1-2",
+    "status": "partial",
+    "how": "Cycles promote low-risk lesson folds autonomously and hooks act without asking once installed",
+    "evidence": "sisi/cycle.py:1531",
+    "gap": "Autonomy boundaries are config and prose; sisi does not classify an action by risk before acting."
+  },
+  {
+    "id": "R-14.2-1",
+    "status": "partial",
+    "how": "Contract commands refuse to run in an untrusted project and the question gate forces a structured dialog",
+    "evidence": "sisi/trust.py:32",
+    "gap": "No pause exists for destructive, irreversible, external or financial actions in general, and cycles apply consequential rule changes with no approval at all."
+  },
+  {
+    "id": "R-14.2-2",
+    "status": "partial",
+    "how": "Contract commands refuse to run in an untrusted project and the question gate forces a structured dialog",
+    "evidence": "sisi/trust.py:32",
+    "gap": "No pause exists for destructive, irreversible, external or financial actions in general, and cycles apply consequential rule changes with no approval at all."
+  },
+  {
+    "id": "R-14.3-1",
+    "status": "partial",
+    "how": "SPEC.md and the source docx are pinned by SHA256SUMS and docs/spec/README.md reserves changes to the owner",
+    "evidence": "docs/spec/README.md",
+    "gap": "The rulebook the agent actually follows is personal overlay text a cycle can rewrite, so the operative constraints are not protected the way the specification files are."
+  },
+  {
+    "id": "R-14.3-2",
+    "status": "partial",
+    "how": "SPEC.md and the source docx are pinned by SHA256SUMS and docs/spec/README.md reserves changes to the owner",
+    "evidence": "docs/spec/README.md",
+    "gap": "The rulebook the agent actually follows is personal overlay text a cycle can rewrite, so the operative constraints are not protected the way the specification files are."
+  },
+  {
+    "id": "R-14.4-1",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "Policy changes are not classified by impact or reversibility before a cycle applies them."
+  },
+  {
+    "id": "R-15-1",
+    "status": "partial",
+    "how": "The gate retries a blocked stop up to three times, workers classify worker failures as down, and release and cycle changes can be rolled back",
+    "evidence": "sisi/workers.py",
+    "gap": "Most named failure kinds have no response: no stall detection, flaky-test isolation, conflict resolution, checkpointing or blast-radius assessment."
+  },
+  {
+    "id": "R-15-2",
+    "status": "partial",
+    "how": "The gate retries a blocked stop up to three times, workers classify worker failures as down, and release and cycle changes can be rolled back",
+    "evidence": "sisi/workers.py",
+    "gap": "Most named failure kinds have no response: no stall detection, flaky-test isolation, conflict resolution, checkpointing or blast-radius assessment."
+  },
+  {
+    "id": "R-15-3",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-15-4",
+    "status": "partial",
+    "how": "The gate retries a blocked stop up to three times, workers classify worker failures as down, and release and cycle changes can be rolled back",
+    "evidence": "sisi/workers.py",
+    "gap": "Most named failure kinds have no response: no stall detection, flaky-test isolation, conflict resolution, checkpointing or blast-radius assessment."
+  },
+  {
+    "id": "R-15-5",
+    "status": "partial",
+    "how": "The gate retries a blocked stop up to three times, workers classify worker failures as down, and release and cycle changes can be rolled back",
+    "evidence": "sisi/workers.py",
+    "gap": "Most named failure kinds have no response: no stall detection, flaky-test isolation, conflict resolution, checkpointing or blast-radius assessment."
+  },
+  {
+    "id": "R-15-6",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+  },
+  {
+    "id": "R-15-7",
+    "status": "partial",
+    "how": "The gate retries a blocked stop up to three times, workers classify worker failures as down, and release and cycle changes can be rolled back",
+    "evidence": "sisi/workers.py",
+    "gap": "Most named failure kinds have no response: no stall detection, flaky-test isolation, conflict resolution, checkpointing or blast-radius assessment."
+  },
+  {
+    "id": "R-15-8",
+    "status": "partial",
+    "how": "The gate retries a blocked stop up to three times, workers classify worker failures as down, and release and cycle changes can be rolled back",
+    "evidence": "sisi/workers.py",
+    "gap": "Most named failure kinds have no response: no stall detection, flaky-test isolation, conflict resolution, checkpointing or blast-radius assessment."
+  },
+  {
+    "id": "R-15-9",
+    "status": "partial",
+    "how": "The gate retries a blocked stop up to three times, workers classify worker failures as down, and release and cycle changes can be rolled back",
+    "evidence": "sisi/workers.py",
+    "gap": "Most named failure kinds have no response: no stall detection, flaky-test isolation, conflict resolution, checkpointing or blast-radius assessment."
+  },
+  {
+    "id": "R-15-10",
+    "status": "partial",
+    "how": "The gate retries a blocked stop up to three times, workers classify worker failures as down, and release and cycle changes can be rolled back",
+    "evidence": "sisi/workers.py",
+    "gap": "Most named failure kinds have no response: no stall detection, flaky-test isolation, conflict resolution, checkpointing or blast-radius assessment."
+  },
+  {
+    "id": "R-15-11",
+    "status": "partial",
+    "how": "The gate retries a blocked stop up to three times, workers classify worker failures as down, and release and cycle changes can be rolled back",
+    "evidence": "sisi/workers.py",
+    "gap": "Most named failure kinds have no response: no stall detection, flaky-test isolation, conflict resolution, checkpointing or blast-radius assessment."
+  },
+  {
+    "id": "R-15-12",
+    "status": "partial",
+    "how": "The gate retries a blocked stop up to three times, workers classify worker failures as down, and release and cycle changes can be rolled back",
+    "evidence": "sisi/workers.py",
+    "gap": "Most named failure kinds have no response: no stall detection, flaky-test isolation, conflict resolution, checkpointing or blast-radius assessment."
+  },
+  {
+    "id": "R-15-13",
+    "status": "partial",
+    "how": "The gate retries a blocked stop up to three times, workers classify worker failures as down, and release and cycle changes can be rolled back",
+    "evidence": "sisi/workers.py",
+    "gap": "Most named failure kinds have no response: no stall detection, flaky-test isolation, conflict resolution, checkpointing or blast-radius assessment."
+  },
+  {
+    "id": "R-16-1",
+    "status": "partial",
+    "how": "Install is reversible with 0700 backups, contract commands require a trusted project, and personal data stays in a private store",
+    "evidence": "sisi/trust.py",
+    "gap": "Commands run unsandboxed under shell=True, delegated workers get full user permissions, secrets are not scanned for, and lesson text injected into future prompts is ungated."
+  },
+  {
+    "id": "R-16-2",
+    "status": "partial",
+    "how": "Install is reversible with 0700 backups, contract commands require a trusted project, and personal data stays in a private store",
+    "evidence": "sisi/trust.py",
+    "gap": "Commands run unsandboxed under shell=True, delegated workers get full user permissions, secrets are not scanned for, and lesson text injected into future prompts is ungated."
+  },
+  {
+    "id": "R-16-3",
+    "status": "missing",
+    "how": "nothing",
+    "evidence": "",
+    "gap": "Delegated workers and contract commands run with the user full permissions; no least-privilege scoping exists."
+  },
+  {
+    "id": "R-16-4",
+    "status": "partial",
+    "how": "Install is reversible with 0700 backups, contract commands require a trusted project, and personal data stays in a private store",
+    "evidence": "sisi/trust.py",
+    "gap": "Commands run unsandboxed under shell=True, delegated workers get full user permissions, secrets are not scanned for, and lesson text injected into future prompts is ungated."
+  },
+  {
+    "id": "R-16-5",
+    "status": "partial",
+    "how": "Install is reversible with 0700 backups, contract commands require a trusted project, and personal data stays in a private store",
+    "evidence": "sisi/trust.py",
+    "gap": "Commands run unsandboxed under shell=True, delegated workers get full user permissions, secrets are not scanned for, and lesson text injected into future prompts is ungated."
+  },
+  {
+    "id": "R-16-6",
+    "status": "partial",
+    "how": "Install is reversible with 0700 backups, contract commands require a trusted project, and personal data stays in a private store",
+    "evidence": "sisi/trust.py",
+    "gap": "Commands run unsandboxed under shell=True, delegated workers get full user permissions, secrets are not scanned for, and lesson text injected into future prompts is ungated."
+  },
+  {
+    "id": "R-16-7",
+    "status": "partial",
+    "how": "Install is reversible with 0700 backups, contract commands require a trusted project, and personal data stays in a private store",
+    "evidence": "sisi/trust.py",
+    "gap": "Commands run unsandboxed under shell=True, delegated workers get full user permissions, secrets are not scanned for, and lesson text injected into future prompts is ungated."
+  },
+  {
+    "id": "R-16-8",
+    "status": "partial",
+    "how": "Install is reversible with 0700 backups, contract commands require a trusted project, and personal data stays in a private store",
+    "evidence": "sisi/trust.py",
+    "gap": "Commands run unsandboxed under shell=True, delegated workers get full user permissions, secrets are not scanned for, and lesson text injected into future prompts is ungated."
+  },
+  {
+    "id": "R-16-9",
+    "status": "partial",
+    "how": "Install keeps content-addressed 0700 backups, uninstall restores edited tool configs byte for byte, and cycles and releases can be rolled back",
+    "evidence": "tests/test_install_safety.py",
+    "gap": "Rollback covers sisi own install, releases and cycles, not risky changes the agent makes in a user project."
+  },
+  {
+    "id": "R-16-10",
+    "status": "partial",
+    "how": "Install is reversible with 0700 backups, contract commands require a trusted project, and personal data stays in a private store",
+    "evidence": "sisi/trust.py",
+    "gap": "Commands run unsandboxed under shell=True, delegated workers get full user permissions, secrets are not scanned for, and lesson text injected into future prompts is ungated."
+  },
+  {
+    "id": "R-16-11",
+    "status": "partial",
+    "how": "Install is reversible with 0700 backups, contract commands require a trusted project, and personal data stays in a private store",
+    "evidence": "sisi/trust.py",
+    "gap": "Commands run unsandboxed under shell=True, delegated workers get full user permissions, secrets are not scanned for, and lesson text injected into future prompts is ungated."
+  },
+  {
+    "id": "R-17-1",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-2",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-3",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-4",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-5",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-6",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-7",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-8",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-9",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-10",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-11",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-12",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-13",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-14",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-17-15",
+    "status": "partial",
+    "how": "canon/core.md asks for concise summaries, the question gate forces few structured questions, and tick and prompt injections are size-capped",
+    "evidence": "canon/core.md",
+    "gap": "No completion-report format is enforced, progress and intermediate results are the host tool behaviour, and 41 commands expose the internal topology sisi was meant to hide."
+  },
+  {
+    "id": "R-18-1",
+    "status": "partial",
+    "how": "rulecmd.py honestly labels rules that are not enforced and improve refuses to claim unmeasured improvement",
+    "evidence": "sisi/rulecmd.py",
+    "gap": "Several prohibited patterns are the current design: prompt-only learning, self-scored recurrence, one-incident core rules and ceremony by diff size."
+  },
+  {
+    "id": "R-19-1",
+    "status": "partial",
+    "how": "SPEC.md is adopted and pinned, four audits inventoried and mapped components this morning, and this conformance table classifies gaps",
+    "evidence": "docs/spec/requirements.json",
+    "gap": "Reconciliation as a staged product process is not implemented in sisi; baseline outcome measures, lifecycle, learning validation and an evaluation harness remain to be built in the rebuild."
+  },
+  {
+    "id": "R-19-2",
+    "status": "partial",
+    "how": "SPEC.md is adopted and pinned, four audits inventoried and mapped components this morning, and this conformance table classifies gaps",
+    "evidence": "docs/spec/requirements.json",
+    "gap": "Reconciliation as a staged product process is not implemented in sisi; baseline outcome measures, lifecycle, learning validation and an evaluation harness remain to be built in the rebuild."
+  },
+  {
+    "id": "R-19-3",
+    "status": "partial",
+    "how": "SPEC.md is adopted and pinned, four audits inventoried and mapped components this morning, and this conformance table classifies gaps",
+    "evidence": "docs/spec/requirements.json",
+    "gap": "Reconciliation as a staged product process is not implemented in sisi; baseline outcome measures, lifecycle, learning validation and an evaluation harness remain to be built in the rebuild."
+  },
+  {
+    "id": "R-19-4",
+    "status": "partial",
+    "how": "SPEC.md is adopted and pinned, four audits inventoried and mapped components this morning, and this conformance table classifies gaps",
+    "evidence": "docs/spec/requirements.json",
+    "gap": "Reconciliation as a staged product process is not implemented in sisi; baseline outcome measures, lifecycle, learning validation and an evaluation harness remain to be built in the rebuild."
+  },
+  {
+    "id": "R-19-5",
+    "status": "partial",
+    "how": "SPEC.md is adopted and pinned, four audits inventoried and mapped components this morning, and this conformance table classifies gaps",
+    "evidence": "docs/spec/requirements.json",
+    "gap": "Reconciliation as a staged product process is not implemented in sisi; baseline outcome measures, lifecycle, learning validation and an evaluation harness remain to be built in the rebuild."
+  },
+  {
+    "id": "R-19-6",
+    "status": "partial",
+    "how": "SPEC.md is adopted and pinned, four audits inventoried and mapped components this morning, and this conformance table classifies gaps",
+    "evidence": "docs/spec/requirements.json",
+    "gap": "Reconciliation as a staged product process is not implemented in sisi; baseline outcome measures, lifecycle, learning validation and an evaluation harness remain to be built in the rebuild."
+  },
+  {
+    "id": "R-19-7",
+    "status": "partial",
+    "how": "SPEC.md is adopted and pinned, four audits inventoried and mapped components this morning, and this conformance table classifies gaps",
+    "evidence": "docs/spec/requirements.json",
+    "gap": "Reconciliation as a staged product process is not implemented in sisi; baseline outcome measures, lifecycle, learning validation and an evaluation harness remain to be built in the rebuild."
+  },
+  {
+    "id": "R-19-8",
+    "status": "partial",
+    "how": "SPEC.md is adopted and pinned, four audits inventoried and mapped components this morning, and this conformance table classifies gaps",
+    "evidence": "docs/spec/requirements.json",
+    "gap": "Reconciliation as a staged product process is not implemented in sisi; baseline outcome measures, lifecycle, learning validation and an evaluation harness remain to be built in the rebuild."
+  },
+  {
+    "id": "R-19-9",
+    "status": "partial",
+    "how": "SPEC.md is adopted and pinned, four audits inventoried and mapped components this morning, and this conformance table classifies gaps",
+    "evidence": "docs/spec/requirements.json",
+    "gap": "Reconciliation as a staged product process is not implemented in sisi; baseline outcome measures, lifecycle, learning validation and an evaluation harness remain to be built in the rebuild."
+  },
+  {
+    "id": "R-19-10",
+    "status": "partial",
+    "how": "SPEC.md is adopted and pinned, four audits inventoried and mapped components this morning, and this conformance table classifies gaps",
+    "evidence": "docs/spec/requirements.json",
+    "gap": "Reconciliation as a staged product process is not implemented in sisi; baseline outcome measures, lifecycle, learning validation and an evaluation harness remain to be built in the rebuild."
+  },
+  {
+    "id": "R-19-11",
+    "status": "partial",
+    "how": "SPEC.md is adopted and pinned, four audits inventoried and mapped components this morning, and this conformance table classifies gaps",
+    "evidence": "docs/spec/requirements.json",
+    "gap": "Reconciliation as a staged product process is not implemented in sisi; baseline outcome measures, lifecycle, learning validation and an evaluation harness remain to be built in the rebuild."
+  },
+  {
+    "id": "R-19-12",
+    "status": "partial",
+    "how": "SPEC.md is adopted and pinned, four audits inventoried and mapped components this morning, and this conformance table classifies gaps",
+    "evidence": "docs/spec/requirements.json",
+    "gap": "Reconciliation as a staged product process is not implemented in sisi; baseline outcome measures, lifecycle, learning validation and an evaluation harness remain to be built in the rebuild."
+  },
+  {
+    "id": "R-20-1",
+    "status": "partial",
+    "how": "The gate, contract, retro and trust mechanisms demonstrate part of foundational conformance",
+    "evidence": "sisi/gate.py",
+    "gap": "Operational and advanced conformance are not demonstrated: routing is unused natively, impact analysis and outcome measurement are missing, and no improvement has a measured sustained effect."
+  },
+  {
+    "id": "R-20.1-1",
+    "status": "partial",
+    "how": "Contracts bound work, the gate records check evidence, retro is mandatory and lessons persist scoped",
+    "evidence": "sisi/gate.py",
+    "gap": "The objective is pinned as a document rather than versioned operative constraints, the work-unit record is incomplete, and learning records are prose."
+  },
+  {
+    "id": "R-20.1-2",
+    "status": "partial",
+    "how": "Contracts bound work, the gate records check evidence, retro is mandatory and lessons persist scoped",
+    "evidence": "sisi/gate.py",
+    "gap": "The objective is pinned as a document rather than versioned operative constraints, the work-unit record is incomplete, and learning records are prose."
+  },
+  {
+    "id": "R-20.1-3",
+    "status": "partial",
+    "how": "Contracts bound work, the gate records check evidence, retro is mandatory and lessons persist scoped",
+    "evidence": "sisi/gate.py",
+    "gap": "The objective is pinned as a document rather than versioned operative constraints, the work-unit record is incomplete, and learning records are prose."
+  },
+  {
+    "id": "R-20.1-4",
+    "status": "partial",
+    "how": "Contracts bound work, the gate records check evidence, retro is mandatory and lessons persist scoped",
+    "evidence": "sisi/gate.py",
+    "gap": "The objective is pinned as a document rather than versioned operative constraints, the work-unit record is incomplete, and learning records are prose."
+  },
+  {
+    "id": "R-20.1-5",
+    "status": "partial",
+    "how": "Contracts bound work, the gate records check evidence, retro is mandatory and lessons persist scoped",
+    "evidence": "sisi/gate.py",
+    "gap": "The objective is pinned as a document rather than versioned operative constraints, the work-unit record is incomplete, and learning records are prose."
+  },
+  {
+    "id": "R-20.1-6",
+    "status": "partial",
+    "how": "Contracts bound work, the gate records check evidence, retro is mandatory and lessons persist scoped",
+    "evidence": "sisi/gate.py",
+    "gap": "The objective is pinned as a document rather than versioned operative constraints, the work-unit record is incomplete, and learning records are prose."
+  },
+  {
+    "id": "R-20.1-7",
+    "status": "partial",
+    "how": "Contracts bound work, the gate records check evidence, retro is mandatory and lessons persist scoped",
+    "evidence": "sisi/gate.py",
+    "gap": "The objective is pinned as a document rather than versioned operative constraints, the work-unit record is incomplete, and learning records are prose."
+  },
+  {
+    "id": "R-20.2-1",
+    "status": "partial",
+    "how": "routing.py can choose a worker, learnings are injected into future sessions, and cycles and releases support rollback",
+    "evidence": "sisi/routing.py",
+    "gap": "Useful parallelism, coordination-cost tracking, change-impact verification, stall detection and time, cost and human-effort measurement are missing or unused."
+  },
+  {
+    "id": "R-20.2-2",
+    "status": "partial",
+    "how": "routing.py can choose a worker, learnings are injected into future sessions, and cycles and releases support rollback",
+    "evidence": "sisi/routing.py",
+    "gap": "Useful parallelism, coordination-cost tracking, change-impact verification, stall detection and time, cost and human-effort measurement are missing or unused."
+  },
+  {
+    "id": "R-20.2-3",
+    "status": "partial",
+    "how": "routing.py can choose a worker, learnings are injected into future sessions, and cycles and releases support rollback",
+    "evidence": "sisi/routing.py",
+    "gap": "Useful parallelism, coordination-cost tracking, change-impact verification, stall detection and time, cost and human-effort measurement are missing or unused."
+  },
+  {
+    "id": "R-20.2-4",
+    "status": "partial",
+    "how": "routing.py can choose a worker, learnings are injected into future sessions, and cycles and releases support rollback",
+    "evidence": "sisi/routing.py",
+    "gap": "Useful parallelism, coordination-cost tracking, change-impact verification, stall detection and time, cost and human-effort measurement are missing or unused."
+  },
+  {
+    "id": "R-20.2-5",
+    "status": "partial",
+    "how": "routing.py can choose a worker, learnings are injected into future sessions, and cycles and releases support rollback",
+    "evidence": "sisi/routing.py",
+    "gap": "Useful parallelism, coordination-cost tracking, change-impact verification, stall detection and time, cost and human-effort measurement are missing or unused."
+  },
+  {
+    "id": "R-20.2-6",
+    "status": "partial",
+    "how": "routing.py can choose a worker, learnings are injected into future sessions, and cycles and releases support rollback",
+    "evidence": "sisi/routing.py",
+    "gap": "Useful parallelism, coordination-cost tracking, change-impact verification, stall detection and time, cost and human-effort measurement are missing or unused."
+  },
+  {
+    "id": "R-20.2-7",
+    "status": "partial",
+    "how": "routing.py can choose a worker, learnings are injected into future sessions, and cycles and releases support rollback",
+    "evidence": "sisi/routing.py",
+    "gap": "Useful parallelism, coordination-cost tracking, change-impact verification, stall detection and time, cost and human-effort measurement are missing or unused."
+  },
+  {
+    "id": "R-20.3-1",
+    "status": "partial",
+    "how": "taskset.py grades harvested sessions into dev and holdout sets and groundtruth.py attaches evidence",
+    "evidence": "sisi/taskset.py",
+    "gap": "No replay runner ever executes the taskset, there is no independent evaluation, and no latency, cost, surprise or promoted-improvement improvement has been demonstrated."
+  },
+  {
+    "id": "R-20.3-2",
+    "status": "partial",
+    "how": "taskset.py grades harvested sessions into dev and holdout sets and groundtruth.py attaches evidence",
+    "evidence": "sisi/taskset.py",
+    "gap": "No replay runner ever executes the taskset, there is no independent evaluation, and no latency, cost, surprise or promoted-improvement improvement has been demonstrated."
+  },
+  {
+    "id": "R-20.3-3",
+    "status": "partial",
+    "how": "taskset.py grades harvested sessions into dev and holdout sets and groundtruth.py attaches evidence",
+    "evidence": "sisi/taskset.py",
+    "gap": "No replay runner ever executes the taskset, there is no independent evaluation, and no latency, cost, surprise or promoted-improvement improvement has been demonstrated."
+  },
+  {
+    "id": "R-20.3-4",
+    "status": "partial",
+    "how": "taskset.py grades harvested sessions into dev and holdout sets and groundtruth.py attaches evidence",
+    "evidence": "sisi/taskset.py",
+    "gap": "No replay runner ever executes the taskset, there is no independent evaluation, and no latency, cost, surprise or promoted-improvement improvement has been demonstrated."
+  },
+  {
+    "id": "R-20.3-5",
+    "status": "partial",
+    "how": "taskset.py grades harvested sessions into dev and holdout sets and groundtruth.py attaches evidence",
+    "evidence": "sisi/taskset.py",
+    "gap": "No replay runner ever executes the taskset, there is no independent evaluation, and no latency, cost, surprise or promoted-improvement improvement has been demonstrated."
+  },
+  {
+    "id": "R-20.3-6",
+    "status": "partial",
+    "how": "taskset.py grades harvested sessions into dev and holdout sets and groundtruth.py attaches evidence",
+    "evidence": "sisi/taskset.py",
+    "gap": "No replay runner ever executes the taskset, there is no independent evaluation, and no latency, cost, surprise or promoted-improvement improvement has been demonstrated."
+  },
+  {
+    "id": "R-20.3-7",
+    "status": "partial",
+    "how": "taskset.py grades harvested sessions into dev and holdout sets and groundtruth.py attaches evidence",
+    "evidence": "sisi/taskset.py",
+    "gap": "No replay runner ever executes the taskset, there is no independent evaluation, and no latency, cost, surprise or promoted-improvement improvement has been demonstrated."
+  },
+  {
+    "id": "R-20.3-8",
+    "status": "partial",
+    "how": "taskset.py grades harvested sessions into dev and holdout sets and groundtruth.py attaches evidence",
+    "evidence": "sisi/taskset.py",
+    "gap": "No replay runner ever executes the taskset, there is no independent evaluation, and no latency, cost, surprise or promoted-improvement improvement has been demonstrated."
+  },
+  {
+    "id": "R-21-1",
+    "status": "partial",
+    "how": "docs/workers.md and docs/target.md record some open choices such as model catalogue seams left empty for later research",
+    "evidence": "docs/workers.md",
+    "gap": "Most listed decisions are neither documented as linked implementation decisions nor resolved; empty price and strength seams are undocumented choices by default."
+  },
+  {
+    "id": "R-21-2",
+    "status": "partial",
+    "how": "docs/workers.md and docs/target.md record some open choices such as model catalogue seams left empty for later research",
+    "evidence": "docs/workers.md",
+    "gap": "Most listed decisions are neither documented as linked implementation decisions nor resolved; empty price and strength seams are undocumented choices by default."
+  },
+  {
+    "id": "R-D-1",
+    "status": "partial",
+    "how": "Delivery time and check evidence are measured over 87 recorded deliveries and lessons record failures honestly",
+    "evidence": "sisi/delivery.py",
+    "gap": "Intent accuracy, anticipation, cost per accepted change, human burden, lifecycle quality and sustained learning benefit are unmeasured, so success as defined cannot be shown."
+  },
+  {
+    "id": "R-D-2",
+    "status": "partial",
+    "how": "Delivery time and check evidence are measured over 87 recorded deliveries and lessons record failures honestly",
+    "evidence": "sisi/delivery.py",
+    "gap": "Intent accuracy, anticipation, cost per accepted change, human burden, lifecycle quality and sustained learning benefit are unmeasured, so success as defined cannot be shown."
+  },
+  {
+    "id": "R-D-3",
+    "status": "partial",
+    "how": "Delivery time and check evidence are measured over 87 recorded deliveries and lessons record failures honestly",
+    "evidence": "sisi/delivery.py",
+    "gap": "Intent accuracy, anticipation, cost per accepted change, human burden, lifecycle quality and sustained learning benefit are unmeasured, so success as defined cannot be shown."
+  },
+  {
+    "id": "R-D-4",
+    "status": "partial",
+    "how": "Delivery time and check evidence are measured over 87 recorded deliveries and lessons record failures honestly",
+    "evidence": "sisi/delivery.py",
+    "gap": "Intent accuracy, anticipation, cost per accepted change, human burden, lifecycle quality and sustained learning benefit are unmeasured, so success as defined cannot be shown."
+  },
+  {
+    "id": "R-D-5",
+    "status": "partial",
+    "how": "Delivery time and check evidence are measured over 87 recorded deliveries and lessons record failures honestly",
+    "evidence": "sisi/delivery.py",
+    "gap": "Intent accuracy, anticipation, cost per accepted change, human burden, lifecycle quality and sustained learning benefit are unmeasured, so success as defined cannot be shown."
+  },
+  {
+    "id": "R-D-6",
+    "status": "partial",
+    "how": "Delivery time and check evidence are measured over 87 recorded deliveries and lessons record failures honestly",
+    "evidence": "sisi/delivery.py",
+    "gap": "Intent accuracy, anticipation, cost per accepted change, human burden, lifecycle quality and sustained learning benefit are unmeasured, so success as defined cannot be shown."
+  },
+  {
+    "id": "R-D-7",
+    "status": "partial",
+    "how": "Delivery time and check evidence are measured over 87 recorded deliveries and lessons record failures honestly",
+    "evidence": "sisi/delivery.py",
+    "gap": "Intent accuracy, anticipation, cost per accepted change, human burden, lifecycle quality and sustained learning benefit are unmeasured, so success as defined cannot be shown."
+  },
+  {
+    "id": "R-D-8",
+    "status": "partial",
+    "how": "Delivery time and check evidence are measured over 87 recorded deliveries and lessons record failures honestly",
+    "evidence": "sisi/delivery.py",
+    "gap": "Intent accuracy, anticipation, cost per accepted change, human burden, lifecycle quality and sustained learning benefit are unmeasured, so success as defined cannot be shown."
+  },
+  {
+    "id": "R-D-9",
+    "status": "partial",
+    "how": "Delivery time and check evidence are measured over 87 recorded deliveries and lessons record failures honestly",
+    "evidence": "sisi/delivery.py",
+    "gap": "Intent accuracy, anticipation, cost per accepted change, human burden, lifecycle quality and sustained learning benefit are unmeasured, so success as defined cannot be shown."
+  },
+  {
+    "id": "R-D-10",
+    "status": "partial",
+    "how": "Delivery time and check evidence are measured over 87 recorded deliveries and lessons record failures honestly",
+    "evidence": "sisi/delivery.py",
+    "gap": "Intent accuracy, anticipation, cost per accepted change, human burden, lifecycle quality and sustained learning benefit are unmeasured, so success as defined cannot be shown."
+  }
+]
