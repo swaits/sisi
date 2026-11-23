@@ -414,7 +414,7 @@ def format_open(rows):
     return lines
 
 
-def format_status(units, learning=False, recent=5, opened=()):
+def format_status(units, recent=5, opened=()):
     lines = []
     if opened:
         lines.append("units in progress:")
@@ -445,15 +445,17 @@ def format_status(units, learning=False, recent=5, opened=()):
                                                   v["n"] if v != "unavailable" else 0)
                              for name, v in m.items()]
                     lines.append("    %-28s %s" % (seg[:28], "; ".join(cells)))
-    if learning:
-        lines.append("")
-        try:
-            from . import learning as _L
-            lines.append(_L.learning_report())
-        except Exception as e:
-            store.log_error("status-learning", e)
-            lines.append("learning: unavailable (%s)" % e)
     return "\n".join(lines)
+
+
+def format_learning():
+    """The learning report alone (`sisi status --learning`)."""
+    try:
+        from . import learning as _L
+        return _L.learning_report().rstrip("\n")
+    except Exception as e:
+        store.log_error("status-learning", e)
+        return "learning: unavailable (%s)" % e
 
 
 def cmd_status(args=(), cwd=None, out=print):
@@ -462,5 +464,8 @@ def cmd_status(args=(), cwd=None, out=print):
     if "--json" in args:
         out(json.dumps({"open": opened, "units": units, "trends": trends(units)}, indent=2, default=str))
         return 0
-    out(format_status(units, learning="--learning" in args, opened=opened))
+    if "--learning" in args:  # asked for the learning report: just that
+        out(format_learning())
+        return 0
+    out(format_status(units, opened=opened))
     return 0

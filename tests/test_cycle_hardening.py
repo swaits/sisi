@@ -5,7 +5,7 @@ to run, validate or take effect that nobody approved.
 """
 import json, os, subprocess, sys, unittest
 
-from support import SisiCase
+from support import SisiCase, terminal
 from test_learning_loop import Base, PROMOTE, FINDING, CAUSE, _contract
 from sisi import learning as L
 
@@ -313,3 +313,238 @@ class Approval(Base):
         low = text.lower()
         for needle in ("typed word", "before-tool hook", "controlling terminal", "does not stop"):
             self.assertIn(needle, low)
+
+
+def _tool_args(n):
+    return ("retro", "--new", "--finding", "the stub number %d crashed sisi cycle on input case %d" % (n, n),
+            "--cause", "no test covered stub %d" % n, "--impact", "correctness", "--disposition", "promote",
+            "--change", "make sisi cycle handle stub %d" % n, "--mechanism", "tool",
+            "--expect", "stub %d no longer crashes" % n, "--validate", "run stub %d" % n)
+
+
+class Due(Base):
+    """R-11.5-4, R-11.5-7, R-14.4-1 (items 4 and 9): "due" counts only learnings a cycle can act on."""
+
+    def test_a_tool_learning_is_backlog_never_proposed_and_never_due(self):
+        """Item 4: recording a tool learning gives it the status `backlog`; five of them make no cycle due;
+        they appear in the learning report and the contribution export, never in a brief."""
+        from sisi import cycle, release
+        _contract(self)
+        for n in range(6):
+            self.assertEqual(self.sisi(*_tool_args(n)).returncode, 0)
+        self.assertEqual({r["status"] for r in self.rows()}, {"backlog"})
+        self.assertEqual(cycle.proposed(), [])
+        self.assertNotIn("cycle is due", cycle.due_notice())
+        self.assertNotIn("L-0001", self.sisi("cycle").stdout)
+        self.assertIn("tool backlog (6 change(s)", L.learning_report())
+        self.assertIn("backlog 6", L.learning_report())
+        self.assertEqual(len(release.core_items()[0]), 6)
+        # five learnings a cycle can act on make it due
+        for n in range(5):
+            self.another(n)
+        self.assertIn("cycle is due (5 proposed", cycle.due_notice())
+
+    def test_a_learning_waiting_for_the_owner_is_not_proposed_and_the_cycle_is_not_due_again(self):
+        """Item 4: after a cycle parks everything, session start does not say a cycle is due."""
+        from sisi import cycle
+        _contract(self)
+        self.git_init()
+        ids = [self.another(n) for n in range(5)]
+        self.assertIn("cycle is due", cycle.due_notice())
+        self.assertEqual(self.apply([{"action": "promote", "learning": i, "mechanism_kind": "command-check",
+                                      "cmd": "make check-%s" % i} for i in ids]).returncode, 0)
+        self.assertEqual({r["status"] for r in self.rows()}, {"pending-approval"})
+        self.assertEqual(cycle.proposed(), [])
+        out = cycle.due_notice()
+        self.assertNotIn("cycle is due", out)
+        self.assertIn("wait for the owner", out)
+        self.assertNotIn("L-0001", self.sisi("cycle").stdout)  # not in a brief either
+        # the owner declines one: it is rejected, not proposed again
+        with terminal():
+            self.assertEqual(self.sisi("approve", "P-0001", "--no").returncode, 0)
+        self.assertEqual(self.rows()[0]["status"], "rejected")
+        self.assertEqual(cycle.proposed(), [])
+
+    def test_the_config_switch_that_silenced_the_notice_is_gone(self):
+        """Item 4: learning.cycle_notice was a stopgap for the bug; the code for it is deleted."""
+        from sisi import cycle
+        _contract(self)
+        for n in range(5):
+            self.another(n)
+        self.set_config({"learning": {"cycle_notice": False}})
+        self.assertIn("cycle is due", cycle.due_notice())
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "sisi", "cycle.py")) as f:
+            self.assertNotIn("cycle_notice", f.read())
+
+    def test_migration_puts_an_old_tool_lesson_in_the_backlog(self):
+        """Item 4: the old store's open tool lesson becomes `backlog`, an open check lesson `proposed`."""
+        from sisi import lifecycle
+        from test_learning_loop import Migration
+        Migration.seed(self)
+        lifecycle.migrate_learnings()
+        by = {r["legacy_id"]: r["status"] for r in self.rows() if r.get("legacy_id")}
+        self.assertEqual((by[2], by[3]), ("backlog", "proposed"))
+
+
+class Repair(Base):
+    """R-11.6-6, R-16-9 (items 4 and 9): a store migrated by earlier code is repaired once by `sisi update`."""
+
+    def old_store(self):
+        """Rows as earlier code wrote them: a tool learning `proposed`, one with a decision waiting,
+        and one whose origin is a deleted linked worktree."""
+        _contract(self)
+        self.git_init()
+        self.sisi(*_tool_args(1))
+        for n in range(2):
+            self.another(n)
+        self.apply([{"action": "promote", "learning": "L-0003", "mechanism_kind": "command-check", "cmd": "make a"}])
+        rows = self.rows()
+        by = {r["id"]: r for r in rows}
+        by["L-0001"]["status"] = "proposed"
+        by["L-0003"]["status"] = "proposed"
+        dead = os.path.join(self.home, ".t3", "worktrees", "proj", "t3-gone")
+        by["L-0002"]["origin_project"] = dead
+        by["L-0002"]["provenance"][0]["project"] = dead
+        L.save_learnings(rows, "old code", touched=rows, via="test")
+        return dead
+
+    def test_update_repairs_statuses_and_project_keys_once(self):
+        from sisi import lifecycle
+        main = os.path.join(self.home, "Code", "proj")
+        os.makedirs(main)
+        self.git_init(main)
+        dead = self.old_store()
+        # an enforced mechanism written for the dead path follows the learning
+        os.makedirs(os.path.join(self.data, "overlay"), exist_ok=True)
+        with open(os.path.join(self.data, "overlay", "enforced.json"), "w") as f:
+            json.dump({"checks": [{"type": "contract-requirement", "when": "data", "require_kind": "parsing",
+                                   "learning": "L-0002", "scope": "project", "project": dead}]}, f)
+        notes = lifecycle.repair_learnings()
+        self.assertTrue(notes and "1 tool learning(s) moved to the backlog" in notes[0], notes)
+        by = {r["id"]: r for r in self.rows()}
+        self.assertEqual(by["L-0001"]["status"], "backlog")
+        self.assertEqual(by["L-0003"]["status"], "pending-approval")
+        self.assertEqual(by["L-0002"]["origin_project"], os.path.realpath(main))
+        self.assertEqual(by["L-0002"]["provenance"][0]["project"], os.path.realpath(main))
+        self.assertEqual(self.read_json("overlay/enforced.json")["checks"][0]["project"], os.path.realpath(main))
+        self.assertTrue(all(L.is_registered(r) for r in self.rows()))  # still delivered: the repair is sisi's own
+        self.assertEqual(lifecycle.repair_learnings(), [])  # idempotent: nothing to do the second time
+        # `sisi update` runs it (the migrate step is where an installation brings its data up to date)
+        self.assertIn("repair_learnings()", open(lifecycle.__file__).read().split("def run():")[1].split("def migrate_learnings")[0])
+
+    def test_a_hand_edited_row_is_not_laundered_by_the_repair(self):
+        from sisi import lifecycle
+        self.old_store()
+        with open(L.learnings_path()) as f:
+            text = f.read()
+        with open(L.learnings_path(), "w") as f:
+            f.write(text.replace('"title": "make sisi cycle handle stub 1"', '"title": "hand edited"', 1))
+        lifecycle.repair_learnings()
+        self.assertFalse(L.is_registered(L.get(self.rows(), "L-0001")))
+
+
+class Origin(Base):
+    """R-11.6-2, R-16-5 (item 9): an origin project is the main repository, never a worktree's path."""
+
+    def test_a_linked_worktree_records_the_main_repository(self):
+        main = os.path.join(self.tmp, "main")
+        os.makedirs(main)
+        self.git_init(main)
+        wt = os.path.join(self.tmp, "wt-linked")
+        subprocess.run(["git", "worktree", "add", "-q", "-b", "side", wt], cwd=main, check=True, capture_output=True)
+        self.assertEqual(L.project_key(wt), os.path.realpath(main))
+        # even when the helper that finds the main repository fails, the key is not the worktree's path
+        import unittest.mock
+        with unittest.mock.patch("sisi.groundtruth.main_repo_of", side_effect=RuntimeError("boom")):
+            self.assertEqual(L.project_key(wt), os.path.realpath(main))
+        _contract(self, "uw", wt)
+        r = self.retro(*PROMOTE[1:], cwd=wt)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rec = self.rows()[0]
+        self.assertEqual(rec["origin_project"], os.path.realpath(main))
+        self.assertEqual(rec["provenance"][0]["project"], os.path.realpath(main))
+
+    def test_a_deleted_worktree_path_resolves_to_its_main_repository(self):
+        main = os.path.join(self.home, "Code", "proj")
+        os.makedirs(main)
+        self.git_init(main)
+        dead = os.path.join(self.home, ".t3", "worktrees", "proj", "t3-abc123")
+        self.assertEqual(L.normalize_project(dead), os.path.realpath(main))
+
+    def test_a_mechanism_whose_project_is_gone_waits_for_the_owner(self):
+        """Item 9: nothing can show it works in a project that no longer exists on disk."""
+        self.git_init()
+        _contract(self)
+        self.retro(*PROMOTE[1:])
+        rows = self.rows()
+        gone = os.path.join(self.tmp, "deleted-project")
+        rows[0]["origin_project"] = gone
+        L.save_learnings(rows, "test", touched=rows, via="test")
+        r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "risk",
+                         "pattern": "f.txt", "profile": "critical"}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.pending()), 1)
+        self.assertIn("no longer exists", self.pending()[0]["reasons"][0])
+        self.assertFalse(self.exists("overlay/risk-adjustments.json"))
+
+    def test_a_requirement_whose_when_no_code_evaluates_is_refused(self):
+        """Item 9: free text in `when` can never trigger; a risk profile or a path glob can."""
+        from sisi import cycle
+        self.git_init()
+        _contract(self)
+        self.retro(*PROMOTE[1:])
+        req = {"action": "promote", "learning": "L-0001", "mechanism_kind": "contract-requirement",
+               "require_kind": "parsing"}
+        for when in ("csv import", "when the user mentions money", "data and stuff"):
+            r = self.apply([dict(req, when=when)])
+            self.assertEqual(r.returncode, 2, when)
+            self.assertIn("not something the code evaluates", r.stderr)
+        r = self.apply([dict(req, when="data", require_kind="property")])
+        self.assertIn("require_kind", r.stderr)
+        # evaluated: a profile (that or a higher one) and a path glob
+        c = {"goal": "g", "risk": {"profile": "critical"}, "checks": []}
+        self.assertFalse(cycle._requirement_met(c, dict(req, when="data"), self.proj))
+        self.assertTrue(cycle._requirement_met(dict(c, risk={"profile": "logic"}), dict(req, when="data"), self.proj))
+        self.assertTrue(cycle._requirement_met(dict(c, checks=[{"kind": "parsing", "rung": 3}]), dict(req, when="data"), self.proj))
+        os.makedirs(os.path.join(self.proj, "src", "auth"))
+        self.write("src/auth/login.py", "x = 1\n")
+        self.assertFalse(cycle._requirement_met(c, dict(req, when="src/auth/**"), self.proj))
+        self.assertTrue(cycle._requirement_met(c, dict(req, when="src/billing/**"), self.proj))
+        self.assertEqual(self.apply([dict(req, when="src/auth/**")]).returncode, 0)
+
+
+class Duplicates(Base):
+    """R-11.5-11, R-16-8 (item 5): no second decision about something already waiting."""
+
+    def test_a_learning_that_already_waits_cannot_be_promoted_again(self):
+        self.git_init()
+        _contract(self)
+        self.retro(*PROMOTE[1:])
+        act = {"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check", "cmd": "make deploy"}
+        self.assertEqual(self.apply([act]).returncode, 0)
+        r = self.apply([dict(act, cmd="make deploy2")], base=L.store_base())
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("already waits for the owner (P-0001)", r.stderr)
+        self.assertEqual(len(self.pending()), 1)
+
+    def test_a_second_replacement_of_the_same_rule_is_refused_while_the_first_waits(self):
+        _contract(self)
+        a, b = "L-0001", None
+        self.another(0)
+        b = self.another(1)
+        text = "## Deliver {#deliver-fast}\n\nShip it.\n\nWhy: speed.\n"
+        rep = lambda lid: {"action": "promote", "learning": lid, "mechanism_kind": "rule-replace",
+                           "rule_id": "deliver-fast", "rule_text": text,
+                           "shortens": "nothing: the rule is already short"}
+        self.assertEqual(self.apply([rep(a)]).returncode, 0)
+        r = self.apply([rep(b)], base=L.store_base())
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("rule deliver-fast already has a change waiting (P-0001)", r.stderr)
+        # two in one file: the second is refused too, and so is disabling a rule with a change waiting
+        c, d = self.another(2), self.another(3)
+        rep2 = lambda lid: dict(rep(lid), rule_id="orchestrate", rule_text="## O {#orchestrate}\n\nDelegate.\n\nWhy: cost.\n")
+        r = self.apply([rep2(c), rep2(d)], base=L.store_base())
+        self.assertIn("in this file", r.stderr)
+        r = self.apply([{"action": "disable-rule", "rule_id": "deliver-fast"}], base=L.store_base())
+        self.assertIn("already has a change", r.stderr)
+        self.assertEqual(len(self.pending()), 1)

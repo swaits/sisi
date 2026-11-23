@@ -97,6 +97,33 @@ def rule_text(r):
     return "## %s\n\n%s\n" % (r["title"], r["body"])
 
 
+def add_to_body(body, add):
+    """The rule's body with the sentence(s) `add` placed before its `Why:` paragraph: on the end
+    of the paragraph just before it (no new line), or as a paragraph of their own when that one is a
+    list. A rule without a Why paragraph gets them at the end."""
+    paras = body.split("\n\n")
+    at = next((i for i in range(len(paras) - 1, -1, -1) if paras[i].lstrip().startswith("Why:")), None)
+    if at is None:
+        at = len(paras)
+    if at == 0:
+        paras.insert(0, add)
+        return "\n\n".join(paras)
+    prev = paras[at - 1]
+    if any(re.match(r"\s*(?:[-*]|\d+[.)])\s", l) for l in prev.splitlines()):
+        paras.insert(at, add)
+    else:
+        paras[at - 1] = prev.rstrip() + " " + add
+    return "\n\n".join(paras)
+
+
+def rule_with_added(rid, add, base=None):
+    """The parsed rule `rid` (from `base`, else the rule in force) with `add` before its Why."""
+    cur = base or next((r for r in effective()[1] if r["id"] == rid), None)
+    if cur is None:
+        raise OverlayError("no rule %r (the brief lists the ids)" % rid)
+    return dict(cur, body=add_to_body(cur["body"], add))
+
+
 def _read(p):
     with open(p, encoding="utf-8") as f:
         return f.read()

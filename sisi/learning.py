@@ -13,9 +13,9 @@ import hashlib, json, os, re, subprocess, time
 
 from . import paths, pdata
 
-STATUSES = ("observed", "analyzed", "proposed", "implemented", "validated",
-            "promoted", "monitored", "revised", "reverted", "rejected")
-ENDED = ("rejected", "reverted")
+STATUSES = ("observed", "analyzed", "proposed", "pending-approval", "backlog", "implemented", "validated",
+            "promoted", "monitored", "revised", "reverted", "rejected", "merged")
+ENDED = ("rejected", "reverted", "merged")
 MECHANISMS = ("policy", "orchestration", "skill", "tool", "infrastructure",
               "verification", "knowledge", "benchmark")
 IMPACTS = ("value", "correctness", "time", "cost", "attention")
@@ -50,8 +50,17 @@ def now():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _git_out(cwd, *args):
+    try:
+        out = subprocess.run(["git"] + list(args), cwd=cwd, capture_output=True, text=True, timeout=10)
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
 def project_key(cwd):
-    """Stable project identity: the git root (main repo for linked worktrees), else the dir."""
+    """Stable project identity: the main repository's root, never a linked worktree's own path
+    (a worktree is deleted when its work is done, and the key must outlive it), else the dir."""
     try:
         from . import groundtruth
         root, _vcs = groundtruth.main_repo_of(cwd)
@@ -59,23 +68,32 @@ def project_key(cwd):
             return os.path.realpath(root)
     except Exception:
         pass
-    try:
-        out = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=cwd,
-                             capture_output=True, text=True, timeout=10)
-        if out.returncode == 0 and out.stdout.strip():
-            return os.path.realpath(out.stdout.strip())
-    except (OSError, subprocess.SubprocessError):
-        pass
+    top = _git_out(cwd, "rev-parse", "--show-toplevel")
+    if top:
+        common = _git_out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        if common.endswith("/.git") and common[:-5]:
+            return os.path.realpath(common[:-5])
+        return os.path.realpath(top)
     return os.path.realpath(cwd)
 
 
 def normalize_project(value):
     """The project key for an old `repo`/`cwd` value: the same key new code uses when the folder
-    still exists, else the cleaned path."""
+    still exists; for a folder that is gone (a deleted linked worktree), the main repository it was
+    made from when that can be found; else the cleaned path."""
     if not value:
         return ""
     value = str(value)
-    return project_key(value) if os.path.isdir(value) else os.path.realpath(value)
+    if os.path.isdir(value):
+        return project_key(value)
+    try:
+        from . import groundtruth
+        root, how, _vcs = groundtruth.resolve_repo(value)
+        if root and how == "t3-worktree-recovery":
+            return os.path.realpath(root)
+    except Exception:
+        pass
+    return os.path.realpath(value)
 
 
 def unit_id(project=None):
@@ -419,7 +437,8 @@ def learnings_in_scope(project, rows=None, targets=()):
     return out
 
 
-DELIVERED = ("promoted", "monitored", "proposed", "observed", "implemented", "validated")
+DELIVERED = ("promoted", "monitored", "proposed", "pending-approval", "backlog", "observed", "implemented",
+             "validated")
 
 
 def _delivery_lines(rows):
@@ -474,7 +493,8 @@ def new_record(finding, cause, impact, disposition, project, unit,
         "validation": {"method": scrub_secrets(validate or ""), "benchmark": None,
                        "result": "unvalidated", "detail": ""},
         "status": "promoted" if owner_statement else
-                  ("proposed" if disposition == "promote" else "observed"),
+                  ("backlog" if disposition == "promote" and mechanism == "tool" else
+                   "proposed" if disposition == "promote" else "observed"),
         "version": 1, "confidence": "high" if owner_statement else "low",
         "provenance": [{"unit": unit, "project": pk, "ts": now(), "kind": "origin"}],
         "terms": derive_terms(finding, cause, change or ""),
@@ -670,6 +690,10 @@ def learning_report():
     lines = ["Learning loop (recorded facts; no improvement is claimed from counts):",
              "learnings: %d   findings: %d   closed units known: %d"
              % (len(rows), len(findings), len(units))]
+    by = {}
+    for r in rows:
+        by[r.get("status")] = by.get(r.get("status"), 0) + 1
+    lines.append("by status: " + ", ".join("%s %d" % (k, by[k]) for k in sorted(by, key=lambda x: str(x))))
     odd = [r["id"] for r in rows if not is_registered(r, ledger)]
     if odd:
         lines.append("not delivered (not written by sisi's own commands, or edited by hand): " + ", ".join(odd))
@@ -712,9 +736,12 @@ def learning_report():
     tool = [r for r in rows if r.get("proposed", {}).get("mechanism") == "tool"
             and r.get("status") not in ENDED]
     if tool:
-        lines.append("tool backlog (changes to sisi itself):")
+        lines.append("tool backlog (%d change(s) to sisi itself; a cycle never acts on them, `sisi promote --export` "
+                     "writes them out):" % len(tool))
         for r in tool[:8]:
             lines.append("- %s: %s" % (r["id"], derive_title(r["title"], 110)))
+        if len(tool) > 8:
+            lines.append("- ... and %d more" % (len(tool) - 8))
     return "\n".join(lines) + "\n"
 
 
