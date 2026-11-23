@@ -104,11 +104,18 @@ class ConformanceFormTests(unittest.TestCase):
         self.assertTrue(problems, "validation must fail when an id is removed")
         self.assertTrue(any(reqs[10]["id"] in p for p in problems), problems)
 
-    def test_before_copy_matches_and_names_its_commit(self):
+    def test_before_copy_is_frozen_and_names_its_commit(self):
+        """The 'before' table is a dated record: same requirements, in order, judged at a named
+        commit. The living table changes as the work lands; the frozen one does not."""
         before = load_json(BEFORE)
-        self.assertEqual(before["entries"], load_conformance())
+        self.assertEqual([e["id"] for e in before["entries"]],
+                         [e["id"] for e in load_conformance()])
         self.assertEqual(before["date"], "2026-11-23")
         self.assertRegex(before["commit"], r"^[0-9a-f]{40}$")
+        counts = {}
+        for e in before["entries"]:
+            counts[e["status"]] = counts.get(e["status"], 0) + 1
+        self.assertEqual(counts, {"met": 8, "partial": 293, "missing": 74})
 
 
 if __name__ == "__main__":
