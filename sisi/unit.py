@@ -753,10 +753,10 @@ def summary_for_retro(project):
 
 # ---------------------------------------------------------------- command
 
-def _open_contract(cwd, out):
+def _open_contract(cwd, out, missing=None):
     p = C.find(cwd)
     if not p:
-        out("sisi: no contract found (run `sisi contract init`)")
+        out(missing() if missing else "sisi: no contract found (run `sisi contract init`)")
         return None, None, None
     try:
         c = C.load(p)
@@ -892,11 +892,16 @@ def cmd_unit(args, cwd=None, out=print):
         if not what:
             out('usage: sisi unit pause "<what it waits for>"')
             return 1
-        c, p, project = _open_contract(cwd, out)
+        from . import unitguard as G
+        c, p, project = _open_contract(cwd, out, missing=lambda: G.pause_without_unit(cwd))
         if c is None:
             return 2
         if is_closed(c):
             out("sisi: unit %s is closed; start a new one with `sisi contract init`" % c.get("id"))
+            return 1
+        refusal = G.pause_refusal(c, p, project)
+        if refusal:
+            out(refusal)
             return 1
         pauses = c.setdefault("pauses", [])
         open_pause = next((x for x in pauses if isinstance(x, dict) and not x.get("until")), None)

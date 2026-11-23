@@ -522,5 +522,161 @@ class DelegationTests(GuardCase):
             self.assertIsNone(self.spawn("Implement the new greeting"))
 
 
+class PauseTests(GuardCase):
+    """Item 4: pause is for waiting, not for skipping (R-10.3-1, R-14.2-1)."""
+
+    def pause(self, sid="me", why="waiting for the reviewer"):
+        return self.sisi("unit", "pause", why, env={"SISI_SESSION_ID": sid} if sid else {})
+
+    def test_pausing_with_no_unit_is_refused(self):
+        r = self.pause()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("never the contract", r.stdout)
+        self.assertIn("sisi contract init", r.stdout)
+
+    def test_pausing_a_unit_this_session_does_not_hold_is_refused_and_the_unit_is_untouched(self):
+        self.write_contract(good_contract(goal="old work"))
+        G.bind("someone", self.proj, C.load(self.contract_path), "init")
+        with open(self.contract_path) as f:
+            before = f.read()
+        r = self.pause()
+        self.assertNotEqual(r.returncode, 0)
+        for way in ("sisi unit continue", "sisi unit park"):
+            self.assertIn(way, r.stdout)
+        self.assertLessEqual(len(r.stdout.splitlines()), 12)
+        with open(self.contract_path) as f:
+            self.assertEqual(f.read(), before)
+
+    def test_pausing_without_a_known_session_is_refused(self):
+        self.open_unit()
+        self.assertNotEqual(self.pause(sid=None).returncode, 0)
+
+    def test_pausing_a_unit_missing_what_building_needs_is_refused(self):
+        """The placeholder skeleton is not a unit to hide behind."""
+        self.sisi("contract", "init", "--goal", "make the app greet", env={"SISI_SESSION_ID": "me"})
+        r = self.pause()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("placeholder", r.stdout)
+        self.assertEqual(C.load(self.contract_path)["status"], "open")
+
+    def test_pausing_an_integration_unit_without_its_requirement_list_is_refused(self):
+        c = good_contract()
+        self.open_unit(c)
+        self.put("package.json", "{}\n")  # the work already touches a manifest: the floor is integration
+        r = self.pause()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("requirement list", r.stdout)
+
+    def test_a_valid_unit_this_session_holds_can_be_paused(self):
+        self.open_unit()
+        r = self.pause()
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(C.load(self.contract_path)["status"], "paused")
+
+    def test_every_refused_pause_is_recorded(self):
+        self.pause()
+        self.write_contract(good_contract())
+        self.pause()
+        self.assertEqual([r["tool"] for r in self.refusals()], ["pause", "pause"])
+        self.assertTrue(all("pause" in r["what"] for r in self.refusals()))
+
+
+class GateUnitTests(GuardCase):
+    """Items 4 and 5: the gate judges only the unit the session holds, whatever is paused (R-5.3-1, R-10.1-1)."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["SISI_RETRO_REQUIRED"] = "1"
+        self.addCleanup(lambda: os.environ.__setitem__("SISI_RETRO_REQUIRED", "0"))
+        self.tick()
+
+    def stop(self, sid=None):
+        return gate.decide({"session_id": sid or self.sid, "cwd": self.proj, "hook_event_name": "Stop", "stop_hook_active": False})
+
+    def failing_foreign_unit(self, **kw):
+        c = good_contract(goal="redo the old report", id="old-report", checks=[dict(real("oldcheck"), cmd="false")], **kw)
+        self.write_contract(c)
+        G.bind("someone-else", self.proj, C.load(self.contract_path), "init")
+
+    def test_a_foreign_units_failing_checks_are_not_what_the_session_is_sent_back_for(self):
+        self.failing_foreign_unit()
+        self.put(SRC, "def greet():\n    return 'yo'\n")
+        a, msg = self.stop()
+        self.assertEqual(a, "block")
+        for way in ("sisi unit continue", "sisi unit park", "sisi contract init"):
+            self.assertIn(way, msg)
+        self.assertIn("old-report", msg)
+        self.assertNotIn("oldcheck", msg)
+        self.assertNotIn("Failing checks", msg)
+        self.assertEqual([r for r in self.results() if r.get("contract") == "old-report"], [], "its checks must not run")
+
+    def test_a_trivial_change_with_a_foreign_unit_open_is_not_judged_at_all(self):
+        self.failing_foreign_unit()
+        self.put("README.md", "# app\nmore words\n")
+        self.assertEqual(self.stop(), ("allow", None))
+        self.assertEqual(self.results(), [])
+
+    def test_a_stale_unit_the_session_was_bound_to_asks_for_continue_not_for_its_checks(self):
+        self.write_contract(good_contract(checks=[dict(real("c1"), cmd="false")]))
+        self.age_unit(C.load(self.contract_path), 20 * 3600, "me")
+        self.put(SRC, "def greet():\n    return 'yo'\n")
+        a, msg = self.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("no activity since", msg)
+        self.assertIn("sisi unit continue", msg)
+        self.assertEqual(self.results(), [])
+
+    def test_the_send_backs_run_out_as_unverified_and_the_foreign_unit_is_left_exactly_as_it_was(self):
+        self.failing_foreign_unit()
+        with open(self.contract_path) as f:
+            before = f.read()
+        self.put(SRC, "def greet():\n    return 'yo'\n")
+        outs = [self.stop() for _ in range(4)]
+        self.assertEqual([o[0] for o in outs[:3]], ["block"] * 3)
+        self.assertEqual(outs[3][0], "allow")
+        self.assertIn("UNVERIFIED", outs[3][1])
+        with open(self.contract_path) as f:
+            self.assertEqual(f.read(), before)
+
+    def test_a_paused_foreign_unit_does_not_silence_the_gate_for_another_session(self):
+        c = good_contract(goal="redo the old report", id="old-report")
+        c["status"] = "paused"
+        c["pauses"] = [{"what": "a review", "since": store.now(), "until": None}]
+        self.write_contract(c)
+        G.bind("someone-else", self.proj, C.load(self.contract_path), "init")
+        self.put(SRC, "def greet():\n    return 'yo'\n")
+        a, msg = self.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("sisi unit continue", msg)
+        self.assertEqual(C.load(self.contract_path)["status"], "paused")  # not resumed, not touched
+
+    def test_a_paused_unit_silences_only_the_session_bound_to_it_and_only_while_valid(self):
+        self.open_unit()
+        self.put(SRC, "def greet():\n    return 'yo'\n")
+        self.assertEqual(self.sisi("unit", "pause", "waiting for the reviewer", env={"SISI_SESSION_ID": "me"}).returncode, 0)
+        self.assertEqual(self.stop(), ("allow", None))
+        # the unit is broken after the pause (a vacuous check): the pause no longer hides anything
+        c = C.load(self.contract_path)
+        c["checks"] = [dict(real("c1"), cmd="true")]
+        C.save(self.contract_path, c)
+        self.put(SRC, "def greet():\n    return 'hey'\n")
+        a, msg = self.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("cannot fail", msg)
+
+    def test_with_no_unit_at_all_a_source_change_is_still_sent_back_for_a_contract(self):
+        self.put(SRC, "def greet():\n    return 'yo'\n")
+        a, msg = self.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("a contract for this isolated change", msg)
+
+    def test_the_session_that_holds_the_unit_is_judged_as_before(self):
+        self.open_unit(good_contract(checks=[dict(real("c1"), cmd="false")]))
+        self.put(SRC, "def greet():\n    return 'yo'\n")
+        a, msg = self.stop()
+        self.assertEqual(a, "block")
+        self.assertIn("c1", msg)
+
+
 if __name__ == "__main__":
     unittest.main()

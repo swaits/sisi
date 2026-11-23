@@ -45,7 +45,7 @@ class EndToEnd(SisiCase):
     def agent_runs(self, command, *argv):
         with open(self.tp, "a") as f:
             f.write(json.dumps(tool_line("Bash", {"command": command})) + "\n")
-        return self.sisi(*argv)
+        return self.sisi(*argv, env={"SISI_SESSION_ID": "e2e"})  # what the session-start hook exports to the agent's shell
 
     def finding(self, n):
         r = self.sisi("retro", "--finding", "`cargo test` run %d took 4 minutes with no fuzz verifier in the project" % n,

@@ -84,8 +84,14 @@ def cli_session():
 
 # ---------------------------------------------------------------- unit identity, binding, activity
 
+def ident(c):
+    """What makes a unit this unit: its start time (set once, by `contract init`), else its id. The id is not
+    used when a start exists, because an agent may rename it while filling the contract in."""
+    return c.get("started") or "id:%s" % c.get("id")
+
+
 def unit_key(project, c):
-    return "%s|%s|%s" % (os.path.realpath(project), c.get("id"), c.get("started") or "")
+    return "%s|%s" % (os.path.realpath(project), ident(c))
 
 
 def _act_path(key):
@@ -137,14 +143,14 @@ def bind(sid, project, c, how):
     if not (sess.get("started") or sess.get("first_seen")):
         sess["first_seen"] = store.now()
     sess.setdefault("unit_bound", {})[os.path.realpath(project)] = {
-        "id": c.get("id"), "started": c.get("started"), "how": how, "ts": store.now()}
+        "id": c.get("id"), "ident": ident(c), "how": how, "ts": store.now()}
     store.save_session(sid, sess)
     touch(project, c, model=sess.get("model") if isinstance(sess.get("model"), str) else None)
 
 
 def is_bound(sess, project, c):
     b = (sess.get("unit_bound") or {}).get(os.path.realpath(project))
-    return isinstance(b, dict) and b.get("id") == c.get("id") and (b.get("started") or None) == (c.get("started") or None)
+    return isinstance(b, dict) and b.get("ident") == ident(c)
 
 
 def stale_seconds():
@@ -368,16 +374,20 @@ def _problems(profile, c, project, info):
     return out
 
 
-def verdict(sid, sess, cwd, floor, c=None, path=None, project=None):
-    """What stands between this session and building a change of this floor.
+def verdict(sid, sess, cwd, floor, c=None, path=None, project=None, literal=False):
+    """What stands between this session and building a change of this floor (`literal`: a trivial floor asks
+    for nothing beyond a bound, fresh, well-formed unit; otherwise it is read as `isolated`).
     {"state": none|foreign|stale|invalid|ok, "problems": [(what, how)], "unit": contract|None, "profile": ...}"""
     if c is None:
         c, path, project = open_unit(cwd)
+    if literal and floor == "trivial":
+        floor = "trivial-literal"
     if c is None:
-        prof = floor if floor != "trivial" else "isolated"
+        prof = floor if floor not in ("trivial", "trivial-literal") else "isolated"
         return {"state": "none", "problems": [], "unit": None, "profile": prof, "last": None, "project": project}
     state, last = bound_fresh(sess, project, c)
-    profile, info = assure.effective_profile(floor if floor != "trivial" else "isolated", c)
+    profile, info = assure.effective_profile("trivial" if floor == "trivial-literal" else
+                                             (floor if floor != "trivial" else "isolated"), c)
     v = {"state": state, "problems": [], "unit": c, "profile": profile, "last": last, "project": project, "info": info}
     if state != "ok":
         return v
@@ -389,7 +399,7 @@ def verdict(sid, sess, cwd, floor, c=None, path=None, project=None):
 
 # ---------------------------------------------------------------- the message
 
-def _how_on(c, state, last):
+def how_on(c, state, last):
     uid = c.get("id") or "?"
     goal = " ".join(str(c.get("goal") or "").split())[:90]
     when = age_text(last)
@@ -423,7 +433,7 @@ def refusal_text(v, what, floor_reasons=None):
         if need:
             lines.append("At %s the contract also needs: %s (`sisi contract check` lists what is missing)." % (profile, need))
     elif v["state"] in ("foreign", "stale"):
-        lines += _how_on(c, v["state"], v.get("last"))
+        lines += how_on(c, v["state"], v.get("last"))
     else:
         lines.append("Unit %s is yours but not ready to build on. Missing:" % c.get("id"))
         lines += ["- %s -> %s" % (a, b) for a, b in v["problems"]]
@@ -603,6 +613,63 @@ def is_building_delegation(sess, payload):
                for w in _list("build_words"))
 
 
+# ---------------------------------------------------------------- pause, and the gate
+
+def pause_refusal(c, path, project):
+    """The refusal for `sisi unit pause`, or None when the pause is allowed. A pause defers checks that wait
+    on something and the retro; it never defers the contract, so it needs a unit this session holds that is
+    valid for what has changed so far."""
+    from . import unit as U
+    sid = cli_session()
+    sess = store.load_session(sid) if sid else {}
+    fl, _ = U.risk_floor(c, project)
+    floor = fl.get("value") if isinstance(fl, dict) else fl
+    if floor not in risk.PROFILES:
+        floor = "isolated"
+    mine = session_paths(sess)
+    if mine:
+        own = floor_of(mine, project)[0]
+        floor = max(floor, own, key=lambda x: risk.PROFILES.index(x))
+    v = verdict(sid, sess, project, floor, c, path, project, literal=True)
+    if v["state"] == "ok":
+        return None
+    lines = ["sisi refused the pause: a pause defers checks that are waiting on something (a review, a decision, a deploy)",
+             "and the retro. It never defers the contract: the unit must exist, be this session's, and be valid first."]
+    if v["state"] in ("foreign", "stale"):
+        lines += how_on(c, v["state"], v.get("last"))
+    else:
+        lines.append("Unit %s is not ready. Missing:" % c.get("id"))
+        lines += ["- %s -> %s" % (a, b) for a, b in v["problems"]]
+    record_refusal(sid or "?", project, "a pause of unit %s" % c.get("id"), v, sess, "pause")
+    return assure.fit(lines, MAX_LINES)
+
+
+def pause_without_unit(cwd):
+    """The refusal for `sisi unit pause` when no unit is open at all (recorded like any other)."""
+    sid = cli_session()
+    try:
+        from . import gitutil
+        record_refusal(sid or "?", gitutil.root(cwd) or os.path.abspath(cwd), "a pause with no unit open",
+                       {"state": "none", "problems": [], "unit": None}, store.load_session(sid) if sid else {}, "pause")
+    except Exception as e:
+        store.log_error("unitguard-pause", e)
+    return ("sisi refused the pause: a pause defers checks that are waiting on something and the retro, never the "
+            "contract, and there is no open unit to pause. Start one with `sisi contract init`.")
+
+
+def holds_valid(sess, project, c, floor="trivial"):
+    """True when this session holds the unit (bound, not stale) and nothing is missing before building at this
+    floor: what lets a paused unit stay quiet at the end of a turn."""
+    return verdict(None, sess, project, floor, c, None, project, literal=True)["state"] == "ok"
+
+
+def gate_sendback_lines(c, state, last, own_path, profile):
+    """The end-of-turn message when this session changed work the open unit is not its own."""
+    head = "sisi: this %s change is not ready to hand over (send-back {n}): this session changed `%s` and does not hold a unit for it." \
+        % (profile, own_path)
+    return [head] + how_on(c, state, last) + ["The unit's checks are not run against this work. Do not report it as done."]
+
+
 # ---------------------------------------------------------------- the hooks
 
 def _deny(msg):
@@ -717,7 +784,7 @@ def _guard_contract_write(sid, sess, c, project, cwd, kind):
         return False
     v = {"state": state, "problems": [], "unit": c, "profile": "isolated", "last": last, "project": project}
     what = "this call would rewrite the contract of unit %s" % c.get("id")
-    msg = assure.fit(["sisi refused: %s, which this session has not opened or continued." % what] + _how_on(c, state, last)
+    msg = assure.fit(["sisi refused: %s, which this session has not opened or continued." % what] + how_on(c, state, last)
                      + ["Then retry the call."], MAX_LINES)
     record_refusal(sid, project, what, v, sess, "contract-write")
     _deny(msg)

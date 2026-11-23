@@ -47,6 +47,13 @@ class GateBase(SisiCase):
         self.tdir = os.path.join(self.tmp, "transcripts")
         os.makedirs(self.tdir)
 
+    def write_contract(self, c, d=None, trusted=True, bind=True):
+        """The unit this test's session holds (a unit the session did not open or continue is never judged: item 5)."""
+        super().write_contract(c, d, trusted)
+        if bind:
+            from sisi import unitguard
+            unitguard.bind(self.sid, d or self.proj, c, "init")
+
     def put(self, rel, text="x\n", mode="w"):
         p = os.path.join(self.proj, rel)
         os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -363,7 +370,7 @@ class FlowTests(GateBase):
         s.write("app.py", "x = 1\n")
         s.contract(contract([check("feature", "test -f ok.txt")]))
         self.assertEqual(s.stop()[0], "block")  # the offer
-        self.assertEqual(self.sisi("unit", "pause", "the reviewer").returncode, 0)
+        self.assertEqual(self.sisi("unit", "pause", "the reviewer", env={"SISI_SESSION_ID": self.sid}).returncode, 0)
         self.assertEqual(s.stop(), ("allow", None))
         self.assertEqual(self.unit_state()["status"], "paused")
         s.edit("app.py", "y = 2\n")
@@ -377,7 +384,7 @@ class FlowTests(GateBase):
         s = self.session()
         s.write("app.py", "x = 1\n")
         s.contract(contract([check("feature", "test -f ok.txt")]) | {"started": store.now()})
-        self.sisi("unit", "pause", "waiting for ever")
+        self.sisi("unit", "pause", "waiting for ever", env={"SISI_SESSION_ID": self.sid})
         r = self.sisi("contract", "init")
         self.assertEqual(r.returncode, 1)
         self.assertIn("still open", r.stdout)
@@ -875,7 +882,7 @@ class GateFailOpenTests(GateBase):
             self.assertIn("kaboom", f.read())
 
     def test_unwritable_state_allows(self):
-        self.write_contract(contract([check("bad", "false")]))
+        self.write_contract(contract([check("bad", "false")]), bind=False)
         os.makedirs(self.state, exist_ok=True)
         open(os.path.join(self.state, "sessions"), "w").close()  # session records can no longer be written
         r = self.hook()
@@ -973,7 +980,7 @@ class GateSequenceTests(GateBase):
                 n_retro += 1
                 self.record_finding(n_retro, sid=a.sid)
             elif op == "pause" and self.unit_state().get("status") == "open":
-                self.sisi("unit", "pause", "waiting for the reviewer %d" % step)
+                self.sisi("unit", "pause", "waiting for the reviewer %d" % step, env={"SISI_SESSION_ID": a.sid})
                 paused = True
             elif op == "other_edits":
                 b.edit("other.py", "y = %d\n" % step)

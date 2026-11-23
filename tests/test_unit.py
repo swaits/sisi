@@ -20,7 +20,7 @@ class UnitCase(SisiCase):
         self.contract_path = os.path.join(self.proj, ".sisi", "contract.json")
 
     def start(self, checks=None, **fields):
-        r = self.sisi("contract", "init", "--goal", "make the thing")
+        r = self.sisi("contract", "init", "--goal", "make the thing", env={"SISI_SESSION_ID": "p1"})
         self.assertEqual(r.returncode, 0, r.stdout)
         c = C.load(self.contract_path)
         c["checks"] = checks or [real("works", "test -f done.txt")]
@@ -371,14 +371,14 @@ class PauseTests(UnitCase):
     def test_pause_lets_the_turn_end_and_a_change_ends_the_wait(self):
         """R-6.1-5: a pause is recorded, the gate makes no demands while nothing changes, a new change
         ends the wait, and the wait is telemetry."""
+        self.sisi("tick", stdin=json.dumps({"session_id": "p1", "cwd": self.proj, "hook_event_name": "SessionStart"}))  # session start comes first
         self.start()
-        self.assertEqual(self.sisi("unit", "pause", "").returncode, 1)
-        self.assertEqual(self.sisi("unit", "pause", "the owner's decision").returncode, 0)
+        self.assertEqual(self.sisi("unit", "pause", "", env={"SISI_SESSION_ID": "p1"}).returncode, 1)
+        self.assertEqual(self.sisi("unit", "pause", "the owner's decision", env={"SISI_SESSION_ID": "p1"}).returncode, 0)
         c = C.load(self.contract_path)
         self.assertEqual(c["status"], "paused")
         self.assertEqual(c["pauses"][0]["what"], "the owner's decision")
         stop = json.dumps({"session_id": "p1", "cwd": self.proj, "hook_event_name": "Stop", "stop_hook_active": False})
-        self.sisi("tick", stdin=json.dumps({"session_id": "p1", "cwd": self.proj, "hook_event_name": "SessionStart"}))
         open(os.path.join(self.proj, "new.py"), "w").write("x = 1\n")  # a change after the pause
         self.assertIn("block", self.sisi("gate", stdin=stop).stdout)
         self.assertEqual(C.load(self.contract_path)["status"], "open")  # the wait ended
@@ -391,7 +391,7 @@ class PauseTests(UnitCase):
     def test_a_paused_unit_with_no_change_passes_silently(self):
         """R-6.1-5."""
         self.start()
-        self.sisi("unit", "pause", "waiting for a review")
+        self.sisi("unit", "pause", "waiting for a review", env={"SISI_SESSION_ID": "p1"})
         stop = json.dumps({"session_id": "p2", "cwd": self.proj, "hook_event_name": "Stop", "stop_hook_active": False})
         self.sisi("tick", stdin=json.dumps({"session_id": "p2", "cwd": self.proj, "hook_event_name": "SessionStart"}))
         r = self.sisi("gate", stdin=stop)
