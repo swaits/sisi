@@ -1310,9 +1310,9 @@ def digest_lines(include_all=False, con=None):
     pending = [r for r in rows if r["id"] not in _summ_ids]
     n = len(rows)
     if n == 1:
-        count_line = "Sisi has learned 1 lesson from past work, %d summarized and %d not yet summarized." % (len(summarized), len(pending))
+        count_line = "sisi has learned 1 lesson from past work, %d summarized and %d not yet summarized." % (len(summarized), len(pending))
     else:
-        count_line = "Sisi has learned %d lessons from past work, %d summarized and %d not yet summarized." % (n, len(summarized), len(pending))
+        count_line = "sisi has learned %d lessons from past work, %d summarized and %d not yet summarized." % (n, len(summarized), len(pending))
     out = [count_line, ""]
     if said:
         out.append("## What you said")

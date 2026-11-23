@@ -179,3 +179,36 @@ class NoStaleValues(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BrandIsWrittenCorrectly(unittest.TestCase):
+    """The brand is 'sisi is still improving', always lower case; the old expansion is retired."""
+
+    def tracked(self):
+        out = subprocess.run(["git", "ls-files"], cwd=REPO, capture_output=True, text=True).stdout
+        for name in out.split("\n"):
+            path = os.path.join(REPO, name)
+            if not name or not os.path.isfile(path):
+                continue
+            try:
+                yield name, open(path, encoding="utf-8").read()
+            except UnicodeDecodeError:
+                continue
+
+    def test_old_expansion_is_gone_outside_the_changelog(self):
+        old = re.compile("self[- ]improving\\s+super" + "intelligence", re.I)
+        bad = [n for n, text in self.tracked() if n != "CHANGELOG.md" and old.search(text)]
+        self.assertEqual(bad, [])
+
+    def test_brand_line_is_always_lower_case(self):
+        brand = re.compile(r"\*{0,2}sisi\*{0,2}\s+is\s+still\s+improving", re.I)
+        bad = []
+        for name, text in self.tracked():
+            for m in brand.finditer(text):
+                if m.group(0) != m.group(0).lower():
+                    bad.append((name, m.group(0)))
+        self.assertEqual(bad, [])
+
+    def test_readme_title_is_the_brand(self):
+        first = open(os.path.join(REPO, "README.md"), encoding="utf-8").readline().rstrip("\n")
+        self.assertEqual(first, "# **sisi** is still improving")

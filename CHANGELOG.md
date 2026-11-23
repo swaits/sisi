@@ -8,6 +8,7 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- The name now expands to "sisi is still improving"; the earlier expansion is retired.
 - The always-loaded rulebook budget is raised to the largest size vendor guidance supports; growth
   still requires shortening elsewhere.
 

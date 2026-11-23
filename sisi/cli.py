@@ -1,7 +1,9 @@
 """Command dispatch. Heavy modules are imported lazily so hooks (tick, gate) stay fast."""
 import json, os, sys
 
-HELP = """sisi: shared rulebook and enforced definitions of done for every AI coding CLI
+HELP = """sisi is still improving
+
+A shared rulebook and enforced definitions of done for every AI coding CLI.
 
   sisi contract init [--goal TEXT]   create .sisi/contract.json here
   sisi contract check                validate the contract

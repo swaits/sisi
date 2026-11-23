@@ -1,4 +1,4 @@
-# sisi: self-improving superintelligence
+# **sisi** is still improving
 
 **Your AI agents get better at working for you on every turn, in every tool, automatically, just by
 being used. There is nothing to schedule or maintain.** Each piece of work ends with the agent
@@ -14,9 +14,10 @@ when they fail.
 sisi is a shared rulebook and a small command-line tool in plain Python with no dependencies. What
 it learns about you is kept outside the clone, so updating never loses it.
 
-The name states the goal, not the present. What is not yet shown is that this makes agents
-measurably better over weeks of real use. `sisi improve` reports the counted evidence for that
-question, and it needs real use to have data.
+The name is recursive: its first word is the name itself. It is also a plain statement of where
+things stand: each turn leaves your tools a little better, and that work is never finished. What is
+not yet shown is that this makes agents measurably better over weeks of real use. `sisi improve`
+reports the counted evidence for that question, and it needs real use to have data.
 
 ## How it works
 
