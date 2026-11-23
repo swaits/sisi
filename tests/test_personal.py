@@ -377,10 +377,14 @@ class UpdateTests(PersonalCase):
         self.assertIn("already up to date", r.stdout)
         self.assertEqual(len([l for l in open(os.path.join(self.data, "retest.jsonl"))]), 1)
 
-    def test_update_refuses_outside_a_git_clone(self):
+    def test_update_outside_a_git_clone_runs_the_post_step(self):
+        """R-14.4-1, R-3.2-4: an installed copy is updated by a release, but plain `sisi update` still
+        backs up, migrates and rebuilds the user's data and exits 0."""
         r = self.sisi("update")
-        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("not a git clone", r.stdout)
+        self.assertIn("backup:", r.stdout)
+        self.assertIn("rulebook rebuilt", r.stdout)
 
 
 def _seed_legacy_db(path, lessons, proj):

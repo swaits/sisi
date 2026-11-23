@@ -444,9 +444,9 @@ def cmd_update(args):
     try:
         top = _pgit("rev-parse", "--show-toplevel")
         if top.returncode != 0 or os.path.realpath(top.stdout.strip()) != os.path.realpath(paths.REPO):
-            say("sisi update: %s is not a git clone, so there is nothing to fetch. Replace it with a newer copy and run "
-                "`sisi update --post` to rebuild." % paths.REPO)
-            return 1
+            say("sisi update: %s is not a git clone, so the product itself is updated by a release; "
+                "backing up, migrating and rebuilding your data now." % paths.REPO)
+            return post_update()
         if _pgit("rev-parse", "--verify", "-q", "HEAD").returncode != 0:
             say("sisi update: the product repository has no commits yet; nothing to update.")
             return 1
