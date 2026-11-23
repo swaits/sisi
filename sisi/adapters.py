@@ -514,6 +514,7 @@ class Codex(Adapter):
     def spec(self):
         return {
             "SessionStart": {"cmd": _cmd("tick", "codex"), "timeout": 10, "sub": "tick", "matcher": "startup|resume"},
+            "UserPromptSubmit": {"cmd": _cmd("prompt", "codex"), "timeout": 10, "sub": "prompt"},
             "Stop": {"cmd": _cmd("gate", "codex"), "timeout": _gate_timeout(), "sub": "gate"},
             "SubagentStop": {"cmd": _cmd("gate", "codex", True), "timeout": 30, "sub": "gate"},
             "PreToolUse": {"cmd": _cmd("watch", "codex"), "timeout": 60, "sub": "watch", "matcher": "Bash"},
@@ -538,7 +539,7 @@ class Codex(Adapter):
                          % os.path.join(self.dir(), "AGENTS.override.md"))
 
     def unwire(self, m, notes):
-        subs = {"SessionStart": "tick", "Stop": "gate", "SubagentStop": "gate",
+        subs = {"SessionStart": "tick", "UserPromptSubmit": "prompt", "Stop": "gate", "SubagentStop": "gate",
                 "PreToolUse": "watch", "PostToolUse": "watch"}
         unmerge_json(m, self.hooks_file(), "nested", subs, self.spec(), notes, "codex")
 
@@ -551,6 +552,7 @@ class Codex(Adapter):
         hw = nested_wired(_load_obj(self.hooks_file()) or {}, self.spec())
         rb = _link_ok(link)
         missing = [n for n, ok in (("rulebook link", rb), ("tick hook", hw["SessionStart"]),
+                                   ("prompt hook", hw.get("UserPromptSubmit", False)),
                                    ("gate hook", hw["Stop"]), ("subagent hook", hw["SubagentStop"]),
                                    ("watch-before hook", hw.get("PreToolUse", False)), ("watch-after hook", hw.get("PostToolUse", False))) if not ok]
         if self.shadowed():
@@ -578,6 +580,7 @@ class Gemini(Adapter):
     def spec(self):
         return {
             "SessionStart": {"cmd": _cmd("tick", "gemini"), "timeout": 10000, "sub": "tick", "name": "sisi-tick"},
+            "BeforeAgent": {"cmd": _cmd("prompt", "gemini"), "timeout": 10000, "sub": "prompt", "name": "sisi-prompt"},
             "AfterAgent": {"cmd": _cmd("gate", "gemini"), "timeout": _gate_timeout() * 1000, "sub": "gate", "name": "sisi-gate"},
             "BeforeTool": {"cmd": _cmd("watch", "gemini"), "timeout": 60000, "sub": "watch", "name": "sisi-watch-before"},
             "AfterTool": {"cmd": _cmd("watch", "gemini"), "timeout": 60000, "sub": "watch", "name": "sisi-watch-after"},
@@ -598,7 +601,7 @@ class Gemini(Adapter):
         wiring._link(m, os.path.join(self.dir(), "GEMINI.md"), wiring.core(), notes, "gemini")
 
     def unwire(self, m, notes):
-        unmerge_json(m, self.settings(), "nested", {"SessionStart": "tick", "AfterAgent": "gate",
+        unmerge_json(m, self.settings(), "nested", {"SessionStart": "tick", "BeforeAgent": "prompt", "AfterAgent": "gate",
                                                     "BeforeTool": "watch", "AfterTool": "watch"},
                      self.spec(), notes, "gemini")
         unlink_ours(os.path.join(self.dir(), "GEMINI.md"), notes)
@@ -608,7 +611,8 @@ class Gemini(Adapter):
         link = os.path.join(self.dir(), "GEMINI.md")
         hw = nested_wired(_load_obj(self.settings()) or {}, self.spec())
         rb = _link_ok(link)
-        missing = [n for n, ok in (("rulebook link", rb), ("tick hook", hw["SessionStart"]), ("gate hook", hw["AfterAgent"]),
+        missing = [n for n, ok in (("rulebook link", rb), ("tick hook", hw["SessionStart"]),
+                                   ("prompt hook", hw.get("BeforeAgent", False)), ("gate hook", hw["AfterAgent"]),
                                    ("watch-before hook", hw.get("BeforeTool", False)), ("watch-after hook", hw.get("AfterTool", False))) if not ok]
         st.update(rulebook=rb, tick=hw["SessionStart"], wired=not missing,
                   detail=("missing: " + ", ".join(missing)) if missing else "rulebook link + tick + gate hooks (shared ~/.gemini file also serves Antigravity)")
@@ -627,6 +631,7 @@ class Copilot(Adapter):
     def spec(self):
         return {
             "sessionStart": {"cmd": _cmd("tick", "copilot"), "timeout": 10, "sub": "tick"},
+            "userPromptSubmitted": {"cmd": _cmd("prompt", "copilot"), "timeout": 10, "sub": "prompt"},
             "agentStop": {"cmd": _cmd("gate", "copilot"), "timeout": _gate_timeout(), "sub": "gate"},
             "subagentStop": {"cmd": _cmd("gate", "copilot", True), "timeout": 30, "sub": "gate"},
             "preToolUse": {"cmd": _cmd("watch", "copilot"), "timeout": 60, "sub": "watch"},
@@ -652,7 +657,7 @@ class Copilot(Adapter):
         wiring._link(m, os.path.join(self.dir(), "copilot-instructions.md"), wiring.core(), notes, "copilot")
 
     def unwire(self, m, notes):
-        subs = {"sessionStart": "tick", "agentStop": "gate", "subagentStop": "gate",
+        subs = {"sessionStart": "tick", "userPromptSubmitted": "prompt", "agentStop": "gate", "subagentStop": "gate",
                 "preToolUse": "watch", "postToolUse": "watch"}
         unmerge_json(m, self.hooks_file(), "flat", subs, self.spec(), notes, "copilot",
                      created_version=1, make_entry=self._entry)
@@ -664,6 +669,7 @@ class Copilot(Adapter):
         hw = flat_wired(_load_obj(self.hooks_file()) or {}, self.spec())
         rb = _link_ok(link)
         missing = [n for n, ok in (("rulebook link", rb), ("tick hook", hw["sessionStart"]),
+                                   ("prompt hook", hw.get("userPromptSubmitted", False)),
                                    ("gate hook", hw["agentStop"]), ("subagent hook", hw["subagentStop"]),
                                    ("watch-before hook", hw.get("preToolUse", False)), ("watch-after hook", hw.get("postToolUse", False))) if not ok]
         st.update(rulebook=rb, tick=hw["sessionStart"], wired=not missing,
@@ -770,7 +776,7 @@ class Cursor(Adapter):
 
 
 def _pi_extension():
-    body = '''// sisi:generated by `sisi install` -- runs `sisi tick` at session start and `sisi gate` before the session settles. Remove with `sisi uninstall`.
+    body = '''// sisi:generated by `sisi install` -- runs `sisi tick` at session start, `sisi prompt` on each request and `sisi gate` before the session settles. Remove with `sisi uninstall`.
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
 
@@ -780,13 +786,13 @@ const SID = "pi-" + process.pid + "-" + Math.random().toString(36).slice(2, 10);
 let tickText = "";
 let blocks = 0;
 
-function runSisi(args, timeout) {
+function runSisi(args, timeout, payload) {
   return new Promise((resolve) => {
     const child = execFile(SISI, args, { timeout, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
       const code = err && typeof err.code === "number" ? err.code : err ? -1 : 0;
       resolve({ code, out: String(stdout ?? "") + String(stderr ?? "") });
     });
-    if (child.stdin) child.stdin.end(JSON.stringify({ session_id: SID, cwd: process.cwd() }));
+    if (child.stdin) child.stdin.end(JSON.stringify({ session_id: SID, cwd: process.cwd(), ...(payload || {}) }));
   });
 }
 
@@ -798,10 +804,17 @@ export default function (pi: ExtensionAPI) {
       tickText = "";
     }
   });
-  pi.on("before_agent_start", async () => {
-    if (!tickText) return;
-    const content = tickText;
+  pi.on("before_agent_start", async (event) => {
+    let promptText = "";
+    try {
+      const userText = event && typeof event.prompt === "string" ? event.prompt : "";
+      if (userText) promptText = (await runSisi(["prompt", "--tool", "pi"], 10000, { prompt: userText })).out.trim();
+    } catch {
+      promptText = "";
+    }
+    const content = [tickText, promptText].filter(Boolean).join("\\n\\n");
     tickText = "";
+    if (!content) return;
     return { message: { customType: "sisi-tick", content, display: false } };
   });
   pi.on("agent_before_settle", async (event) => {

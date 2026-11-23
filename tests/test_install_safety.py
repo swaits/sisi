@@ -463,8 +463,10 @@ class WidenedPropertyTests(SafetyBase):
                 json.dump(obj, open(p, "w"), indent=2)
                 wiring.install()
                 raw = open(p, "rb").read()
-                # tick + gate + subagent gate + watch (registered for both tool events) = at most 5
-                self.assertLessEqual(raw.count(b"--tool " + tool.encode()), 5, (tool, raw))
+                # exactly one registration per event in the tool's spec (tick, prompt where wired,
+                # gate, subagent gate, watch before/after), however many duplicates were planted
+                adapter = next(a for a in adapters.ADAPTERS if a.name == tool)
+                self.assertLessEqual(raw.count(b"--tool " + tool.encode()), len(adapter.spec()), (tool, raw))
                 d2 = json.load(open(p))
                 for ev, entries in d2.get("hooks", {}).items():
                     flat = [e.get("bash") or e.get("command") for e in entries if isinstance(e, dict)]

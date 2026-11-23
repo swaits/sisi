@@ -18,12 +18,14 @@ import contextlib, hashlib, json, os, re, sys, tempfile, time
 
 from . import paths
 
-MAX_LINES = 120
-# Character budget as well as lines: the base rulebook renders to 6,525 characters in 120 lines.
-# Wrapping games (fewer, longer lines) must not load more text into every session, so the honest
-# measure is characters. 7,200 allows modest headroom (about 10%) for a short replacement while
-# still refusing any real growth.
-MAX_CHARS = 7200
+# Budgets for what every session always loads, including the generated `More: sisi rule N` line
+# under each rule. 200 lines is the largest size vendor guidance supports (Anthropic: "target under
+# 200 lines per CLAUDE.md file"); published measurements say adherence falls as the number of
+# simultaneous instructions grows, so the book stays small and exactness comes from enforced checks
+# and request-time delivery. Characters are budgeted too, in the same proportion, because wrapping
+# games must not load more text. A learning round still may not grow the book without shortening.
+MAX_LINES = 200
+MAX_CHARS = 12000
 HOUSE_WIDTH = 100
 KINDS = ("rule", "verifier", "recipe")
 ID_TAIL = re.compile(r"\s*\{#([A-Za-z0-9][A-Za-z0-9_-]*)\}\s*$")
@@ -200,6 +202,11 @@ def overlay_hash():
     return h.hexdigest()[:8] if any_ else "none"
 
 
+def more_line(n):
+    """The generated pointer under each rule: the command that prints the rule in full."""
+    return "More: `sisi rule %d` (reasons, history, lessons behind it, how it is enforced)." % n
+
+
 def render():
     pre, rules = effective()
     try:
@@ -212,7 +219,7 @@ def render():
     if pre.strip():
         parts.append(pre)
     for n, r in enumerate(rules, 1):
-        parts.append("## %d. %s {#%s}\n\n%s" % (n, r["title"], r["id"], r["body"]))
+        parts.append("## %d. %s {#%s}\n\n%s\n%s" % (n, r["title"], r["id"], r["body"], more_line(n)))
     return "\n\n".join(parts) + "\n"
 
 

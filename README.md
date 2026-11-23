@@ -28,7 +28,9 @@ shown, it is strengthened: a note, a candidate rule, then an enforced check the 
 `sisi cycle` consolidates lessons into rules and library entries without growing the rulebook.
 Whether it is due is checked during normal use, so nothing is scheduled; see
 [docs/learning.md](docs/learning.md). `sisi lessons digest` prints what has been learned in plain
-words, grouped by topic.
+words, grouped by topic. Where a tool allows it, the matching recipe and lessons are also delivered
+the moment a request arrives (`sisi prompt`), and each rule names the command that explains it
+(`sisi rule`).
 
 Improvement needs a way to tell success from failure:
 

@@ -62,6 +62,9 @@ def normalize(tool, d):
         if isinstance(d.get(k), dict):
             out["tool_input"] = d[k]
             break
+    prompt = _s(d, "prompt", "user_prompt", "userPrompt")
+    if prompt:
+        out["prompt"] = prompt
     cwd = _s(d, "cwd")
     if not cwd and isinstance(d.get("workspace_roots"), list):
         roots = [r for r in d["workspace_roots"] if isinstance(r, str) and r]
@@ -171,6 +174,55 @@ def _tick_out(tool, text):
     if tool == "cursor":
         return _dump({"additional_context": text})
     return _dump({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}})
+
+
+# Prompt-submission events with a documented context-injection channel, per tool. Cursor's
+# beforeSubmitPrompt can only allow or stop a submission (no injection channel is documented),
+# Qwen's prompt event name is not confirmed, and OpenCode's injection transform is unconfirmed on
+# the installed version, so sisi wires no prompt hook for those three (see docs/harnesses.md).
+PROMPT_EVENTS = {"codex": "UserPromptSubmit", "gemini": "BeforeAgent", "copilot": "userPromptSubmitted"}
+
+
+def _prompt_out(tool, text):
+    text = (text or "").strip("\n")
+    if tool in ("pi", "opencode"):
+        return (text + "\n") if text else None
+    if not text:
+        return _dump({}) if tool in ("gemini", "qwen", "cursor") else None
+    if tool == "copilot":
+        return _dump({"additionalContext": text})
+    if tool == "cursor":
+        return _dump({"additional_context": text})
+    return _dump({"hookSpecificOutput": {"hookEventName": PROMPT_EVENTS.get(tool, "UserPromptSubmit"),
+                                          "additionalContext": text}})
+
+
+def prompt_main(tool, args=()):
+    """`sisi prompt --tool NAME`: build the request-time context and print it in the tool's shape.
+    Pi's extension passes the request text as an argument. Always exits 0."""
+    try:
+        import os as _os
+        from . import prompt as P
+        positional = [a for a in args if not a.startswith("--")]
+        if positional:
+            text = P.build_context(" ".join(positional))
+        else:
+            d = _payload(store.read_stdin())
+            if d is None:
+                return 0
+            norm = normalize(tool, d)
+            cwd = norm.get("cwd")
+            if cwd and _os.path.isdir(cwd):
+                _os.chdir(cwd)
+            query = P.extract_prompt(norm)
+            text = P.build_context(query, session=norm.get("session_id")) if query else ""
+        out = _prompt_out(tool, text)
+    except Exception as e:  # fail open: a prompt hook must never fail a turn
+        store.log_error("prompt-%s" % tool, e)
+        return 0
+    if out:
+        sys.stdout.write(out)
+    return 0
 
 
 def tick_main(tool, args=()):

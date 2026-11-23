@@ -160,14 +160,15 @@ class OverlayTests(PersonalCase):
     def test_size_budget_refuses_and_changes_nothing(self):
         self.ok("build-canon")
         gen0, log0 = self.generated(), self.git_log()
-        big = rule_file("Big", "\n".join("line %d" % i for i in range(150)))
+        room = overlay.MAX_LINES - len(gen0.splitlines())
+        big = rule_file("Big", "\n".join("line %d" % i for i in range(room + 30)))
         r = self.sisi("overlay", "add-rule", "--id", "big", "-", stdin=big)
         self.assertEqual(r.returncode, 1)
         self.assertIn("budget", r.stderr)
         self.assertEqual((self.generated(), self.git_log()), (gen0, log0))
         self.assertFalse(os.path.exists(os.path.join(self.data, "overlay", "rules", "big.md")))
         # fits after something is made shorter or replaced
-        fill = rule_file("Fill", "\n".join("x%d" % i for i in range(80)))
+        fill = rule_file("Fill", "\n".join("x%d" % i for i in range(room - 20)))
         self.ok("overlay", "add-rule", "--id", "fill", "-", stdin=fill)
         self.assertLessEqual(len(self.generated().splitlines()), overlay.MAX_LINES)
         r = self.sisi("overlay", "add-rule", "--id", "more", "-", stdin=rule_file("More", "\n".join("y%d" % i for i in range(30))))

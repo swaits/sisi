@@ -453,7 +453,8 @@ and enforced checks, not listed/read counters. A stale refusal names exactly wha
 Rules - format: {"id", "title", "body", "action": "add|replace", "shortens": "..."}.
   Body: prose paragraphs wrapped at 100 characters (apply re-wraps for you), ending with a
   paragraph starting "Why:". Keep the id and the Why when replacing. Title is the heading text.
-  Budget: at most 120 lines AND at most 7200 characters, and a cycle must not increase the
+  Budget: at most 200 lines AND at most 12000 characters, counting the one generated
+  `More: sisi rule N` pointer line per rule, and a cycle must not increase the
   characters unless it names in "shortens" which existing rule text gets shorter or is replaced
   (required whenever a rule is added or the book would grow in characters); never past the budget.
   Rule numbers in lessons ("rule 5") mean the numbered list in the brief, which maps number to id.
@@ -1284,7 +1285,7 @@ def check_file(path):
                 parts.append(pre)
             for n, rid in enumerate(order, 1):
                 if rid in by_id:
-                    parts.append("## %d. %s {#%s}\n\n%s" % (n, by_id[rid]["title"], rid, by_id[rid]["body"]))
+                    parts.append("## %d. %s {#%s}\n\n%s\n%s" % (n, by_id[rid]["title"], rid, by_id[rid]["body"], overlay.more_line(n)))
             cand = "\n\n".join(parts) + "\n"
             lines, chars = overlay.size(cand)
             out.append("  rulebook: %s lines, %s characters -> %d lines, %d characters "

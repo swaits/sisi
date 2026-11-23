@@ -6,7 +6,28 @@ All notable changes to this project are recorded here. The format follows
 
 ## Unreleased
 
+### Changed
+
+- The always-loaded rulebook budget is raised to the largest size vendor guidance supports; growth
+  still requires shortening elsewhere.
+
 ### Added
+
+- Request-time delivery (`sisi prompt`): where a tool documents a prompt-submission event with a
+  context channel (Claude Code, Codex CLI, Gemini CLI, Muse CLI, Pi), the matching
+  recipe's "done means" list and the strictly matching lessons are injected when the human's
+  request arrives — no asking needed — each with the command that prints it in full. Nothing is
+  injected for trivial or unmatched messages, the injection is size-capped, showings are counted as
+  listings, and the hook can never block a turn. No prompt hook is wired where the event or its
+  injection channel is unconfirmed (Qwen Code, Cursor, OpenCode); see docs/harnesses.md.
+- `sisi rule [N|ID]`: every rule in the effective rulebook with how it is enforced, derived from
+  code facts, and one rule in full with its reasons, history and folded lessons. The generated
+  rulebook ends each rule with `More: sisi rule N`; the size budgets grow only by those pointer
+  lines (rule text keeps its former budgets).
+- The end-of-turn gate enforces the question-dialog rule where a dialog exists and the transcript
+  is readable (Claude Code; Qwen Code wired the same way pending transcript confirmation): ending
+  a turn by asking in reply text without using the dialog is sent back once, with subagents and
+  dialog-less tools exempt.
 
 - Lessons gain an optional short line (one plain sentence, at most 140 characters) and topic
   (between one and three lower-case words, at most 30 characters), written at `sisi retro` with

@@ -12,6 +12,8 @@ HELP = """sisi: shared rulebook and enforced definitions of done for every AI co
   sisi verify --all | --state        run both tiers; print only the deep-check state (with --json)
   sisi gate [--tool NAME]            end-of-turn hook (reads hook JSON on stdin; NAME selects the tool's hook shape)
   sisi tick [--tool NAME]            session-start hook
+  sisi prompt [--tool NAME]          prompt-submission hook: prints the matching recipe and lessons for the human's request as added context (silent when nothing strictly matches); `sisi prompt "<request>"` tries it by hand
+  sisi rule [N|ID]                   the effective rules and how each is enforced; with N or ID: one rule in full (reasons, history, lessons behind it, how it is enforced)
   sisi watch [--before|--after]      before/after shell-tool hook: measures whether the command changed the project
   sisi install [--dry-run] | uninstall | doctor
                                      wire sisi into the tools (by reference), undo, inspect; --dry-run only prints what would change
@@ -379,6 +381,16 @@ def main(argv):
                 return hookio.tick_main(t, args)
         from . import tick
         return tick.main(args)
+    if cmd == "prompt":
+        if t and t != "claude-code":
+            from . import hookio
+            if hookio.known(t):
+                return hookio.prompt_main(t, args)
+        from . import prompt
+        return prompt.main(args)
+    if cmd == "rule":
+        from . import rulecmd
+        return rulecmd.main(args)
     if cmd in ("version", "--version", "-V"):
         from . import paths
         try:

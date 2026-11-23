@@ -236,6 +236,7 @@ def hook_cmds():
     gate_to = int(store.config()["gate"].get("budget_s", 120)) + 30
     watch = hookjson.fail_open_command(paths.launcher(), "watch", "claude-code")
     return {"SessionStart": (hookjson.fail_open_command(paths.launcher(), "tick", "claude-code"), 10),
+            "UserPromptSubmit": (hookjson.fail_open_command(paths.launcher(), "prompt", "claude-code"), 10),
             "Stop": (hookjson.fail_open_command(paths.launcher(), "gate", "claude-code"), gate_to),
             "SubagentStop": (hookjson.fail_open_command(paths.launcher(), "gate", "claude-code", True), 30),
             "PreToolUse": (watch, 60),
@@ -325,7 +326,7 @@ def remove_hooks(obj):
     hooks = obj.get("hooks")
     if not isinstance(hooks, dict):
         return False
-    for ev, sub in (("SessionStart", "tick"), ("Stop", "gate"), ("SubagentStop", "gate"),
+    for ev, sub in (("SessionStart", "tick"), ("UserPromptSubmit", "prompt"), ("Stop", "gate"), ("SubagentStop", "gate"),
                     ("PreToolUse", "watch"), ("PostToolUse", "watch")):
         groups = hooks.get(ev)
         if not isinstance(groups, list):
@@ -353,7 +354,8 @@ def remove_hooks(obj):
 def _hooks_wired(obj):
     hooks = obj.get("hooks") if isinstance(obj, dict) else None
     out = {}
-    for ev, sub, name in (("SessionStart", "tick", "tick"), ("Stop", "gate", "gate"), ("SubagentStop", "gate", "subagent"),
+    for ev, sub, name in (("SessionStart", "tick", "tick"), ("UserPromptSubmit", "prompt", "prompt"),
+                          ("Stop", "gate", "gate"), ("SubagentStop", "gate", "subagent"),
                           ("PreToolUse", "watch", "pre"), ("PostToolUse", "watch", "post")):
         groups = hooks.get(ev) if isinstance(hooks, dict) else None
         sub, key = sub, name
@@ -590,7 +592,7 @@ def uninstall():
     elif data is not None:
         try:
             text = data.decode("utf-8")
-            subs = {"SessionStart": "tick", "Stop": "gate", "SubagentStop": "gate",
+            subs = {"SessionStart": "tick", "UserPromptSubmit": "prompt", "Stop": "gate", "SubagentStop": "gate",
                     "PreToolUse": "watch", "PostToolUse": "watch"}
             orig = _read(os.path.join(_idir(), "backups", ent["backup"])) if ent and ent["backup"] else None
             drop_hooks, _dv = hookjson.backup_drop_flags(
@@ -645,10 +647,11 @@ def doctor():
     except (ValueError, UnicodeDecodeError):
         hw = {"tick": False, "gate": False, "subagent": False, "pre": False, "post": False}
     missing = [n for n, ok in (("import line", _claude_md_wired(cm)), ("tick hook", hw["tick"]),
+                               ("prompt hook", hw.get("prompt", False)),
                                ("gate hook", hw["gate"]), ("subagent hook", hw["subagent"]),
                                ("watch-before hook", hw["pre"]), ("watch-after hook", hw["post"])) if not ok]
     rows.append({"tool": "claude-code", "status": "not wired" if missing else "wired",
-                 "detail": ("missing: " + ", ".join(missing)) if missing else "import + tick + gate registered",
+                 "detail": ("missing: " + ", ".join(missing)) if missing else "import + tick + prompt + gate registered",
                  "blocking_hook": "yes (Stop)" if hw["gate"] else "no",
                  "rulebook": not missing and _claude_md_wired(cm), "tick": hw["tick"],
                  "enforcement": "blocks", "action": None})
@@ -735,6 +738,7 @@ def doctor_claude():
     except (ValueError, UnicodeDecodeError):
         hw = {"tick": False, "gate": False, "subagent": False, "pre": False, "post": False}
     missing = [n for n, ok in (("import line", _claude_md_wired(cm)), ("tick hook", hw["tick"]),
+                               ("prompt hook", hw.get("prompt", False)),
                                ("gate hook", hw["gate"]), ("subagent hook", hw["subagent"]),
                                ("watch-before hook", hw["pre"]), ("watch-after hook", hw["post"])) if not ok]
     return ", ".join(missing)

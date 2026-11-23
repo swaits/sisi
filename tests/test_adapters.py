@@ -355,6 +355,36 @@ class MergePropertyTests(AdapterBase):
                         self.cycle()
 
 
+class PromptHookTests(AdapterBase):
+    def test_prompt_hooks_registered_and_removed_per_tool(self):
+        cases = {"codex": (".codex", ".codex/hooks.json", "UserPromptSubmit", False),
+                 "gemini": (".gemini", ".gemini/settings.json", "BeforeAgent", False),
+                 "copilot": (".copilot", ".copilot/hooks/sisi.json", "userPromptSubmitted", True)}
+        for name, (d, f, ev, flat) in cases.items():
+            with self.subTest(tool=name):
+                self.fresh_home()
+                os.makedirs(self.path(d), exist_ok=True)
+                if name == "copilot":
+                    os.makedirs(self.path(".copilot", "hooks"), exist_ok=True)
+                self.cycle()  # install x2 idempotent, uninstall exact, prompt hook included
+                wiring.install()
+                obj = json.load(open(self.path(f)))
+                cmds = [e.get("bash") or e.get("command") for e in obj["hooks"][ev]] if flat else \
+                    [h["command"] for g in obj["hooks"][ev] for h in g["hooks"]]
+                self.assertTrue(any("prompt --tool %s" % name in (c or "") for c in cmds), (name, ev, cmds))
+                self.assertEqual(self.rows()[name]["status"], "wired")
+                wiring.uninstall()
+
+    def test_pi_extension_carries_prompt_call(self):
+        self.assertIn(b'"prompt", "--tool", "pi"', adapters._pi_extension())
+
+    def test_no_prompt_hook_where_injection_is_unconfirmed(self):
+        for a in adapters.ADAPTERS:
+            spec = a.spec() if hasattr(a, "spec") else {}
+            if a.name in ("qwen", "cursor"):
+                self.assertFalse(any(s.get("sub") == "prompt" for s in spec.values()), a.name)
+
+
 class GeneratedScriptTests(AdapterBase):
     def test_opencode_plugin_parses_as_javascript(self):
         node = shutil.which("node")

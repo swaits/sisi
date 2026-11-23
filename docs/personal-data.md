@@ -45,7 +45,7 @@ Ids: rules are `## 1. Title {#rule-id}` in `canon/core.md`; verifiers and recipe
 
 Commands: `sisi overlay list | diff | add-rule | replace-rule | disable-rule | enable-rule` (and the same for
 `verifier` and `recipe`), `sisi overlay revert COMMIT`. Each change is one commit and rebuilds the rulebook.
-The generated rulebook may not exceed 120 lines: a change that would pass it is refused, so a rule is added
+The generated rulebook may not exceed its line and character budgets: a change that would pass it is refused, so a rule is added
 by shortening or replacing another. `sisi canon cost` prints the always-loaded size.
 
 On `sisi update` the overlay is applied to the new product. A replacement whose base item changed keeps the

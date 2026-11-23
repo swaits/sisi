@@ -41,7 +41,16 @@ what "done" means, verifying, or being sent back by the gate.
    out) for the agent to open with `sisi lessons show ID`. Being printed or listed counts as
    *listed*; opening counts as *read* — the two are reported separately, because "listed many times,
    never read, still recurs" means the heading is bad, and the cycle brief says so. `sisi verifiers
-   show` and the gate's send-back message keep the older single strong-match block. Draft recipe notes
+   show` and the gate's send-back message keep the older single strong-match block. The same strict
+   part-one test also runs at the moment the human's request arrives: where the tool documents a
+   prompt-submission event with a context channel, `sisi prompt` injects the best-matching recipe's
+   "done means" list in short form plus the matching lessons' short lines, each with the command
+   that prints it in full (`sisi done ID`, `sisi lessons show ID`), within a 2,000-character cap.
+   A recipe counts only when at least two distinct non-generic request words hit its title,
+   applies-to or id (matched on stems, so "tag" meets "tagging"); trivial messages (a bare yes or
+   no, a slash command, a short question) and unmatched requests inject nothing at all. These
+   showings count as *listed* at place `prompt`. The hook never blocks a turn: any error exits
+   silently. Draft recipe notes
    appear in `sisi done for` when their words match. Lesson text is always framed as information to
    weigh, not as commands, and text from a lesson is never executed. One-line headings — the
    other-lessons list, session-start notes, `sisi backlog` and `sisi lessons` — use the short
@@ -59,8 +68,8 @@ what "done" means, verifying, or being sent back by the gate.
 5. **Recurring lessons get stronger.** Each lesson has a strength: 1 (a note), 2 (a candidate rule),
    3 (enforced). A recurrence after at least two showings since the last promotion moves it up one
    step — each step needs its own fresh evidence. A strength-2 lesson
-   becomes a real rule only through consolidation (below), because the rulebook has hard budgets of
-   120 lines and 7,200 characters and must not grow. A strength-3 lesson needs a check the gate can run; a folded lesson
+   becomes a real rule only through consolidation (below), because the rulebook has hard budgets in
+   lines and characters (`sisi canon cost` prints them), and must not grow without shortening. A strength-3 lesson needs a check the gate can run; a folded lesson
    shown 20 times with no recurrence is retired from the notes (it stays in history); a lesson that
    still recurs at strength 3 is withdrawn, and the same wording will not be learned again.
 6. **Consolidation happens in a cycle**, run by whichever agent is working — see below.
@@ -129,8 +138,9 @@ when present: folded lessons no longer count toward the learned-notes limit, whi
 
 `sisi cycle apply FILE` checks the file before writing anything: every lesson id exists, the base
 version is still current, changed rules keep their id and their Why, named `sisi` commands and
-enforced programs exist, and the resulting rulebook is inside both budgets (120 lines and 7,200
-characters) and no longer in characters than before unless `shortens` names what was removed.
+enforced programs exist, and the resulting rulebook is inside both budgets (lines and
+characters, printed by `sisi canon cost`) and no longer in characters than before
+unless `shortens` names what was removed.
 Rules are re-wrapped to 100 characters on apply. The base version covers only what a cycle may
 change (lesson content and status, short lines and topics, rules, notes, enforced checks), not
 listed/read counters, and
@@ -147,6 +157,23 @@ Enforced checks live in `overlay/enforced.json` and are checked like the minimum
 contract-requirement fails a contract that touches its subject without a check of the required kind;
 a command check runs in the project like a contract check, and only in projects already on the trust
 list.
+
+## Every rule points at its own detail (`sisi rule`)
+
+The generated rulebook ends each rule with one generated line — `More: sisi rule N` — so a rule an
+agent is reading names the command that explains it. `sisi rule` with no argument tables every rule
+in the effective rulebook with how it is enforced, in plain words, derived from what the code does
+(which hooks are wired, whether the floors and the gate checks exist): a rule with no mechanism
+says so ("not enforced: depends on the agent") instead of implying otherwise. `sisi rule N` (or
+`sisi rule ID`) prints the rule in full with its reasons, how it is enforced, whether the text is
+base or overlay, which learning rounds changed it, and the lessons folded into it, each with
+`sisi lessons show ID`. One rule gained a mechanism this way: where the tool has a question dialog
+and a readable transcript (Claude Code; Qwen Code is wired the same way but its transcript shape is
+unconfirmed, so the check may find nothing to read there), the end-of-turn gate sends the agent back
+once when its final message ends by asking the human a question in reply text and no dialog was
+used in that turn — the last sentence ending in a question mark outside code blocks, quotes and
+known rhetorical forms. Subagents and dialog-less tools are exempt, and the same message is never
+sent back twice.
 
 ## What has been learned, in plain words
 

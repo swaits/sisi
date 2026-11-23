@@ -20,7 +20,7 @@ in an owner-only (0700) folder, each with its source file's permissions.
 
 Wiring is always by reference: an import line, a symlink to the generated rulebook
 (`~/.local/share/sisi/generated/core.md`), hook entries that run `sisi tick --tool NAME` /
-`sisi gate --tool NAME`, or a small generated plugin/extension (recognised by its exact
+`sisi prompt --tool NAME` / `sisi gate --tool NAME`, or a small generated plugin/extension (recognised by its exact
 `sisi:generated …` first line, never by the words appearing anywhere else in the file). Every registered
 shell hook command first checks the sisi launcher still exists, so deleting the sisi folder without
 uninstalling makes hooks exit silently instead of erroring on every turn. The per-tool translation
@@ -32,13 +32,20 @@ state. Hooks fail open: any error lets the agent finish. Where a tool's hook inp
 ## Claude Code
 
 Fully wired, as before: an `@import` line in `~/.claude/CLAUDE.md`, `SessionStart` → `sisi tick`,
+`UserPromptSubmit` → `sisi prompt` (the matching recipe and lessons for the human's request, as
+added context; silent when nothing strictly matches, and never able to block a turn),
 `Stop`/`SubagentStop` → `sisi gate` (blocking), and `PreToolUse`/`PostToolUse` with matcher `Bash` →
-`sisi watch` (before/after tree measurement) in `~/.claude/settings.json`. Nothing for you to do.
+`sisi watch` (before/after tree measurement) in `~/.claude/settings.json`. The gate also enforces
+the question-dialog rule here: `AskUserQuestion` exists and the transcript is readable, so ending a
+turn by asking in reply text without using the dialog is sent back once. Evidence: the hooks
+reference documents `UserPromptSubmit` and its added-context output. Nothing for you to do.
 
 ## Codex CLI
 
 Rulebook symlink at `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md`), plus hooks in
-`~/.codex/hooks.json`: `SessionStart` → tick, `Stop`/`SubagentStop` → gate,
+`~/.codex/hooks.json`: `SessionStart` → tick, `UserPromptSubmit` → prompt (the hooks page documents
+the event and its added-context output; it needs the same one-time trust below),
+`Stop`/`SubagentStop` → gate,
 `PreToolUse`/`PostToolUse` (matcher `Bash`) → `sisi watch`, blocking with
 `{"decision":"block","reason":...}`. One step is yours: Codex only runs hooks you have trusted, by exact
 definition hash. After `sisi install`, open Codex, run `/hooks`, and trust the sisi hooks; repeat after
@@ -52,7 +59,8 @@ file path.
 ## Gemini CLI
 
 Rulebook symlink at `~/.gemini/GEMINI.md`, hooks merged into `~/.gemini/settings.json`: `SessionStart`
-→ tick (lessons injected as `additionalContext`), `AfterAgent` → gate, `BeforeTool`/`AfterTool` →
+→ tick (lessons injected as `additionalContext`), `BeforeAgent` → prompt (the documented
+before-turn event, carrying the request text), `AfterAgent` → gate, `BeforeTool`/`AfterTool` →
 `sisi watch` (`{"decision":"deny","reason":...}`
 rejects the response and forces a retry). Built from the hooks reference; Gemini is not installed on the
 development machine, so this has not run live. Gemini has no subagent-stop event in its hook list, so
@@ -61,7 +69,8 @@ only the main turn is gated.
 ## GitHub Copilot CLI
 
 Rulebook symlink at `~/.copilot/copilot-instructions.md` (or under `$COPILOT_HOME`), hooks in
-`~/.copilot/hooks/sisi.json`: `sessionStart` → tick (`additionalContext`), `agentStop`/`subagentStop` →
+`~/.copilot/hooks/sisi.json`: `sessionStart` → tick (`additionalContext`),
+`userPromptSubmitted` → prompt (the documented before-prompt event), `agentStop`/`subagentStop` →
 gate (`{"decision":"block","reason":...}` forces another turn), `preToolUse`/`postToolUse` → `sisi watch`. Verified end to end in a throwaway home:
 a secret planted in session-start context was answered by the model, and a blocking `agentStop` visibly
 forced a second turn. The cloud coding agent only runs hooks committed in the repository
@@ -75,14 +84,20 @@ Rulebook symlink at `~/.qwen/QWEN.md`, hooks merged into `~/.qwen/settings.json`
 first run, so run Qwen once before `sisi install`. Verified: the session-start hook was observed firing
 with its documented payload (a full turn needs an auth type configured). Qwen's question tool is named
 `ask_user_question` (the rulebook still names Claude Code's dialog; generalising that wording is future
-work). Qwen's before/after tool event names are not confirmed, so sisi registers no watch hooks there:
+work). The gate's question-dialog check is wired for Qwen the same way as for Claude Code, but
+Qwen's transcript shape is unconfirmed, so the check reads nothing — and therefore sends nothing
+back — until that shape is verified. No prompt hook is registered either: Qwen's prompt-submission
+event name is not confirmed in its hooks reference excerpts or in the installed package's text, and
+sisi does not guess event names into a config. Qwen's before/after tool event names are not confirmed, so sisi registers no watch hooks there:
 shell edits in Qwen are still judged from the command text.
 
 ## Pi
 
 Rulebook symlink at `~/.pi/agent/AGENTS.md` (or `$PI_CODING_AGENT_DIR/AGENTS.md`; skipped if you already
 have your own file there) plus a generated extension at `~/.pi/agent/extensions/sisi.ts`. The extension
-runs `sisi tick` on `session_start` and injects the lessons at `before_agent_start`, and runs the gate on
+runs `sisi tick` on `session_start` and injects the lessons at `before_agent_start`, runs
+`sisi prompt` there too with the request text that event carries (the installed extension docs
+confirm the event and its message injection; a missing text field leaves it silent), and runs the gate on
 `agent_before_settle`, forcing one continuation with the failure report when checks fail (capped by the
 gate's own three send-backs). Verified: the extension loads in real Pi and tick runs; the blocking
 continuation could not be exercised end to end without a model login in the throwaway home. Pi gets no
@@ -92,7 +107,9 @@ still judged from the command text.
 ## Cursor
 
 Hooks merged into `~/.cursor/hooks.json`: `sessionStart` → tick (lessons as `additional_context`),
-`stop`/`subagentStop` → gate, `preToolUse`/`postToolUse` → `sisi watch`. Cursor cannot veto a stop; instead a non-empty `followup_message` is
+`stop`/`subagentStop` → gate, `preToolUse`/`postToolUse` → `sisi watch`. No prompt hook: Cursor's
+documented `beforeSubmitPrompt` event can allow or stop a submission, but no channel for injecting
+added context is documented for it, so there is nothing for `sisi prompt` to print into. Cursor cannot veto a stop; instead a non-empty `followup_message` is
 auto-submitted as the next user message, which is how the gate sends the agent back (Cursor caps this at
 5 per script by default; sisi's own cap is 3). Only completed (not aborted/error) stops are gated.
 There is no confirmed user-global instruction *file* for Cursor, so sisi wires no global rulebook there;
@@ -108,7 +125,9 @@ client prompt API where one exists. Be clear about the limits: `session.idle` fi
 finished and cannot veto anything, and on OpenCode v2.3.2 no plugin event delivery or lesson injection
 could be confirmed in headless runs (the plugin itself is loaded — verified — and the v1-style hooks and
 v2 `setup()` registration are both attempted, all fail-open). Treat OpenCode enforcement as unproven
-until it is observed on your version; `sisi doctor` says `unknown` on purpose. OpenCode gets no watch
+until it is observed on your version; `sisi doctor` says `unknown` on purpose. It also gets no
+prompt hook: a per-message plugin callback exists, but the transform that would inject added
+context is unconfirmed on the installed version. OpenCode gets no watch
 hooks either, so shell edits there are still judged from the command text.
 
 ## Muse Code
