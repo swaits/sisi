@@ -4,6 +4,39 @@ from sisi import contract as C
 
 
 class ContractTests(SisiCase):
+    def test_the_contract_must_state_its_risk_profile(self):
+        """R-5.3-1: `risk.profile` is the agent's own judgement and is required; init writes the floor as its start."""
+        good = contract([check("a", "true")])
+        for name, risk in (("missing", None), ("empty object", {}), ("unknown", {"profile": "huge"})):
+            with self.subTest(name):
+                c = dict(good)
+                c.pop("risk")
+                if risk is not None:
+                    c["risk"] = risk
+                errs = C.validate(c)
+                self.assertTrue(any("risk" in e and "sisi risk" in e and "integration" in e and "release" in e
+                                    for e in errs), errs)
+        self.assertEqual(C.validate(good), [])
+        self.git_init()
+        self.assertEqual(self.sisi("contract", "init").returncode, 0)
+        c = C.load(os.path.join(self.proj, ".sisi", "contract.json"))
+        self.assertIn(c["risk"]["profile"], C.RISK_PROFILES)
+        with open(os.path.join(self.proj, "migrations_001.sql"), "w") as f:
+            f.write("alter table t add column c int;\n")
+        os.remove(os.path.join(self.proj, ".sisi", "contract.json"))
+        self.assertEqual(self.sisi("contract", "init").returncode, 0)
+        floor = self.sisi("risk", "--json")
+        import json as _j
+        self.assertEqual(C.load(os.path.join(self.proj, ".sisi", "contract.json"))["risk"]["profile"],
+                         _j.loads(floor.stdout)["floor"])
+        self.assertNotEqual(_j.loads(floor.stdout)["floor"], "trivial")
+        c = C.load(os.path.join(self.proj, ".sisi", "contract.json"))
+        c["risk"] = {}
+        C.save(os.path.join(self.proj, ".sisi", "contract.json"), c)
+        r = self.sisi("contract", "check")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("risk.profile", r.stdout)
+
     def test_skeleton_is_valid_but_fails(self):
         c = C.skeleton("goal")
         self.assertEqual(C.validate(c), [])

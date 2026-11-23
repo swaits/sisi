@@ -39,19 +39,24 @@ def is_unedited_skeleton(c):
 REQ_KINDS = ("explicit", "implied", "contextual", "anticipated", "experiential")
 REQ_DECISIONS = ("now", "architect", "defer", "ignore")
 RISK_PROFILES = ("trivial", "isolated", "logic", "integration", "data", "critical", "release")
+RISK_HINT = ("one of %s, your own judgement of the change; `sisi risk` shows the floor worked out from paths"
+             % ", ".join(RISK_PROFILES))
 UNIT_STATUSES = ("open", "paused", "closed")
 
 
 def skeleton(goal=None, cwd=None):
-    name = re.sub(r"[^a-z0-9]+", "-", os.path.basename(os.path.abspath(cwd or os.getcwd())).lower()).strip("-")
-    from . import store as _store
+    """A new contract. `risk.profile` starts at the floor of the current change; the agent judges it from there."""
+    cwd = cwd or os.getcwd()
+    name = re.sub(r"[^a-z0-9]+", "-", os.path.basename(os.path.abspath(cwd)).lower()).strip("-")
+    from . import store as _store, risk as _risk
+    floor = _risk.floor_for_working_tree(cwd)[0]
     return {
         "id": name or "work",
         "parent": None,
         "goal": goal or "TODO: one sentence describing the outcome",
         "scope": {"in": [], "out": []},
         "requirements": [],
-        "risk": {},
+        "risk": {"profile": floor},
         "checks": [{
             "id": "c1",
             "claim": "PLACEHOLDER (fast tier, runs at the end of every turn, 60 s at most): replace with what this check shows to be true",
@@ -337,16 +342,15 @@ def _validate_new_top(c, ids, errs):
                         errs.append("%s: check %r is not a check or invariant id" % (w, r["check"]))
                 if "added" in r and not _str(r["added"]):
                     errs.append(w + ": added must be a non-empty string")
-    if "risk" in c:
-        rk = c["risk"]
-        if not isinstance(rk, dict):
-            errs.append("risk must be an object")
-        else:
-            if "profile" in rk and rk["profile"] not in RISK_PROFILES:
-                errs.append("risk.profile must be one of %s" % ", ".join(RISK_PROFILES))
-            for k in ("why", "blast_radius", "rollback"):
-                if k in rk and not _str(rk[k]):
-                    errs.append("risk.%s must be a non-empty string" % k)
+    rk = c.get("risk")
+    if not isinstance(rk, dict):
+        errs.append("risk must be an object that states its profile: " + RISK_HINT)
+    else:
+        if rk.get("profile") not in RISK_PROFILES:
+            errs.append("risk.profile is required: " + RISK_HINT)
+        for k in ("why", "blast_radius", "rollback"):
+            if k in rk and not _str(rk[k]):
+                errs.append("risk.%s must be a non-empty string" % k)
     if "deferred" in c:
         df = c["deferred"]
         if not isinstance(df, list):

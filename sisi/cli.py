@@ -143,7 +143,7 @@ def cmd_contract(args):
                 except Exception as e:
                     store.log_error("contract-init-archive", e)
         os.makedirs(os.path.dirname(p), exist_ok=True)
-        skel = C.skeleton(goal)
+        skel = C.skeleton(goal, project)
         from . import unit as _U
         skel["id"] = _U.fresh_id(skel["id"], project)
         skel["base_head"] = gitutil.head(project)

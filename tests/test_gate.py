@@ -25,7 +25,7 @@ def full(**over):
                  [dict(check("keeps", "test -f README.md"), covers="the readme is deleted")])
     c.update(id="t", goal="make the feature work",
              requirements=[{"id": "r1", "kind": "explicit", "text": "ok.txt exists when the feature is done", "decision": "now"}],
-             risk={"blast_radius": "only the feature file; nothing else reads it", "rollback": "git revert the commit"},
+             risk={"profile": "isolated", "blast_radius": "only the feature file; nothing else reads it", "rollback": "git revert the commit"},
              approach={"chosen": "write the file directly", "why": "the simplest thing that works",
                        "alternatives": ["generate it from a template: more moving parts"]},
              started=store.now(), status="open", pauses=[], deviations=[])
@@ -174,6 +174,16 @@ class RequirementTests(GateBase):
         self.assertIn("sisi contract init", miss[0][1])
         self.assertEqual(assure.missing("isolated", contract([check("a", "false")]), self.proj), [])
 
+    def test_a_contract_without_a_risk_profile_is_missing_one_in_the_gates_list(self):
+        """R-5.3-1: the declared profile is on the "what is missing" list, once, with the field that supplies it."""
+        c = full()
+        c["risk"] = {"blast_radius": "x" * 20, "rollback": "git revert"}
+        miss = assure.missing("isolated", c, self.proj, errors=C.validate(c))
+        self.assertEqual(len(miss), 1, miss)
+        self.assertIn("risk profile", miss[0][0])
+        self.assertIn('"profile"', miss[0][1])
+        self.assertEqual(assure.missing("isolated", full(), self.proj, errors=C.validate(full())), [])
+
     def test_logic_needs_covers_on_every_check(self):
         """R-5.3-6."""
         c = contract([check("a", "false"), dict(check("b", "false"), covers="the parser drops a line")])
@@ -185,7 +195,7 @@ class RequirementTests(GateBase):
 
     def test_integration_needs_invariants_requirements_a_risk_note_and_an_approach(self):
         """R-5.3-7: each missing piece is named, with the field that supplies it."""
-        c = full(invariants=[], requirements=[], risk={}, approach=None)
+        c = full(invariants=[], requirements=[], risk={"profile": "isolated"}, approach=None)
         text = " | ".join("%s -> %s" % m for m in assure.missing("integration", c, self.proj))
         for field in ('"invariants"', '"requirements"', '"risk"', '"approach"'):
             self.assertIn(field, text)

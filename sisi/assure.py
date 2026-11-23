@@ -103,6 +103,11 @@ def missing(profile, c, project, results=None, errors=None, deep_state=None, now
         absent = True
     else:
         absent = False
+    rk = c.get("risk") if isinstance(c.get("risk"), dict) else {}
+    if not absent and rk.get("profile") not in C.RISK_PROFILES:
+        out.append(("a declared risk profile (your own judgement of the change)",
+                    '"risk": {"profile": %s}; `sisi risk` shows the floor' % "|".join(C.RISK_PROFILES)))
+        errors = [e for e in errors or [] if "risk.profile" not in e and not e.startswith("risk must be")]
     if errors:
         shown = "; ".join(errors[:3]) + ("; and %d more" % (len(errors) - 3) if len(errors) > 3 else "")
         out.append(("a valid contract: %s" % shown, "fix it, then `sisi contract check`"))
