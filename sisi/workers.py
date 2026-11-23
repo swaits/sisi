@@ -1447,9 +1447,14 @@ def cmd_route(args=()):
     print("mechanism: %s" % mechanism_for(result["choice"]))
     for line in _down_lines(down):
         print(line)
-    for line in notes_for(by_worker, result["choice"], result["passed_over"]):
+    head = 2 + len(_down_lines(down))
+    explain = "--explain" in args
+    # Notes for the chosen worker always print; notes for workers passed over only with --explain.
+    # Plain output stays within 6 lines: the worker, the mechanism, what is down, then the notes.
+    for line in notes_for(by_worker, result["choice"], result["passed_over"] if explain else [],
+                          limit=5 if explain else max(1, 5 - head)):
         print(line)
-    if "--explain" in args:
+    if explain:
         for line in routing.explain_choice(result, kind, difficulty):
             print(line)
         if excluded:
