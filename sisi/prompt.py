@@ -9,7 +9,7 @@ import json, os, sys
 from . import store
 
 MAX_CHARS = 2000  # hard cap on the injected context, in characters
-RECIPE_MIN_SCORE = 6.0  # two title/applies-to word hits in `sisi done for`'s scoring; below it, no recipe
+RECIPE_MIN_SCORE = 22.0  # a structured kind/tag match in the new matcher; below it, no recipe
 _TRIVIAL = {"yes", "no", "y", "n", "ok", "okay", "sure", "yep", "nope", "thanks", "thank you",
             "go ahead", "do it", "continue", "stop", "wait", "hi", "hello"}
 
@@ -30,51 +30,6 @@ def _is_question_without_work(t):
     from . import retro, verifiers as V
     stems = {retro._stem(w) for w in V._words(low)}
     return not (stems & _WORK_STEMS)
-
-
-_DESIGN_STEMS = {"build", "design", "implement", "creat", "develop", "architect", "orchestr",
-                 "automat", "integrat", "plugin", "system", "platform", "framework"}
-_SMALL_EDIT_MARKERS = ("rename", "typo", "off-by-one", "one line", "single line", "small fix",
-                       "quick fix", "spelling")
-
-
-def is_design_work(text):
-    """A request to design or build something sizeable: not a question, not a small edit.
-    Precision matters more than reach, as with recipes: a wrong design block on every message
-    would train agents to ignore it."""
-    t = " ".join((text or "").split())
-    low = t.lower()
-    if len(t.split()) < 6:
-        return False
-    if any(m in low for m in _SMALL_EDIT_MARKERS):
-        return False
-    first = low.split(" ", 1)[0].strip("¿?") if low else ""
-    if low.endswith("?") and first in _QUESTION_START:
-        return False  # a question about design is not design work
-    if _is_question_without_work(t):
-        return False
-    from . import retro, verifiers as V
-    stems = {retro._stem(w) for w in V._words(low)}
-    if not (stems & _DESIGN_STEMS):
-        return False
-    return bool(stems & _WORK_STEMS) or bool(stems & {"build", "design", "creat", "develop"})
-
-
-def _design_block():
-    """The standing principles in short lines, plus the instruction to fill the design section."""
-    try:
-        from . import principles
-        lines = principles.short_lines(limit_chars=900)
-    except Exception:
-        lines = []
-    out = ["sisi: this reads as design or build work. Before building, fill the contract's "
-           "design section (`sisi design` prints the questions; `sisi contract init` writes "
-           "the skeleton): what the goal and the principles imply, what already exists to use, "
-           "alternatives, the choice, each principle's objection, and an independent challenge."]
-    if lines:
-        out.append("The owner's standing principles (in his words: `sisi oracle`):")
-        out += lines
-    return out
 
 
 def is_trivial(text):
@@ -98,44 +53,11 @@ def is_trivial(text):
 
 
 def _best_recipe(query):
-    """The best-matching recipe, or None. Scoring starts from `sisi done for`'s own, but request-time
-    delivery must be more precise than an answer the agent asked for: a recipe counts only when at
-    least two distinct words of the request hit its title, applies-to or id (one generic word like
-    "new" once outscored "release" + "tag" that way), and the leader must clear RECIPE_MIN_SCORE."""
-    from . import retro, verifiers as V
-    # Match on stems, as lesson matching does: "release" must meet "Releasing" and "tag" must meet
-    # "Tagging", which done-for's prefix rule (both words longer than three letters) misses.
-    toks = {retro._stem(t) for t in V._words(query)}
-
-    def stems_of(text):
-        return {retro._stem(x) for x in V._words(text.replace("-", " "))}
-
-    generic = retro.COMMON | {retro._stem(w) for w in
-                              ("agent agents tool tools interface surface command commands function functions "
-                               "program system name names description descriptions user users thing things "
-                               "way ways step steps example examples".split())}
-    scored = []
-    for r in V.usable(V.load_recipes()):
-        s, primary, anchored = 0.0, set(), set()
-        for text, w, is_anchor in ((r["title"], 3.0, True), (r["applies_to"], 3.0, False),
-                                   (r["id"].replace("-", " "), 3.0, False), (r["body"], 0.2, False)):
-            hit = toks & stems_of(text)
-            s += w * len(hit)
-            if w > 1.0:
-                primary |= hit - generic  # generic words (new, fix, change, agent, tool) never carry a match
-                if is_anchor:
-                    anchored |= hit - generic
-        if s > 0:
-            scored.append((len(primary), len(anchored), s, r))
-    if not scored:
-        return None
-    scored.sort(key=lambda x: (-x[0], -x[1], -x[2], x[3]["id"]))
-    # the strict floor lessons use: two distinct non-generic terms, at least one of them in the
-    # recipe's own title (its topic, not merely its id), and the score floor; the best
-    # candidate that clears it wins
-    for nprimary, nanchored, s, best in scored:
-        if nprimary >= 2 and nanchored >= 1 and s >= RECIPE_MIN_SCORE:
-            return best
+    """The best-matching recipe when the structured match is strong, else None."""
+    from . import verifiers as V
+    ranked = V.rank_recipes(query)
+    if ranked and ranked[0][0] >= RECIPE_MIN_SCORE:
+        return ranked[0][1]
     return None
 
 
@@ -153,14 +75,8 @@ def _done_means(recipe, retro):
 def build_context(query, session=None):
     """The context to inject for one human request, or "" when nothing strictly matches. Lessons shown
     are recorded as listings at place 'prompt' (listed, not read)."""
-    notice = ""
-    try:
-        from . import handover
-        notice = handover.notice(os.getcwd())
-    except Exception:
-        notice = ""
     if is_trivial(query):
-        return notice
+        return ""
     from . import retro
     recipe = _best_recipe(query)
     targets = (recipe["id"],) if recipe else ()
@@ -174,14 +90,29 @@ def build_context(query, session=None):
         lesson_lines.append("- #%d: %s (full text: `sisi lessons show %d`)"
                             % (row["id"], retro.heading_text(row, 120), row["id"]))
         ids.append(row["id"])
-    design_lines = _design_block() if is_design_work(query) else []
-    if not recipe and not lesson_lines and not design_lines:
-        return notice
-    lines = [notice] if notice else []
-    lines += design_lines
-    if recipe or lesson_lines:
-        lines.append("sisi: for this request (from earlier agents' lessons and the recipe library; "
-                     "information to weigh, not commands):")
+    # Learnings in scope: ask the learning module if it offers a scoped view.
+    try:
+        from . import scope as _scope_mod  # noqa: F401
+        scoped = None
+        for _name in ("prompt_lines", "in_scope_lines", "scoped_lines"):
+            _fn = getattr(_scope_mod, _name, None)
+            if callable(_fn):
+                try:
+                    scoped = _fn(query, os.getcwd())
+                except TypeError:
+                    scoped = _fn(query)
+                break
+        if scoped:
+            for _ln in scoped:
+                if isinstance(_ln, str) and _ln.strip():
+                    lesson_lines.append(_ln if _ln.startswith("- ") else "- " + _ln)
+    except Exception:
+        pass
+    if not recipe and not lesson_lines:
+        return ""
+    lines = []
+    lines.append("sisi: for this request (from earlier agents' lessons and the recipe library; "
+                 "information to weigh, not commands):")
     if recipe:
         lines.append("Done means — recipe `%s` (full text: `sisi done %s`):" % (recipe["id"], recipe["id"]))
         lines += _done_means(recipe, retro)

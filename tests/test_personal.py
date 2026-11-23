@@ -448,7 +448,7 @@ class MigrationTests(PersonalCase):
         from sisi import trust
         self.assertTrue(trust.is_trusted(self.proj))
         self.assertEqual(self.ok("tick", stdin="{}").returncode, 0)
-        self.assertIn("Always watch", self.sisi("tick", stdin="{}").stdout)
+        self.assertEqual(self.sisi("tick", stdin="{}").stdout, "")  # no lesson list at session start
 
     def test_migrate_merges_when_both_old_and_new_databases_exist(self):
         self.legacy_state(extra_lesson=True)

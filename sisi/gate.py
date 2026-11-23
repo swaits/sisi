@@ -757,7 +757,6 @@ def _decide(payload):
                              kind=sess.get("last_kind", "fast"))
 
     if path:
-        if c is not None and not errs:
         deadline = time.time() + float(g.get("budget_s", 120))
         if c is not None:
             errs = C.validate(c)

@@ -165,7 +165,7 @@ class ImmediateEffectTests(LearningCase):
         self.assertEqual(self.lesson(b)["effect"], "backlog")
         paths.set_personal_config(("developer", "source"), self.proj, "test")
         tick = self.sisi("tick", stdin=json.dumps({"session_id": "dev1", "cwd": self.proj, "source": "startup"})).stdout
-        self.assertIn("top sisi backlog #%d" % b, tick)
+        self.assertNotIn("backlog", tick)  # session start no longer prints the backlog
         other = os.path.join(self.tmp, "elsewhere"); os.makedirs(other)
         tick2 = self.sisi("tick", stdin=json.dumps({"session_id": "dev2", "cwd": other, "source": "startup"})).stdout
         self.assertNotIn("backlog", tick2)

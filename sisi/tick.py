@@ -37,46 +37,47 @@ def _export_session(sid):
             pass
 
 
-def _backlog_line(cwd):
-    """Developer mode, inside the sisi source folder: name the top tool backlog item. One short line."""
+def _decision_line():
+    """One line for a decision waiting for the owner, via the learning module when it
+    provides one; a missing function prints nothing."""
+    for mod_name in ("cycle", "retro", "scope"):
+        try:
+            mod = __import__("sisi." + mod_name, fromlist=["*"])
+        except Exception:
+            continue
+        for name in ("pending_decision_line", "owner_decision_line", "decision_waiting_line",
+                     "pending_owner_line"):
+            fn = getattr(mod, name, None)
+            if callable(fn):
+                try:
+                    out = fn()
+                except TypeError:
+                    try:
+                        out = fn(os.getcwd())
+                    except Exception:
+                        return ""
+                except Exception:
+                    return ""
+                return out if isinstance(out, str) else ""
+    return ""
+
+
+def _handover_line(sess, sid, cwd):
+    """Handover items for this project, once per session."""
     try:
-        from . import paths, retro
-        src = (paths.personal_config().get("developer") or {}).get("source")
-        if not src:
+        if sess.get("handover_shown"):
             return ""
-        src = os.path.realpath(src)
-        here = os.path.realpath(cwd)
-        if here != src and not here.startswith(src + os.sep):
-            return ""
-        if not os.path.exists(retro.db_path()):
-            return ""
-        rows = retro.backlog_rows()
-        if not rows:
-            return ""
-        src = retro._get(rows[0], "short") or rows[0]["change"]
-        t = retro.safe_line(src, here)
-        if not t:
-            return ""
-        text = " ".join(t.split()) if retro._get(rows[0], "short") else retro.word_cut(t, 110)
-        return "top sisi backlog #%d (x%d): %s" % (rows[0]["id"], rows[0]["count"], text)
+        from . import handover
+        notice = handover.notice(cwd)
+        if notice:
+            sess["handover_shown"] = True
+            try:
+                store.save_session(sid, sess)
+            except Exception:
+                pass
+            return notice
     except Exception:
-        return ""
-
-
-def _deep_line(cwd, fp):
-    """One short line when the project's trusted contract has deep checks that are not fresh-pass-or-running."""
-    from . import contract as C, deep, gitutil, trust, verify as V
-    path = C.find(cwd)
-    if not path or not trust.is_trusted(C.project_dir(path)):
-        return ""
-    c = C.load(path)
-    if C.validate(c) or not deep.deep_items(c):
-        return ""
-    if fp is None:
-        fp = V.tree_fp(C.project_dir(path), path)
-    ds = deep.deep_state(c, C.project_dir(path), fp)
-    if ds and ds["state"] in ("failed", "never-run", "stale-pass"):
-        return deep.describe(ds) + "; start with `sisi verify --deep --background`"
+        pass
     return ""
 
 
@@ -122,15 +123,8 @@ def main(args=()):
         _prune()
         from . import wiring
         problem = wiring.quick_problem()
-        line = "%s. Run `sisi doctor`." % problem if problem else ""
-        deep_line = _deep_line(cwd, rec.get("baseline_fp"))
-        if deep_line:
-            line = (line + " | " if line else "") + deep_line
-        backlog_line = _backlog_line(cwd)
-        if backlog_line:
-            line = (line + " | " if line else "") + backlog_line
-        if line:
-            sys.stdout.write("sisi: %s\n" % line)
+        if problem:
+            sys.stdout.write("sisi: %s. Run `sisi doctor`.\n" % problem)
         _export_session(sid)
         try:
             sess = rec or store.load_session(sid)
@@ -156,12 +150,18 @@ def main(args=()):
         except Exception as e:
             store.log_error("tick-cycle", e)
         try:
-            from . import retro
-            block = retro.tick_block(cwd, session=sid if isinstance(sid, str) else None)
-            if block:
-                sys.stdout.write(block + "\n")
+            decision = _decision_line()
+            if decision:
+                sys.stdout.write(decision + "\n")
         except Exception as e:
-            store.log_error("tick-lessons", e)
+            store.log_error("tick-decision", e)
+        try:
+            sess2 = rec or store.load_session(sid)
+            hline = _handover_line(sess2, sid if isinstance(sid, str) else "cwd", cwd)
+            if hline:
+                sys.stdout.write(hline + "\n")
+        except Exception as e:
+            store.log_error("tick-handover", e)
     except Exception as e:
         store.log_error("tick", e)
     return 0
