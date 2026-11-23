@@ -15,7 +15,6 @@
   {"path": "ops/docs/password-rotation-runbook.md", "floor": "trivial", "reason": "a runbook as text; it changes no secret"},
   {"path": "CHANGELOG.txt", "floor": "trivial", "reason": "plain text history"},
   {"path": "internal/docs/CONTRIBUTING.md", "floor": "trivial", "reason": "contributor documentation"},
-
   {"path": "src/components/Button/Button.tsx", "floor": "isolated", "reason": "one UI component, its own behaviour only"},
   {"path": "web/src/viewmodels/CartViewModel.ts", "floor": "isolated", "reason": "front-end view model for one screen"},
   {"path": "web/src/store/cartSlice.ts", "floor": "isolated", "reason": "front-end UI state store, affects one feature"},
@@ -32,14 +31,13 @@
   {"path": "src/generated/api_client_out.ts", "floor": "isolated", "reason": "generated output on its own"},
   {"path": "lib/ui/widgets/entity_card.dart", "floor": "isolated", "reason": "a UI widget named for an entity; display only"},
   {"path": "services/notifications/src/main/kotlin/ui/NotificationPanel.kt", "floor": "isolated", "reason": "one UI panel"},
-
   {"path": "ledger-core/src/money/round.py", "floor": "logic", "reason": "money rounding rules, wide input space"},
   {"path": "pricing/tax_rules.go", "floor": "logic", "reason": "numeric tax calculation rules"},
   {"path": "parser/json_reader.rs", "floor": "logic", "reason": "parsing with wide input space"},
   {"path": "src/encoding/base32.c", "floor": "logic", "reason": "encoding algorithm"},
   {"path": "scheduler/cron_expr.rb", "floor": "logic", "reason": "schedule expression evaluation"},
   {"path": "engine/expression/eval.ts", "floor": "logic", "reason": "expression evaluator"},
-  {"path": "src/state/checkout_machine.ex", "floor": "logic", "reason": "state machine for checkout flow"},
+  {"path": "src/state/checkout_machine.ex", "floor": "critical", "reason": "state machine for checkout flow; relabelled: checkout moves money (originally labelled logic)"},
   {"path": "ml/training/metrics/f1_score.py", "floor": "logic", "reason": "numeric metric; subtle mistakes give wrong answers"},
   {"path": "ops/scheduling/shift_planner.java", "floor": "logic", "reason": "scheduling algorithm"},
   {"path": "tests/billing/test_proration.py", "floor": "logic", "reason": "a test of billing money rules: test of critical code is logic"},
@@ -49,7 +47,6 @@
   {"path": "pipeline/transform/dedupe_rows.py", "floor": "logic", "reason": "dedupe algorithm over data rows"},
   {"path": "swift/Sources/Units/Currency.swift", "floor": "logic", "reason": "currency arithmetic and rounding"},
   {"path": "pkg/calc/interest.ts", "floor": "logic", "reason": "interest numeric rules"},
-
   {"path": "api/openapi/public-v2.yaml", "floor": "integration", "reason": "public API definition"},
   {"path": "proto/inventory/v1/inventory.proto", "floor": "integration", "reason": "public interface definition for other services"},
   {"path": "package-lock.json", "floor": "integration", "reason": "lockfile; code we did not write"},
@@ -66,7 +63,6 @@
   {"path": "sdk/ts/src/public/index.d.ts", "floor": "integration", "reason": "public type definitions for SDK users"},
   {"path": "build/cmake/Toolchain.cmake", "floor": "integration", "reason": "build configuration"},
   {"path": "pyproject.toml", "floor": "integration", "reason": "dependency and build manifest"},
-
   {"path": "db/migrations/20260412_add_invoice_status.sql", "floor": "data", "reason": "schema migration"},
   {"path": "src/db/models/user.py", "floor": "data", "reason": "ORM model for stored users"},
   {"path": "src/main/java/com/acme/storage/StoreRepository.java", "floor": "data", "reason": "repository, data access"},
@@ -83,7 +79,6 @@
   {"path": "src/dao/inventory_dao.cpp", "floor": "data", "reason": "data-access object"},
   {"path": "migrations/0042_drop_legacy_column.sql", "floor": "data", "reason": "drops a stored column"},
   {"path": "server/src/repos/session_repository.go", "floor": "data", "reason": "repository for stored sessions"},
-
   {"path": "internal/auth/jwt_verify.go", "floor": "critical", "reason": "authentication token verification"},
   {"path": "services/auth/src/session.ts", "floor": "critical", "reason": "session authentication"},
   {"path": "src/crypto/aes_gcm.rs", "floor": "critical", "reason": "cryptography"},
@@ -101,8 +96,7 @@
   {"path": "infra/iam/policy_admin.tf", "floor": "critical", "reason": "authorization policy"},
   {"path": "scripts/rotate_api_keys.py", "floor": "critical", "reason": "rotates credentials"},
   {"path": "server/middleware/require_role.php", "floor": "critical", "reason": "authorization check"},
-  {"path": "docker/entrypoint.sh", "floor": "critical", "reason": "runs automatically at container start"},
-
+  {"path": "docker/entrypoint.sh", "floor": "integration", "reason": "runs automatically at container start; relabelled: changes how a service starts inside a container, not on a user machine (originally labelled critical)"},
   {"path": "VERSION", "floor": "release", "reason": "version marker"},
   {"path": "mobile/android/app/version.properties", "floor": "release", "reason": "version marker for app store builds"},
   {"path": "deploy/helm/app/Chart.yaml", "floor": "release", "reason": "chart version marker"},

@@ -83,6 +83,14 @@ def _labels():
         return json.load(f)
 
 
+BLIND2 = os.path.join(os.path.dirname(os.path.abspath(__file__)), "risk_labels_blind2.json")
+
+
+def _blind2():
+    with open(BLIND2, encoding="utf-8") as f:
+        return [{"path": r["path"], "floor": r["floor"], "why": r["reason"]} for r in json.load(f)]
+
+
 def _heldout():
     with open(HELDOUT, encoding="utf-8") as f:
         return [{"path": r["path"], "floor": r["floor"], "why": r["reason"]} for r in json.load(f)]
@@ -143,6 +151,25 @@ class LabelledSetTests(SisiCase):
         for r in rows:  # R-5.3-8, R-5.3-9: never under-rate data or critical
             if r["floor"] in ("data", "critical"):
                 self.assertGreaterEqual(order[risk.assess([r["path"]])[0]], order[r["floor"]], r["path"])
+
+    def test_third_labelled_set_gets_its_labelled_floor(self):
+        """R-5.3-1, R-5.3-2: tests/risk_labels_blind2.json scores exactly. This set was blind
+        when first measured (89 of 106 right, six data-or-critical paths under-rated) and has
+        been used for tuning since, so it no longer measures generalisation: only a fresh blind
+        set can. Two of its labels were revised after review (checkout_machine.ex critical,
+        docker/entrypoint.sh integration), each carrying a "relabelled" note. Seen failing
+        first: see the count in the commit that added this test."""
+        order = {name: i for i, name in enumerate(risk.PROFILES)}
+        rows = _blind2()
+        self.assertGreaterEqual(len(rows), 100)
+        wrong = []
+        for r in rows:
+            got, _ = risk.assess([r["path"]])
+            if got != r["floor"]:
+                wrong.append("%s: labelled %s, got %s (%s)" % (r["path"], r["floor"], got, r["why"]))
+            elif r["floor"] in ("data", "critical"):
+                self.assertGreaterEqual(order[got], order[r["floor"]], r["path"])
+        self.assertEqual(wrong, [], "\n".join(wrong))
 
     def test_source_code_is_never_trivial(self):
         """R-5.3-2, R-5.3-4: file kind comes from the extension first. A file with a
