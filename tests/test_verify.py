@@ -14,7 +14,7 @@ class VerifyTests(SisiCase):
         # R-5.6-2, R-5.6-3: five statuses only. A timeout is not-run (timed out) and a
         # human check is not-run (needs human): neither is ever reported as passed.
         c = contract([check("ok", "true"), check("bad", "exit 3"), check("slow", "sleep 5", timeout_s=0.3),
-                      check("out", "echo hello", stdout_contains="hello"), check("out2", "echo hi", stdout_contains="zzz"),
+                      check("out", "python3 -c \"print('hello')\"", stdout_contains="hello"), check("out2", "echo hi", stdout_contains="zzz"),
                       check("code", "exit 3", exit=3), human("h5", 5), human("h6", 6)],
                      [check("inv", "true")])
         r = self.run_verify(c)

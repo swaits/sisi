@@ -170,25 +170,98 @@ def _expect(e, where, errs):
             errs.append("%s: unknown expect key %r" % (where, k))
 
 
-_VACUOUS_RE = re.compile(r"^(?:true|:|exit\s+0|echo(?:\s[^|&;<>]*)?)\s*;?$")
+_TRUE_WORDS = {"true", ":", "/bin/true", "/usr/bin/true"}
+_PRINT_WORDS = {"echo", "printf"}
+_SHELLS = {"sh", "bash", "dash", "zsh", "/bin/sh", "/bin/bash", "/usr/bin/env"}
+_WRAPPERS = {"env", "command", "exec", "time", "nohup", "builtin"}
+_TESTERS = {"test", "["}
+_OPS = {"&&", "||", ";", "|", "&"}
+
+
+def _lex(s):
+    import shlex
+    lx = shlex.shlex(s.replace("\n", " ; "), posix=True, punctuation_chars=True)
+    lx.whitespace_split = True
+    lx.commenters = "#"
+    return list(lx)
+
+
+def _literal(w):
+    return not any(ch in w for ch in "$`*?[~{}")
+
+
+def _constant_true_simple(words, expect, depth=0):
+    """True when this one simple command is a constant that exits 0 whatever the project holds."""
+    while words and (words[0] in _WRAPPERS or (words[0] == "timeout" and len(words) > 2)):
+        words = words[2:] if words[0] == "timeout" else words[1:]
+    if not words:
+        return False
+    w0, rest = words[0], words[1:]
+    if w0 in _TRUE_WORDS:
+        return True
+    if w0 == "exit":
+        return not rest or rest == ["0"]
+    if w0 in _PRINT_WORDS:
+        out = " ".join(rest)
+        want = expect.get("stdout_contains")
+        return want is None or str(want) in out
+    if w0 in _TESTERS:
+        ops = rest[:-1] if w0 == "[" and rest[-1:] == ["]"] else rest
+        if len(ops) == 3 and ops[1] in ("=", "==", "-eq") and all(_literal(x) for x in (ops[0], ops[2])):
+            return ops[0] == ops[2]
+        return False
+    if w0.rsplit("/", 1)[-1] in _SHELLS and depth < 4:
+        for i, x in enumerate(rest):
+            if x.startswith("-") and "c" in x[1:] and not x.startswith("--") and i + 1 < len(rest):
+                return _constant_true(rest[i + 1], expect, depth + 1)
+    return False
+
+
+def _split(words, seps):
+    out, cur = [], []
+    for w in words:
+        if w in seps:
+            out.append(cur)
+            cur = []
+        else:
+            cur.append(w)
+    out.append(cur)
+    return out
+
+
+def _constant_true(cmd, expect, depth=0):
+    try:
+        words = _lex(cmd)
+    except ValueError:
+        return False
+    if not words or any(w.startswith(("<", ">")) or w in ("<<", ">>") for w in words):
+        return False  # a redirection reads or writes something: it can fail
+    alts = _split(words, {"||"})
+
+    def chain(ws):
+        seqs = [q for q in _split(ws, {";", "&&", "&"}) if q]
+        for seq in seqs:
+            stages = _split(seq, {"|"})
+            if not stages[-1] or not _constant_true_simple(stages[-1], expect, depth):
+                return False
+        return bool(seqs)
+    return chain(alts[0]) or (len(alts) > 1 and chain(alts[-1]))
 
 
 def vacuous_reason(ch):
-    """Why this check cannot fail, or None. Only whole-command constant forms count:
-    `true`, `:`, `exit 0`, a bare `echo` (with no stdout expectation). A compound
-    command, a redirection, or an expect the constant does not satisfy can fail."""
+    """Why this check cannot fail, or None. The commands that exit 0 whatever the project
+    holds: `true`, `:`, `exit 0`, `echo`/`printf` that already prints what is expected,
+    `test 1 = 1`, any of them inside `sh -c`, joined with `;` or `&&`, or after `||` (so
+    `anything || true`). A floor, not a proof: no analysis can catch every constant."""
     cmd = ch.get("cmd")
     if not isinstance(cmd, str):
-        return None
-    s = cmd.strip()
-    if not _VACUOUS_RE.match(s):
         return None
     expect = ch.get("expect") if isinstance(ch.get("expect"), dict) else {}
     if expect.get("exit", 0) != 0:
         return None
-    if s.startswith("echo") and expect.get("stdout_contains") is not None:
+    if not _constant_true(cmd.strip(), expect):
         return None
-    return "vacuous check: %r cannot fail; write a command that can" % s
+    return "vacuous check: %r cannot fail; write a command that can" % cmd.strip()
 
 
 def _check_new_fields(ch, w, errs):

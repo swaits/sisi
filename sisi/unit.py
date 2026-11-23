@@ -297,7 +297,7 @@ def build_telemetry(c, project, results, t0, t1):
             tel["tokens_by_category"] = unavailable()
             tel["tokens_by_model"] = unavailable()
             models = []
-    tel["cost"] = unavailable()  # no price facts live here; never estimated from thin air
+    tel["cost"] = _estimated_cost(tel.get("tokens_by_model"))
 
     dg = delegations(project, t0, t1)
     if dg is None:
@@ -339,6 +339,27 @@ def build_telemetry(c, project, results, t0, t1):
     tel["_learnings"] = learnings
     tel["_changed"] = changed
     return tel
+
+
+def _estimated_cost(tokens_by_model):
+    """Cost from the recorded price facts (`sisi workers fact`) and the measured tokens per model.
+    Estimated when every model used has a recorded price; unavailable otherwise, and when
+    there are no tokens to price. Never a guess at a missing price."""
+    if not tokens_by_model or tokens_by_model.get("class") != "measured":
+        return unavailable()
+    try:
+        from . import workers
+        prices = workers.load_prices()
+        total = 0.0
+        for model, slot in tokens_by_model["value"].items():
+            cost = workers.estimate_cost(slot.get("total"), workers._price_for(prices, None, model, model))
+            if cost is None:
+                return unavailable()
+            total += cost
+        return val(round(total, 6), "estimated")
+    except Exception as e:
+        store.log_error("unit-cost", e)
+        return unavailable()
 
 
 def _is_test(f):
