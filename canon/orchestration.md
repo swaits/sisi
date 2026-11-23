@@ -33,6 +33,13 @@ present; nothing here names one. Read on demand: `sisi delegate guide`.
   routine work measured proof outranks a benchmark: the cheapest worker with a judged
   record wins, and standing decides only when nobody has one. A thin record is a
   reason for care, not a verdict.
+- Always use the newest version of a given model (same maker and class) when it is usable,
+  never an older version of it: newer is almost always better and cheaper, so neither a
+  better old record nor a cheaper old plan brings the old one back. A newer release of a
+  different model or class never wins for being newer. A new version starts from its
+  predecessor's record. Never guess maker, class or release date from a name: hand the
+  output of `sisi workers classify` to a cheap, fast worker and record its answer; record
+  a maker's classes, most capable first, with `sisi workers classes`.
 - Ask `sisi route --kind K --difficulty N` before delegating; `--explain` says
   why. Difficulty is 1 routine, 2 ordinary, 3 hard. Say the guess out loud;
   the record shows how good the guesses were.

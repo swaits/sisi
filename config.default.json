@@ -17,7 +17,12 @@
       "2": 60,
       "3": 85
     },
-    "price_blend_input_parts": 3
+    "price_blend_input_parts": 3,
+    "class_span": {
+      "1": 100,
+      "2": 70,
+      "3": 35
+    }
   },
   "unit": {
     "stale_hours": 12
