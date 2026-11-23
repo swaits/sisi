@@ -33,14 +33,6 @@ def _question_gate():
         return False
 
 
-def _design_gate():
-    try:
-        from . import design, gate
-        return callable(design.validate_design) and callable(gate._design_required)
-    except Exception:
-        return False
-
-
 def _delivery_measured():
     try:
         from . import delivery
@@ -52,10 +44,7 @@ def _delivery_measured():
 _NOT = "not enforced: depends on the agent"
 
 ENFORCEMENT = {
-    "choose-the-approach": lambda: ("end-of-turn check sends a large change back when the contract's "
-                                    "design section is missing or fails validation (small edits and "
-                                    "subagents exempt)"
-                                    if _gate_wired() and _design_gate() else _NOT),
+    "choose-the-approach": lambda: _NOT,
     "know-done": lambda: ("end-of-turn check sends the agent back (no contract on a large change)"
                           if _gate_wired() else _NOT),
     "strongest-check": lambda: ("minimum rungs refused when the contract is checked; the choice of check depends on the agent"
