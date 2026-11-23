@@ -81,7 +81,7 @@ def fallback_text(info, cwd, own_model):
                       "that consequence, not about the workers.", cancel])
 
 
-def handle(m, sid, cwd, text, own_model=None, worker=None, run_id=None, record=True):
+def handle(m, sid, cwd, text, own_model=None, worker=None, run_id=None, record=True, kind=None, difficulty=None):
     """A failure message arrived. Classify it; record the worker down (when it can be identified and `record`);
     mark its pending run superseded; remember it in the meter for the question-dialog check; return the fallback
     text, or None when the text is not an unavailability. Never raises past the caller's guard."""
@@ -89,7 +89,7 @@ def handle(m, sid, cwd, text, own_model=None, worker=None, run_id=None, record=T
         return None
     from . import orchestration
     worker = worker or workers.identify_worker(text)
-    info = {"worker": worker, "ts": time.time()}
+    info = {"worker": worker, "ts": time.time(), "kind": kind, "difficulty": difficulty}
     run = None
     if run_id:
         run = next((r for r in workers.merged_runs() if r.get("id") == run_id), None)

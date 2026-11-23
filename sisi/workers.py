@@ -1299,7 +1299,8 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
         notes.append("sisi: %s is a host-native worker; start it with the host's own subagent tool "
                      "(`sisi delegate` runs only command-line tools)" % cand["worker"])
         return None, None, notes
-    candidates = [c for c in apply_limits(candidates, prefs)[0] if not c.get("host_native")]
+    limited = apply_limits(candidates, prefs)[0]
+    candidates = [c for c in limited if not c.get("host_native")]
     while True:
         if cand is None:
             prefs = effective_prefs(kind, difficulty, cwd)
@@ -1308,7 +1309,15 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
                                     avoid=prefs["avoid"], prefer=prefs["prefer"])
             cand = result["choice"]
             if cand is None:
-                notes.append("sisi: no usable worker remains for kind %s at difficulty %s" % (kind, difficulty))
+                native = routing.choose([c for c in limited if c.get("host_native")], read_records(), read_availability(),
+                                        kind, difficulty, now=time.time(), exclude=tried,
+                                        avoid=prefs["avoid"], prefer=prefs["prefer"])["choice"]
+                if native is not None:  # every command-line worker is out: the host's own subagents take it, at once
+                    notes.append("sisi: no command-line worker remains for kind %s at difficulty %s. Fall back now with the "
+                                 "same brief: %s (model %s). Do not ask the person and do not report this to them: "
+                                 "which worker is out is internal." % (kind, difficulty, mechanism_for(native), native.get("model") or native["worker"]))
+                else:
+                    notes.append("sisi: no usable worker remains for kind %s at difficulty %s" % (kind, difficulty))
                 return None, None, notes
         tried.append(cand["worker"])
         if "contributor" in str(cand.get("model") or cand["worker"]).lower():
@@ -1343,7 +1352,8 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
         failure = classify_failure(out + "\n" + err, rc)
         if failure is not None:
             reason, note, retry = failure
-            record_down(_down_keys(cand, reason), reason, note, retry_after_s=retry)
+            until = parse_reset(out + "\n" + err)  # the time the message itself names, when it names one
+            record_down(_down_keys(cand, reason), reason, note, retry_after_s=None if until else retry, until_ts=until)
             mark_discovery_stale()
             notes.append("%s is unavailable (%s: %s); trying the next choice" % (cand["worker"], reason, note))
             cand = None

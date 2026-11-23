@@ -272,7 +272,9 @@ def main(args=()):
         payload = gate._read_payload()
         _tool, _cmd, ev, _cwd, _sid = extract(payload)
         out = run(payload, args)
-        text = render_claude(out, "PreToolUse" if ("--before" in args or ev in BEFORE_EVENTS) else "PostToolUse")
+        before_call = "--before" in args or ev in BEFORE_EVENTS
+        # the host rejects output whose event name is not the event it is answering (found by the live check)
+        text = render_claude(out, "PreToolUse" if before_call else (ev if ev in AFTER_EVENTS else "PostToolUse"))
         if text:
             import sys
             sys.stdout.write(text + "\n")

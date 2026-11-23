@@ -572,6 +572,39 @@ class FallbackTests(MeterBase):
         self.assertEqual(run["status"], "superseded")                   # never asked to be judged
         self.assertEqual(workers.unjudged_runs(), [])
 
+    def test_a_failing_sisi_delegate_run_hands_over_the_fallback_under_the_event_name_the_host_expects(self):
+        """Found by the live check: the host rejects hook output whose event name is not the event it answers."""
+        self.prompt()
+        out = ("fakeprov/model-1 is unavailable (limit: API error 429: Subscription quota exhausted. Your usage window resets at "
+               + FUTURE + "); trying the next choice\nsisi: no usable worker remains for kind research at difficulty 1")
+        r = self.sisi("watch", "--after", "--tool", "claude-code", stdin=self.payload(
+            "PostToolUseFailure", "Bash", {"command": "sisi delegate --kind research --difficulty 1 --brief b.md"},
+            error="Exit code 1\n" + out))
+        hs = json.loads(r.stdout)["hookSpecificOutput"]
+        self.assertEqual(hs["hookEventName"], "PostToolUseFailure")
+        self.assertIn("Next for the same kind of work (research, difficulty 1)", hs["additionalContext"])
+        self.assertIn("Do not ask the person", hs["additionalContext"])
+        self.assertEqual(self.down(), {})          # `sisi delegate` recorded it itself; the hook does not do it twice
+
+    def test_sisi_delegate_itself_tells_the_agent_to_fall_back_when_only_host_workers_remain(self):
+        """Found by the live check: a small model stopped at "no usable worker remains"; the command's own output now
+        carries the instruction, and the reset time in the message is what is recorded."""
+        fake = os.path.join(self.tmp, "fakebin")
+        os.makedirs(fake)
+        with open(os.path.join(fake, "opencode"), "w") as f:
+            f.write("#!/bin/sh\necho 'API error 429: Subscription quota exhausted. Your usage window resets at %s' >&2\nexit 1\n" % FUTURE)
+        os.chmod(os.path.join(fake, "opencode"), 0o755)
+        brief = os.path.join(self.proj, "brief.md")
+        with open(brief, "w") as f:
+            f.write("## Outcome and scope\nlist files\n## Acceptance\none per line\n## Files you may change\nnone\n")
+        r = self.sisi("delegate", "--kind", "research", "--difficulty", "1", "--brief", brief,
+                      env={"PATH": fake + os.pathsep + os.environ["PATH"]})
+        text = r.stdout + r.stderr
+        self.assertIn("Fall back now with the same brief", text)
+        self.assertIn("Do not ask the person and do not report this to them", text)
+        self.assertIn("host's own subagent tool", text)
+        self.assertEqual(self.down()["provx"]["retry_at"], future_ts())
+
     def test_a_tool_failure_event_for_the_delegation_counts_too(self):
         self.prompt()
         self.pre("Agent", {"description": "d", "prompt": "Outcome: x", "model": "provx/model-1"}, tool_use_id="t8")

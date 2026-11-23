@@ -642,7 +642,10 @@ def after(payload, host=None):
             from . import fallback
             note = fallback.shell_notice(_flat(payload))
             if note:  # `sisi delegate` recorded the worker down itself; hand over the fallback in the same breath
-                text = fallback.handle(m, sid, cwd, note[1], own_model=_own_model(payload, sess, m), worker=note[0], record=False)
+                km = re.search(r"--kind[ =](\S+)", cmd or "")
+                dm = re.search(r"--difficulty[ =]([123])\b", cmd or "")
+                text = fallback.handle(m, sid, cwd, note[1], own_model=_own_model(payload, sess, m), worker=note[0], record=False,
+                                       kind=km.group(1) if km else None, difficulty=int(dm.group(1)) if dm else None)
                 return {"context": text} if text else {}
         if shell:
             key = _norm(cmd)
