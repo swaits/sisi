@@ -12,6 +12,7 @@ HELP = """sisi: shared rulebook and enforced definitions of done for every AI co
   sisi verify --all | --state        run both tiers; print only the deep-check state (with --json)
   sisi gate [--tool NAME]            end-of-turn hook (reads hook JSON on stdin; NAME selects the tool's hook shape)
   sisi tick [--tool NAME]            session-start hook
+  sisi watch [--before|--after]      before/after shell-tool hook: measures whether the command changed the project
   sisi install [--dry-run] | uninstall | doctor
                                      wire sisi into the tools (by reference), undo, inspect; --dry-run only prints what would change
   sisi release [--deep]              run the source's checks, then make the stable copy the tools run (see docs/developing.md)
@@ -359,6 +360,13 @@ def main(argv):
                 return hookio.gate_main(t, args)
         from . import gate
         return gate.main(args)
+    if cmd == "watch":
+        if t and t != "claude-code":
+            from . import hookio
+            if hookio.known(t):
+                return hookio.watch_main(t, args)
+        from . import watch
+        return watch.main(args)
     if cmd == "tick":
         if t and t != "claude-code":
             from . import hookio

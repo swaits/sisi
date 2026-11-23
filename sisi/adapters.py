@@ -516,6 +516,8 @@ class Codex(Adapter):
             "SessionStart": {"cmd": _cmd("tick", "codex"), "timeout": 10, "sub": "tick", "matcher": "startup|resume"},
             "Stop": {"cmd": _cmd("gate", "codex"), "timeout": _gate_timeout(), "sub": "gate"},
             "SubagentStop": {"cmd": _cmd("gate", "codex", True), "timeout": 30, "sub": "gate"},
+            "PreToolUse": {"cmd": _cmd("watch", "codex"), "timeout": 60, "sub": "watch", "matcher": "Bash"},
+            "PostToolUse": {"cmd": _cmd("watch", "codex"), "timeout": 60, "sub": "watch", "matcher": "Bash"},
         }
 
     def detect(self):
@@ -536,7 +538,8 @@ class Codex(Adapter):
                          % os.path.join(self.dir(), "AGENTS.override.md"))
 
     def unwire(self, m, notes):
-        subs = {"SessionStart": "tick", "Stop": "gate", "SubagentStop": "gate"}
+        subs = {"SessionStart": "tick", "Stop": "gate", "SubagentStop": "gate",
+                "PreToolUse": "watch", "PostToolUse": "watch"}
         unmerge_json(m, self.hooks_file(), "nested", subs, self.spec(), notes, "codex")
 
     def shadowed(self):
@@ -548,7 +551,8 @@ class Codex(Adapter):
         hw = nested_wired(_load_obj(self.hooks_file()) or {}, self.spec())
         rb = _link_ok(link)
         missing = [n for n, ok in (("rulebook link", rb), ("tick hook", hw["SessionStart"]),
-                                   ("gate hook", hw["Stop"]), ("subagent hook", hw["SubagentStop"])) if not ok]
+                                   ("gate hook", hw["Stop"]), ("subagent hook", hw["SubagentStop"]),
+                                   ("watch-before hook", hw.get("PreToolUse", False)), ("watch-after hook", hw.get("PostToolUse", False))) if not ok]
         if self.shadowed():
             st.update(rulebook=False, tick=hw["SessionStart"], wired=False,
                       detail="AGENTS.override.md in %s shadows the AGENTS.md link, so the rulebook will not load; "
@@ -575,6 +579,8 @@ class Gemini(Adapter):
         return {
             "SessionStart": {"cmd": _cmd("tick", "gemini"), "timeout": 10000, "sub": "tick", "name": "sisi-tick"},
             "AfterAgent": {"cmd": _cmd("gate", "gemini"), "timeout": _gate_timeout() * 1000, "sub": "gate", "name": "sisi-gate"},
+            "BeforeTool": {"cmd": _cmd("watch", "gemini"), "timeout": 60000, "sub": "watch", "name": "sisi-watch-before"},
+            "AfterTool": {"cmd": _cmd("watch", "gemini"), "timeout": 60000, "sub": "watch", "name": "sisi-watch-after"},
         }
 
     def detect(self):
@@ -592,7 +598,8 @@ class Gemini(Adapter):
         wiring._link(m, os.path.join(self.dir(), "GEMINI.md"), wiring.core(), notes, "gemini")
 
     def unwire(self, m, notes):
-        unmerge_json(m, self.settings(), "nested", {"SessionStart": "tick", "AfterAgent": "gate"},
+        unmerge_json(m, self.settings(), "nested", {"SessionStart": "tick", "AfterAgent": "gate",
+                                                    "BeforeTool": "watch", "AfterTool": "watch"},
                      self.spec(), notes, "gemini")
         unlink_ours(os.path.join(self.dir(), "GEMINI.md"), notes)
 
@@ -601,7 +608,8 @@ class Gemini(Adapter):
         link = os.path.join(self.dir(), "GEMINI.md")
         hw = nested_wired(_load_obj(self.settings()) or {}, self.spec())
         rb = _link_ok(link)
-        missing = [n for n, ok in (("rulebook link", rb), ("tick hook", hw["SessionStart"]), ("gate hook", hw["AfterAgent"])) if not ok]
+        missing = [n for n, ok in (("rulebook link", rb), ("tick hook", hw["SessionStart"]), ("gate hook", hw["AfterAgent"]),
+                                   ("watch-before hook", hw.get("BeforeTool", False)), ("watch-after hook", hw.get("AfterTool", False))) if not ok]
         st.update(rulebook=rb, tick=hw["SessionStart"], wired=not missing,
                   detail=("missing: " + ", ".join(missing)) if missing else "rulebook link + tick + gate hooks (shared ~/.gemini file also serves Antigravity)")
         return st
@@ -621,6 +629,8 @@ class Copilot(Adapter):
             "sessionStart": {"cmd": _cmd("tick", "copilot"), "timeout": 10, "sub": "tick"},
             "agentStop": {"cmd": _cmd("gate", "copilot"), "timeout": _gate_timeout(), "sub": "gate"},
             "subagentStop": {"cmd": _cmd("gate", "copilot", True), "timeout": 30, "sub": "gate"},
+            "preToolUse": {"cmd": _cmd("watch", "copilot"), "timeout": 60, "sub": "watch"},
+            "postToolUse": {"cmd": _cmd("watch", "copilot"), "timeout": 60, "sub": "watch"},
         }
 
     def detect(self):
@@ -642,7 +652,8 @@ class Copilot(Adapter):
         wiring._link(m, os.path.join(self.dir(), "copilot-instructions.md"), wiring.core(), notes, "copilot")
 
     def unwire(self, m, notes):
-        subs = {"sessionStart": "tick", "agentStop": "gate", "subagentStop": "gate"}
+        subs = {"sessionStart": "tick", "agentStop": "gate", "subagentStop": "gate",
+                "preToolUse": "watch", "postToolUse": "watch"}
         unmerge_json(m, self.hooks_file(), "flat", subs, self.spec(), notes, "copilot",
                      created_version=1, make_entry=self._entry)
         unlink_ours(os.path.join(self.dir(), "copilot-instructions.md"), notes)
@@ -653,7 +664,8 @@ class Copilot(Adapter):
         hw = flat_wired(_load_obj(self.hooks_file()) or {}, self.spec())
         rb = _link_ok(link)
         missing = [n for n, ok in (("rulebook link", rb), ("tick hook", hw["sessionStart"]),
-                                   ("gate hook", hw["agentStop"]), ("subagent hook", hw["subagentStop"])) if not ok]
+                                   ("gate hook", hw["agentStop"]), ("subagent hook", hw["subagentStop"]),
+                                   ("watch-before hook", hw.get("preToolUse", False)), ("watch-after hook", hw.get("postToolUse", False))) if not ok]
         st.update(rulebook=rb, tick=hw["sessionStart"], wired=not missing,
                   detail=("missing: " + ", ".join(missing)) if missing else "rulebook link + tick + gate hooks in %s (CLI; cloud needs a committed .github/hooks file, not written by sisi)" % self.hooks_file())
         return st
@@ -702,7 +714,7 @@ class Qwen(Adapter):
         missing = [n for n, ok in (("rulebook link", rb), ("tick hook", hw["SessionStart"]),
                                    ("gate hook", hw["Stop"]), ("subagent hook", hw["SubagentStop"])) if not ok]
         st.update(rulebook=rb, tick=hw["SessionStart"], wired=not missing,
-                  detail=("missing: " + ", ".join(missing)) if missing else "rulebook link + tick + gate hooks")
+                  detail=("missing: " + ", ".join(missing)) if missing else "rulebook link + tick + gate hooks (no confirmed before/after tool events, so shell edits there are still judged from the command text)")
         return st
 
 
@@ -720,6 +732,8 @@ class Cursor(Adapter):
             "sessionStart": {"cmd": _cmd("tick", "cursor"), "timeout": 10, "sub": "tick"},
             "stop": {"cmd": _cmd("gate", "cursor"), "timeout": _gate_timeout(), "sub": "gate"},
             "subagentStop": {"cmd": _cmd("gate", "cursor", True), "timeout": 30, "sub": "gate"},
+            "preToolUse": {"cmd": _cmd("watch", "cursor"), "timeout": 60, "sub": "watch"},
+            "postToolUse": {"cmd": _cmd("watch", "cursor"), "timeout": 60, "sub": "watch"},
         }
 
     @staticmethod
@@ -739,14 +753,16 @@ class Cursor(Adapter):
         merge_json(m, self.hooks_file(), "flat", self.spec(), notes, "cursor", created_version=1, make_entry=self._entry)
 
     def unwire(self, m, notes):
-        subs = {"sessionStart": "tick", "stop": "gate", "subagentStop": "gate"}
+        subs = {"sessionStart": "tick", "stop": "gate", "subagentStop": "gate",
+                "preToolUse": "watch", "postToolUse": "watch"}
         unmerge_json(m, self.hooks_file(), "flat", subs, self.spec(), notes, "cursor",
                      created_version=1, make_entry=self._entry)
 
     def status(self):
         st = Adapter.status(self)
         hw = flat_wired(_load_obj(self.hooks_file()) or {}, self.spec())
-        missing = [n for n, ok in (("tick hook", hw["sessionStart"]), ("gate hook", hw["stop"]), ("subagent hook", hw["subagentStop"])) if not ok]
+        missing = [n for n, ok in (("tick hook", hw["sessionStart"]), ("gate hook", hw["stop"]), ("subagent hook", hw["subagentStop"]),
+                                   ("watch-before hook", hw.get("preToolUse", False)), ("watch-after hook", hw.get("postToolUse", False))) if not ok]
         st.update(rulebook=False, tick=hw["sessionStart"], wired=not missing,
                   detail=("missing: " + ", ".join(missing) + "; " if missing else "tick + gate hooks in %s; " % self.hooks_file())
                          + "no global rulebook file is confirmed for Cursor (project AGENTS.md files still load)")

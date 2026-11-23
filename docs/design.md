@@ -303,7 +303,8 @@ Designed, not built:
 - Replay experiments on the task set before a learned change ships, brief templates, playbooks. (Shipping and
   removal of learned changes exist in the simpler ship-first-measure-after form described in Part 3.)
 - The taste judge and rung 5 judging by a model.
-- Blocking gates for tools other than Claude Code.
+- A blocked turn proven end to end in each tool. Gates are built for the tools whose hooks allow one
+  (see [harnesses.md](harnesses.md)); most are tested against the documented hook format only.
 - Harvest sources other than Claude Code.
 
 ## Build order
@@ -340,5 +341,25 @@ resumes without redoing closed nodes (to be model-checked, then tested).
 - Experiments at this volume detect large effects only.
 - The taste judge is worthless until the human has given enough verdicts, and it is trusted per kind of work,
   not globally.
-- Blocking gates outside Claude Code, Muse's instruction path and Codex's hook format are unverified.
+- Outside Claude Code and Copilot CLI, a blocked turn has not been run end to end; Muse has no confirmed
+  instruction path or end-of-turn hook, and OpenCode's plugin events are unproven.
+- The end-of-turn gate attributes edits per session. Edit-tool calls are read from the session's own
+  transcript (incrementally, from a per-session offset), including the transcripts of subagents it
+  started natively. Shell commands are not judged from their text where the tool has before/after tool
+  hooks (Claude Code, Codex, Gemini, Copilot and Cursor have them wired): `sisi watch` takes a stat-only
+  tree snapshot (file sizes and modification times, `.gitignore` honoured, `.git` never included) before
+  and after the command and attributes exactly the paths that changed to that session, and the session
+  answers for a failing check only when a path changed since the last passing state is attributed to
+  it. That measurement has honest limits: another agent changing the tree inside this session's command
+  window is attributed to this session (it errs strict, the safe side); a change that keeps a file's
+  size and mtime, a write to a git-ignored file, and a write between the last complete transcript line
+  and a crash are invisible; `git commit` changes only `.git` and so is never an edit; sisi's own
+  commands write only personal data and state (except `sisi contract init/waive/trust`) and never count,
+  so `sisi retro` cannot create the need for another retro. Where a tool has no before/after tool events
+  (Qwen, Pi, OpenCode), shell commands are still judged by the older command-text classifier, which
+  over-attributes interpreters and test runners. A missing or unreadable transcript, a corrupt line, an
+  unparseable shell command, a shell command whose after-record never arrives, and an unread transcript
+  tail over 64 MB are all treated as "this session edited" — strict — never as "someone else did it".
+  Attribution decides who is sent back and who owes a retrospective; it never turns a failing check into
+  a pass — a stop allowed over another session's failing tree is recorded unverified, once per tree state.
 - This is several months of building. Each phase is useful on its own.

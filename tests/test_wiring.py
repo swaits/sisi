@@ -227,6 +227,24 @@ class WiringTests(WiringBase):
         self.assertEqual(self.sisi("uninstall").returncode, 0)
 
 
+class WatchHookTests(WiringBase):
+    def test_watch_hooks_registered_with_bash_matcher_and_removed(self):
+        before = snapshot(self.home)
+        wiring.install()
+        d = json.load(open(self.path(".claude/settings.json")))
+        for ev in ("PreToolUse", "PostToolUse"):
+            groups = d["hooks"][ev]
+            cmds = [h["command"] for g in groups for h in g["hooks"]]
+            self.assertTrue(any("watch --tool claude-code" in c for c in cmds), (ev, cmds))
+            self.assertTrue(any(g.get("matcher") == "Bash" for g in groups), (ev, groups))
+        self.assertEqual(wiring.doctor()[0]["status"], "wired")
+        snap = snapshot(self.home)
+        wiring.install()
+        self.assertEqual(snapshot(self.home), snap)  # idempotent
+        wiring.uninstall()
+        self.assertEqual(snapshot(self.home), before)  # removed exactly
+
+
 class SubagentHookTests(WiringBase):
     def test_subagent_stop_registered_idempotent_and_removed(self):
         before = snapshot(self.home)

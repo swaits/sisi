@@ -229,16 +229,23 @@ def _claude_md_wired(data):
 
 
 # ---- settings.json ---------------------------------------------------------
+HOOK_MATCHERS = {"PreToolUse": "Bash", "PostToolUse": "Bash"}
+
+
 def hook_cmds():
     gate_to = int(store.config()["gate"].get("budget_s", 120)) + 30
+    watch = hookjson.fail_open_command(paths.launcher(), "watch", "claude-code")
     return {"SessionStart": (hookjson.fail_open_command(paths.launcher(), "tick", "claude-code"), 10),
             "Stop": (hookjson.fail_open_command(paths.launcher(), "gate", "claude-code"), gate_to),
-            "SubagentStop": (hookjson.fail_open_command(paths.launcher(), "gate", "claude-code", True), 30)}
+            "SubagentStop": (hookjson.fail_open_command(paths.launcher(), "gate", "claude-code", True), 30),
+            "PreToolUse": (watch, 60),
+            "PostToolUse": (watch, 60)}
 
 
 def _claude_spec():
-    return {ev: {"cmd": cmd, "timeout": to,
-                 "sub": hookjson.sisi_invocation(cmd)[1]} for ev, (cmd, to) in hook_cmds().items()}
+    return {ev: dict({"cmd": cmd, "timeout": to, "sub": hookjson.sisi_invocation(cmd)[1]},
+                     **({"matcher": HOOK_MATCHERS[ev]} if ev in HOOK_MATCHERS else {}))
+            for ev, (cmd, to) in hook_cmds().items()}
 
 
 def _is_ours(h, sub):
@@ -305,7 +312,10 @@ def add_hooks(obj):
                 changed = True
         hooks[ev] = kept
         if not found:
-            kept.append({"hooks": [{"type": "command", "command": cmd, "timeout": to}]})
+            group = {"hooks": [{"type": "command", "command": cmd, "timeout": to}]}
+            if ev in HOOK_MATCHERS:
+                group = {"matcher": HOOK_MATCHERS[ev], "hooks": group["hooks"]}
+            kept.append(group)
             changed = True
     return changed
 
@@ -315,7 +325,8 @@ def remove_hooks(obj):
     hooks = obj.get("hooks")
     if not isinstance(hooks, dict):
         return False
-    for ev, sub in (("SessionStart", "tick"), ("Stop", "gate"), ("SubagentStop", "gate")):
+    for ev, sub in (("SessionStart", "tick"), ("Stop", "gate"), ("SubagentStop", "gate"),
+                    ("PreToolUse", "watch"), ("PostToolUse", "watch")):
         groups = hooks.get(ev)
         if not isinstance(groups, list):
             continue
@@ -342,7 +353,8 @@ def remove_hooks(obj):
 def _hooks_wired(obj):
     hooks = obj.get("hooks") if isinstance(obj, dict) else None
     out = {}
-    for ev, sub, name in (("SessionStart", "tick", "tick"), ("Stop", "gate", "gate"), ("SubagentStop", "gate", "subagent")):
+    for ev, sub, name in (("SessionStart", "tick", "tick"), ("Stop", "gate", "gate"), ("SubagentStop", "gate", "subagent"),
+                          ("PreToolUse", "watch", "pre"), ("PostToolUse", "watch", "post")):
         groups = hooks.get(ev) if isinstance(hooks, dict) else None
         sub, key = sub, name
         out[key] = False
@@ -578,7 +590,8 @@ def uninstall():
     elif data is not None:
         try:
             text = data.decode("utf-8")
-            subs = {"SessionStart": "tick", "Stop": "gate", "SubagentStop": "gate"}
+            subs = {"SessionStart": "tick", "Stop": "gate", "SubagentStop": "gate",
+                    "PreToolUse": "watch", "PostToolUse": "watch"}
             orig = _read(os.path.join(_idir(), "backups", ent["backup"])) if ent and ent["backup"] else None
             drop_hooks, _dv = hookjson.backup_drop_flags(
                 orig.decode("utf-8") if orig is not None else None, None) if orig is not None else (True, False)
@@ -628,11 +641,12 @@ def doctor():
     rows = []
     cm, st = _read(L["claude_md"]), _read(L["settings"])
     try:
-        hw = _hooks_wired(_parse_settings(st)[0]) if st is not None else {"tick": False, "gate": False, "subagent": False}
+        hw = _hooks_wired(_parse_settings(st)[0]) if st is not None else {"tick": False, "gate": False, "subagent": False, "pre": False, "post": False}
     except (ValueError, UnicodeDecodeError):
-        hw = {"tick": False, "gate": False, "subagent": False}
+        hw = {"tick": False, "gate": False, "subagent": False, "pre": False, "post": False}
     missing = [n for n, ok in (("import line", _claude_md_wired(cm)), ("tick hook", hw["tick"]),
-                               ("gate hook", hw["gate"]), ("subagent hook", hw["subagent"])) if not ok]
+                               ("gate hook", hw["gate"]), ("subagent hook", hw["subagent"]),
+                               ("watch-before hook", hw["pre"]), ("watch-after hook", hw["post"])) if not ok]
     rows.append({"tool": "claude-code", "status": "not wired" if missing else "wired",
                  "detail": ("missing: " + ", ".join(missing)) if missing else "import + tick + gate registered",
                  "blocking_hook": "yes (Stop)" if hw["gate"] else "no",
@@ -717,11 +731,12 @@ def doctor_claude():
     L = loc()
     cm, st = _read(L["claude_md"]), _read(L["settings"])
     try:
-        hw = _hooks_wired(_parse_settings(st)[0]) if st is not None else {"tick": False, "gate": False, "subagent": False}
+        hw = _hooks_wired(_parse_settings(st)[0]) if st is not None else {"tick": False, "gate": False, "subagent": False, "pre": False, "post": False}
     except (ValueError, UnicodeDecodeError):
-        hw = {"tick": False, "gate": False, "subagent": False}
+        hw = {"tick": False, "gate": False, "subagent": False, "pre": False, "post": False}
     missing = [n for n, ok in (("import line", _claude_md_wired(cm)), ("tick hook", hw["tick"]),
-                               ("gate hook", hw["gate"]), ("subagent hook", hw["subagent"])) if not ok]
+                               ("gate hook", hw["gate"]), ("subagent hook", hw["subagent"]),
+                               ("watch-before hook", hw["pre"]), ("watch-after hook", hw["post"])) if not ok]
     return ", ".join(missing)
 
 

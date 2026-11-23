@@ -68,6 +68,30 @@ class HookToolTests(AdapterBase):
         self.assertEqual(self.rows()["gemini"]["status"], "wired")
         wiring.uninstall()
 
+    def test_watch_hooks_registered_per_tool(self):
+        cases = {"codex": (".codex", ".codex/hooks.json", ("PreToolUse", "PostToolUse"), False),
+                 "gemini": (".gemini", ".gemini/settings.json", ("BeforeTool", "AfterTool"), False),
+                 "copilot": (".copilot", ".copilot/hooks/sisi.json", ("preToolUse", "postToolUse"), True),
+                 "cursor": (".cursor", ".cursor/hooks.json", ("preToolUse", "postToolUse"), True)}
+        for name, (d, f, events, flat) in cases.items():
+            with self.subTest(tool=name):
+                self.fresh_home()
+                os.makedirs(self.path(d), exist_ok=True)
+                if name == "copilot":
+                    os.makedirs(self.path(".copilot", "hooks"), exist_ok=True)
+                self.cycle()  # install x2 idempotent, uninstall exact (in cycle), then installs again below
+                wiring.install()
+                obj = json.load(open(self.path(f)))
+                for ev in events:
+                    cmds = [e.get("bash") or e.get("command") for e in obj["hooks"][ev]] if flat else \
+                        [h["command"] for g in obj["hooks"][ev] for h in g["hooks"]]
+                    self.assertTrue(any("watch --tool %s" % name in (c or "") for c in cmds), (name, ev, cmds))
+                if name == "codex":
+                    for ev in events:
+                        self.assertTrue(any(g.get("matcher") == "Bash" for g in obj["hooks"][ev]))
+                self.assertEqual(self.rows()[name]["status"], "wired")
+                wiring.uninstall()
+
     def test_gemini_user_file_not_touched(self):
         os.makedirs(self.path(".gemini"))
         self.put(".gemini/GEMINI.md", b"mine\n")

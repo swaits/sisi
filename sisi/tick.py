@@ -93,6 +93,14 @@ def main(args=()):
                    "source": payload.get("source"), "blocks": 0}
             if isinstance(payload.get("transcript_path"), str):
                 rec["transcript_path"] = payload["transcript_path"]
+                # Attribution starts here: the gate reads only transcript bytes after this offset.
+                rec["attr_tp"] = payload["transcript_path"]
+                try:
+                    rec["attr_offset"] = os.path.getsize(os.path.expanduser(payload["transcript_path"]))
+                except OSError:
+                    rec["attr_offset"] = 0
+                rec.update(attr_gen=0, attr_pass_gen=0, attr_retro_gen=0, attr_baseline_gen=0,
+                           attr_writing=False, attr_files=[], attr_sub_offsets={})
             from . import contract as C, gitutil
             if gitutil.root(cwd):
                 rec["head"] = gitutil.head(cwd)

@@ -56,6 +56,40 @@ def measure(cwd, base=None, max_untracked=200):
     return {"lines": lines, "files": sorted(files)[:2000]}
 
 
+def snapshot(cwd, max_files=200000):
+    """Stat-only working-tree snapshot: {relative path: [size, mtime_ns]}, [-1, -1] for a tracked
+    file that is gone. Tracked plus untracked-but-not-ignored files inside a git tree (via
+    `git ls-files`, so .gitignore is honoured and .git itself never appears — a commit therefore
+    changes nothing here); a plain directory walk skipping .git outside one. No file content is
+    read, so a change that keeps both size and mtime is invisible to it."""
+    _root = root(cwd)
+    top = _root or os.path.abspath(cwd)
+    rels = []
+    if _root:
+        rc, out = _git(top, "ls-files", "-c", "-o", "--exclude-standard", "-z", timeout=10)
+        if rc == 0:
+            rels = [r for r in out.split("\0") if r]
+    if not rels:
+        for dirpath, dirs, names in os.walk(top):
+            dirs[:] = sorted(d for d in dirs if d != ".git")
+            for n in sorted(names):
+                rels.append(os.path.relpath(os.path.join(dirpath, n), top))
+    files = {}
+    for rel in rels[:max_files]:
+        try:
+            st = os.stat(os.path.join(top, rel))
+            files[rel] = [st.st_size, st.st_mtime_ns]
+        except OSError:
+            files[rel] = [-1, -1]
+    return {"root": top, "files": files}
+
+
+def snapshot_diff(before, after):
+    """Sorted relative paths whose stat entry appeared, vanished or changed between snapshots."""
+    a, b = (before or {}).get("files", {}), (after or {}).get("files", {})
+    return sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))
+
+
 def fingerprint(cwd, extra_files=()):
     """Cheap hash of the working-tree state: HEAD, the diff against it, untracked files (path, size, mtime),
     plus the content of `extra_files` (e.g. the contract, which may be git-ignored). None outside git."""

@@ -463,7 +463,8 @@ class WidenedPropertyTests(SafetyBase):
                 json.dump(obj, open(p, "w"), indent=2)
                 wiring.install()
                 raw = open(p, "rb").read()
-                self.assertLessEqual(raw.count(b"--tool " + tool.encode()), 4, (tool, raw))
+                # tick + gate + subagent gate + watch (registered for both tool events) = at most 5
+                self.assertLessEqual(raw.count(b"--tool " + tool.encode()), 5, (tool, raw))
                 d2 = json.load(open(p))
                 for ev, entries in d2.get("hooks", {}).items():
                     flat = [e.get("bash") or e.get("command") for e in entries if isinstance(e, dict)]

@@ -51,6 +51,17 @@ def normalize(tool, d):
     ):
         if val:
             out[key] = val
+    for key, val in (
+        ("hook_event_name", _s(d, "hook_event_name", "hookEventName", "event_name", "event")),
+        ("tool_name", _s(d, "tool_name", "toolName", "tool", "name")),
+        ("tool_use_id", _s(d, "tool_use_id", "toolUseId", "tool_id")),
+    ):
+        if val:
+            out[key] = val
+    for k in ("tool_input", "toolInput", "input"):
+        if isinstance(d.get(k), dict):
+            out["tool_input"] = d[k]
+            break
     cwd = _s(d, "cwd")
     if not cwd and isinstance(d.get("workspace_roots"), list):
         roots = [r for r in d["workspace_roots"] if isinstance(r, str) and r]
@@ -130,6 +141,23 @@ def gate_main(tool, args=()):
     if text:
         sys.stdout.write(text)
     return rc
+
+
+def watch_main(tool, args=()):
+    """Before/after tool measurement for the other tools. Always exits 0 (fail open)."""
+    try:
+        d = _payload(store.read_stdin())
+        if d is not None:
+            from . import watch
+            norm = normalize(tool, d)
+            _t, _c, ev, _cwd, _sid = watch.extract(norm)
+            if "--before" in args or ev in watch.BEFORE_EVENTS:
+                watch.before(norm)
+            elif "--after" in args or ev in watch.AFTER_EVENTS:
+                watch.after(norm)
+    except Exception as e:
+        store.log_error("watch-%s" % tool, e)
+    return 0
 
 
 def _tick_out(tool, text):

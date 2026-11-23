@@ -4,6 +4,24 @@ All notable changes to this project are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+
+- The end-of-turn gate now attributes edits to the session that made them. Edit-tool calls are read
+  incrementally from the session's own transcript (a per-session offset; native subagents' transcripts
+  under the session count too), and shell commands are measured, not guessed: where the tool has
+  before/after tool hooks (Claude Code, Codex, Gemini, Copilot, Cursor), `sisi watch` snapshots the
+  tree (sizes and mtimes only) before and after the command and attributes the changed paths to the
+  session. A retrospective is required only when this session, or a subagent it started, edited files
+  since its last retrospective. When checks fail and no path changed since the last passing state is
+  attributed to this session, the stop is allowed once per distinct tree state with a note that the
+  contract is not satisfied and the work must not be reported as done, recorded unverified; otherwise
+  the session is sent back as before. `git commit` and sisi's own commands (except `contract
+  init/waive/trust`) never count as edits; another agent's write inside this session's command window
+  is attributed to this session (strict, documented); tools without before/after tool events keep the
+  command-text classifier. See the known limits in [docs/design.md](docs/design.md).
+
 ## [0.2.0] - 2026-11-23
 
 ### Added

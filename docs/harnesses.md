@@ -27,17 +27,19 @@ uninstalling makes hooks exit silently instead of erroring on every turn. The pe
 between each tool's hook JSON and the gate lives in `sisi/hookio.py`; the adapters live in
 `sisi/adapters.py`; the textual JSON editing lives in `sisi/hookjson.py`. Install also links any
 skills shipped under `canon/skills` into `~/.agents/skills`; `sisi doctor` reports the linked
-state. Hooks fail open: any error lets the agent finish.
+state. Hooks fail open: any error lets the agent finish. Where a tool's hook input has no transcript path, the gate falls back to its pre-attribution behaviour (tree-change based, with no per-session edit attribution). Shell commands are attributed by measurement, not by their text, wherever the tool has confirmed before/after tool events (`sisi watch` takes a stat-only tree snapshot before and after the command and attributes the paths that changed to the session; provably read-only commands skip the pair); tools without confirmed before/after tool events keep the command-text classifier described in docs/design.md.
 
 ## Claude Code
 
 Fully wired, as before: an `@import` line in `~/.claude/CLAUDE.md`, `SessionStart` → `sisi tick`,
-`Stop`/`SubagentStop` → `sisi gate` (blocking) in `~/.claude/settings.json`. Nothing for you to do.
+`Stop`/`SubagentStop` → `sisi gate` (blocking), and `PreToolUse`/`PostToolUse` with matcher `Bash` →
+`sisi watch` (before/after tree measurement) in `~/.claude/settings.json`. Nothing for you to do.
 
 ## Codex CLI
 
 Rulebook symlink at `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md`), plus hooks in
-`~/.codex/hooks.json`: `SessionStart` → tick, `Stop`/`SubagentStop` → gate, blocking with
+`~/.codex/hooks.json`: `SessionStart` → tick, `Stop`/`SubagentStop` → gate,
+`PreToolUse`/`PostToolUse` (matcher `Bash`) → `sisi watch`, blocking with
 `{"decision":"block","reason":...}`. One step is yours: Codex only runs hooks you have trusted, by exact
 definition hash. After `sisi install`, open Codex, run `/hooks`, and trust the sisi hooks; repeat after
 any change to the hook commands (for example after moving the sisi clone). `sisi doctor` cannot verify
@@ -50,7 +52,8 @@ file path.
 ## Gemini CLI
 
 Rulebook symlink at `~/.gemini/GEMINI.md`, hooks merged into `~/.gemini/settings.json`: `SessionStart`
-→ tick (lessons injected as `additionalContext`), `AfterAgent` → gate (`{"decision":"deny","reason":...}`
+→ tick (lessons injected as `additionalContext`), `AfterAgent` → gate, `BeforeTool`/`AfterTool` →
+`sisi watch` (`{"decision":"deny","reason":...}`
 rejects the response and forces a retry). Built from the hooks reference; Gemini is not installed on the
 development machine, so this has not run live. Gemini has no subagent-stop event in its hook list, so
 only the main turn is gated.
@@ -59,7 +62,7 @@ only the main turn is gated.
 
 Rulebook symlink at `~/.copilot/copilot-instructions.md` (or under `$COPILOT_HOME`), hooks in
 `~/.copilot/hooks/sisi.json`: `sessionStart` → tick (`additionalContext`), `agentStop`/`subagentStop` →
-gate (`{"decision":"block","reason":...}` forces another turn). Verified end to end in a throwaway home:
+gate (`{"decision":"block","reason":...}` forces another turn), `preToolUse`/`postToolUse` → `sisi watch`. Verified end to end in a throwaway home:
 a secret planted in session-start context was answered by the model, and a blocking `agentStop` visibly
 forced a second turn. The cloud coding agent only runs hooks committed in the repository
 (`.github/hooks/*.json`); sisi does not write repository files, so cloud enforcement needs such a file
@@ -72,7 +75,8 @@ Rulebook symlink at `~/.qwen/QWEN.md`, hooks merged into `~/.qwen/settings.json`
 first run, so run Qwen once before `sisi install`. Verified: the session-start hook was observed firing
 with its documented payload (a full turn needs an auth type configured). Qwen's question tool is named
 `ask_user_question` (the rulebook still names Claude Code's dialog; generalising that wording is future
-work).
+work). Qwen's before/after tool event names are not confirmed, so sisi registers no watch hooks there:
+shell edits in Qwen are still judged from the command text.
 
 ## Pi
 
@@ -81,12 +85,14 @@ have your own file there) plus a generated extension at `~/.pi/agent/extensions/
 runs `sisi tick` on `session_start` and injects the lessons at `before_agent_start`, and runs the gate on
 `agent_before_settle`, forcing one continuation with the failure report when checks fail (capped by the
 gate's own three send-backs). Verified: the extension loads in real Pi and tick runs; the blocking
-continuation could not be exercised end to end without a model login in the throwaway home.
+continuation could not be exercised end to end without a model login in the throwaway home. Pi gets no
+watch hooks (its extension has no confirmed before/after shell payload for this), so shell edits there are
+still judged from the command text.
 
 ## Cursor
 
 Hooks merged into `~/.cursor/hooks.json`: `sessionStart` → tick (lessons as `additional_context`),
-`stop`/`subagentStop` → gate. Cursor cannot veto a stop; instead a non-empty `followup_message` is
+`stop`/`subagentStop` → gate, `preToolUse`/`postToolUse` → `sisi watch`. Cursor cannot veto a stop; instead a non-empty `followup_message` is
 auto-submitted as the next user message, which is how the gate sends the agent back (Cursor caps this at
 5 per script by default; sisi's own cap is 3). Only completed (not aborted/error) stops are gated.
 There is no confirmed user-global instruction *file* for Cursor, so sisi wires no global rulebook there;
@@ -102,7 +108,8 @@ client prompt API where one exists. Be clear about the limits: `session.idle` fi
 finished and cannot veto anything, and on OpenCode v2.3.2 no plugin event delivery or lesson injection
 could be confirmed in headless runs (the plugin itself is loaded — verified — and the v1-style hooks and
 v2 `setup()` registration are both attempted, all fail-open). Treat OpenCode enforcement as unproven
-until it is observed on your version; `sisi doctor` says `unknown` on purpose.
+until it is observed on your version; `sisi doctor` says `unknown` on purpose. OpenCode gets no watch
+hooks either, so shell edits there are still judged from the command text.
 
 ## Muse Code
 
