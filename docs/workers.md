@@ -96,7 +96,7 @@ allows it per tool (`workers.allow_bypass`).
 
 In the user store: `workers.json` (discovery cache), `delegations.jsonl` (the ledger),
 `worker-availability.json`, `worker-prices.json` and `model-strength.json` (worker facts),
-`worker-prefs.json` (avoid/prefer) and `worker-notes.json` (standing notes). When facts are missing or older than
+`worker-prefs.json` (avoid/prefer), `worker-notes.json` (standing notes) and `worker-drivers.json` (learned drivers). When facts are missing or older than
 `workers.facts_max_age_days` (default 30), session start prints one line asking for a fast,
 cheap worker to research current prices and benchmark standing and record them — an age check
 during normal use, never a scheduler. Settings live under `workers` in the config:
@@ -106,4 +106,13 @@ during normal use, never a scheduler. Settings live under `workers` in the confi
 ## What this does not do
 
 Prices and benchmark standing are only as fresh as their recorded source and date. A worker
-with no judged record, price or prior is listed but never routed to until evidence exists.
+with no judged record, price or prior is listed but never routed to until evidence exists, except a new worker from the section above, which is tried on routine work first.
+
+## Workers that appear later
+
+A worker that did not exist when sisi was installed becomes routable through ordinary use. Nothing is scheduled; each way in runs inside a hook or a command already run. The names of a host's tools and the shape of their data are in `canon/discovery.json` (data, never code).
+
+- **From the host.** The after-tool hook (`sisi watch --after`) recognises the host's capability-listing tool and its delegation tool by the patterns in that file. A listing adds every provider the host says can run a task, each model as the worker `provider/model` exactly as the host names it (a provider the host disables is recorded but never routable). A provider missing from `discovery.drop_after_listings` listings (default 3) is dropped. A delegation seen passing is recorded too. Once per set of new workers the agent gets one line with the count. `sisi route` names the host's delegation tool and the provider and model ids to pass it. A provider listing more than `discovery.catalogue_over` models (default 8) is a catalogue: its models are stored, and only those used, priced or with a standing are candidates. Kept in the scratch folder (`discovery/host-workers.json`); the next listing rebuilds it.
+- **From PATH.** At session start the executables in the user-level folders on PATH (under the home folder, never system folders; nothing is run) are compared with the stored list. It is looked at again when a folder changed, after `discovery.path_refresh_s` (6 hours) or `discovery.path_every_starts` (25) session starts. The first run only stores the list. New names are announced once, five at most.
+- **A driver, learned as data.** `sisi workers learn NAME` prints a delegation contract for a fast, cheap worker: read the tool's own help, write a small JSON file (the fields of the built-in driver table, plus failure phrases and a token pattern). `--check FILE` validates it; `--record FILE` validates, stores it (`worker-drivers.json`, with who learned it and when) and runs ONE read-only smoke task in a temporary folder, with a time limit and no input. Only a passing driver is used; a failure is classified (login, quota, bad template, no answer, timeout) and the driver stays unusable with the reason (`--verify` tries again). The command is an argument list run without a shell; the brief is one argument. A command with a flag that switches off approvals or a sandbox (patterns in the data file) waits for `sisi approve drv-NAME`, which shows the exact command, and never runs, smoke task included, before. `sisi workers forget NAME` removes one.
+- **Earning a place.** Such a worker is unproven until it has `MIN_ATTEMPTS` judged attempts: difficulty 1 only, whatever benchmark it has; a free or flat one gets one routine task in `route.explore_free_one_in` (default 3); `sisi route` and `sisi delegate` say to check its result with at least the tests or a read of the diff. Its plan comes from its driver or from a fact; unknown counts as per-use. The missing-facts line at session start names the new workers (five at most) so the research has a target.

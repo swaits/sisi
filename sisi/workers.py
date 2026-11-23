@@ -33,6 +33,7 @@ researched when they are missing or old. No price, score or model name ships in 
 import datetime, json, os, re, shutil, statistics, subprocess, sys, time, uuid
 
 from . import brief as brief_contract
+from . import discovery as _D
 from . import paths, routing, store
 
 LIST_TIMEOUT_S = 30
@@ -121,18 +122,20 @@ ERROR_SIGNATURES = (
 )
 
 
-def classify_failure(text, returncode=0):
+def classify_failure(text, returncode=0, extra=None):
     """(reason, note, retry_after_s) for a run or listing that never got to do the work, else None.
-    reason is one of auth, limit, missing, error. Text decides even when the exit status is 0."""
+    reason is one of auth, limit, missing, error. Text decides even when the exit status is 0.
+    `extra` is {"auth": [...], "limit": [...]}: phrases a learned driver adds to the built-in ones."""
     low = (text or "").lower()
     retry = None
     m = re.search(r"retryafterms\D{0,4}(\d+)", low)
     if m:
         retry = int(m.group(1)) / 1000.0
-    for sig in AUTH_SIGNATURES:
+    extra = extra or {}
+    for sig in AUTH_SIGNATURES + tuple(extra.get("auth") or ()):
         if sig in low:
             return "auth", "not logged in (%s)" % _phrase(text, sig), retry
-    for sig in LIMIT_SIGNATURES:
+    for sig in LIMIT_SIGNATURES + tuple(extra.get("limit") or ()):
         if sig in low:
             return "limit", _phrase(text, sig), retry
     for sig in ERROR_SIGNATURES:
@@ -573,6 +576,12 @@ def route_floors():
     return routing.standing_floors(route_cfg().get("standing_floor"))
 
 
+def explore_free_every():
+    """`route.explore_free_one_in`: an unproven worker that costs nothing extra gets one routine task in this many."""
+    v = route_cfg().get("explore_free_one_in")
+    return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 1 else routing.EXPLORE_FREE_EVERY
+
+
 def _price_for(prices, tool, model, worker):
     models = prices.get("models") if isinstance(prices.get("models"), dict) else {}
     tools = prices.get("tools") if isinstance(prices.get("tools"), dict) else {}
@@ -615,7 +624,7 @@ def build_candidates(disc=None, records=None):
     records = read_records() if records is None else records
     prices = load_prices()
     prior = load_strength_prior()
-    disc_tools = disc.get("tools") or []
+    disc_tools = _D.merge_tools(disc.get("tools") or [])
     cands, seen = [], set()
 
     def add(tool, model, usable=True, reason=None, allowance=None, tool_plan=None):
@@ -646,6 +655,8 @@ def build_candidates(disc=None, records=None):
         if not t.get("installed", True):
             continue
         models = t.get("models") or []
+        if t.get("with_default"):
+            models = [None] + list(models)  # a learned tool's own default model is always a worker
         if models:
             for m in models:
                 add(t["name"], m, usable=bool(t.get("usable", True)), reason=t.get("reason"),
@@ -676,7 +687,7 @@ def build_candidates(disc=None, records=None):
         if c is not None:
             c["aliases"].append(str(w))
             alias_set.add(str(w).lower())
-    return cands
+    return _D.annotate(cands, records, disc_tools)
 
 
 def resolve_worker(name, candidates):
@@ -686,10 +697,11 @@ def resolve_worker(name, candidates):
             return c
     if "/" in str(name or ""):
         tool, model = str(name).split("/", 1)
-        if tool in DRIVER_BY_NAME:
+        driver = DRIVER_BY_NAME.get(tool) or _D.driver_for(tool)
+        if driver is not None:
             return {"worker": str(name), "tool": tool, "model": model,
                     "maker": routing.maker_of(model), "plan": None, "cost": None,
-                    "allowance_pct_left": None, "usable": shutil.which(DRIVER_BY_NAME[tool]["exe"]) is not None,
+                    "allowance_pct_left": None, "usable": shutil.which(driver["exe"]) is not None,
                     "reason": None, "aliases": [str(name), model]}
     return None
 
@@ -777,7 +789,7 @@ def notes_for(candidates_by_worker, chosen, passed, notes=None, limit=5):
 
 
 DATA_FILES = ("delegations.jsonl", "worker-availability.json", "worker-prices.json",
-              "model-strength.json", "worker-prefs.json", "worker-notes.json")
+              "model-strength.json", "worker-prefs.json", "worker-notes.json", "worker-drivers.json")
 
 
 def _data_state():
@@ -858,9 +870,12 @@ def facts_status(now=None):
 def facts_line(now=None):
     """One session-start line asking for worker facts to be researched, or "" when they are fresh."""
     status = facts_status(now)
-    if status["state"] == "ok":
+    targets = _D.facts_targets(_cached_candidates()[0])
+    if status["state"] == "ok" and not targets:
         return ""
-    if status["state"] == "missing":
+    if targets:
+        what = "worker facts are missing for %s" % _D.facts_phrase(targets)
+    elif status["state"] == "missing":
         what = "worker facts are missing (no prices or benchmark standing recorded yet)"
     else:
         what = "worker facts are stale (newest from %s)" % (status["newest"] or "an unstated date")
@@ -891,7 +906,7 @@ def routable_candidates(candidates, records):
     keep = []
     for c in candidates:
         judged = sum(cell["n"] for cell in stats.get(c["worker"], {}).get("by_cell", {}).values())
-        if judged or c.get("price_source") or c.get("standing") is not None:
+        if judged or c.get("price_source") or c.get("standing") is not None or c.get("unproven_ok"):
             keep.append(c)
     if not keep:
         return list(candidates), True, 0
@@ -914,6 +929,8 @@ def mechanism_for(cand, host=None):
     """How to start the chosen worker: the host's own subagents first, its cross-provider
     delegation when the config says it has one (workers.host_cross_provider), else sisi itself."""
     host = host_tool() if host is None else host
+    if cand.get("host_mechanism"):
+        return cand["host_mechanism"]
     if cand.get("host_native"):
         return "use the host's own subagent tool with model %s" % (cand.get("model") or cand["worker"])
     if host and cand.get("tool") == host:
@@ -1170,7 +1187,8 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
             prefs = effective_prefs(kind, difficulty, cwd)
             result = routing.choose(candidates, read_records(), read_availability(), kind, difficulty,
                                     review_of=review_of, now=time.time(), exclude=tried,
-                                    avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors())
+                                    avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors(),
+                                    explore_free_every=explore_free_every())
             cand = result["choice"]
             if cand is None:
                 notes.append("sisi: no usable worker remains for kind %s at difficulty %s" % (kind, difficulty))
@@ -1180,7 +1198,12 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
             notes.append("sisi: refusing %s: its id contains 'contributor', a tier that trains on prompts"
                          % cand["worker"])
             return None, None, notes
-        driver = DRIVER_BY_NAME.get(cand.get("tool") or "")
+        driver = DRIVER_BY_NAME.get(cand.get("tool") or "") or _D.driver_for(cand.get("tool"))
+        held = _D.held_note(cand) if driver is None else None
+        if held:  # a learned driver not yet proved or approved: not a missing tool, and never run
+            notes.append(held)
+            cand = None
+            continue
         if driver is None or shutil.which(driver["exe"]) is None:
             record_down(_down_keys(cand, "missing"), "missing",
                         "no command-line tool found for %s" % cand["worker"])
@@ -1205,7 +1228,7 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
                          % (cand["worker"], timeout, transcript))
             return None, None, notes
         _append_transcript(transcript, cand["worker"], cmd, out, err, rc)
-        failure = classify_failure(out + "\n" + err, rc)
+        failure = classify_failure(out + "\n" + err, rc, _D.extra_signatures(driver))
         if failure is not None:
             reason, note, retry = failure
             record_down(_down_keys(cand, reason), reason, note, retry_after_s=retry)
@@ -1214,6 +1237,7 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
             cand = None
             continue
         tokens, cost = extract_usage(out + "\n" + err)
+        tokens = _D.tokens_from(driver, out + "\n" + err) if tokens is None else tokens
         cost_class = "measured" if cost is not None else "unavailable"
         if cost is None:
             estimated = estimate_cost(tokens, _price_for(load_prices(), cand.get("tool"),
@@ -1392,8 +1416,13 @@ def cmd_workers(args=()):
         return _cmd_up(args[1:])
     if args[:1] == ["import"]:
         return _cmd_import(args[1:])
+    if args[:1] == ["learn"]:
+        return _D.cmd_learn(args[1:])
+    if args[:1] == ["forget"]:
+        return _D.cmd_forget(args[1:])
     migrate_standing_facts()
     disc = discover(force="--refresh" in args)
+    disc = dict(disc, tools=_D.merge_tools(disc.get("tools") or []))
     records = read_records()
     avail = read_availability()
     prices = load_prices()
@@ -1413,6 +1442,8 @@ def cmd_workers(args=()):
         else:
             state = "usable now"
         print("%s - %s" % (t["name"], state))
+        for line in _D.tool_lines(t):
+            print(line)
         models = t.get("models") or []
         if models:
             shown = models if len(models) <= 24 else models[:24] + ["... and %d more" % (len(models) - 24)]
@@ -1516,7 +1547,8 @@ def cmd_route(args=()):
     candidates, limited = apply_limits(candidates, prefs)
     result = routing.choose(candidates, records, read_availability(), kind, difficulty,
                             review_of=_opt(args, "--review-of"), now=time.time(),
-                            avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors())
+                            avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors(),
+                            explore_free_every=explore_free_every())
     result["passed_over"] = list(result["passed_over"]) + limited
     by_worker = {c["worker"]: c for c in everyone}
     down = _down_now(read_availability(), time.time())
@@ -1533,9 +1565,11 @@ def cmd_route(args=()):
         return 1
     print(result["choice"]["worker"])
     print("mechanism: %s" % mechanism_for(result["choice"]))
+    for line in _D.unproven_lines(result["choice"]):
+        print(line)
     for line in _down_lines(down):
         print(line)
-    head = 2 + len(_down_lines(down))
+    head = 2 + len(_D.unproven_lines(result["choice"])) + len(_down_lines(down))
     explain = "--explain" in args
     # Notes for the chosen worker always print; notes for workers passed over only with --explain.
     # Plain output stays within 6 lines: the worker, the mechanism, what is down, then the notes.
@@ -1625,6 +1659,8 @@ def cmd_delegate(args=()):
         return 1
     if final:
         print(final)
+    for line in _D.unproven_lines(next((c for c in candidates if c["worker"] == rec["worker"]), None)):
+        print(line)
     print("worker: %s" % rec["worker"])
     print("transcript: %s" % rec["transcript"])
     print("record your judgement: sisi delegate judge %s --outcome accepted|rejected "

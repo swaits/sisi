@@ -60,6 +60,7 @@ CONTRADICTION_REJECTIONS = 2  # a thin record with this many rejections below th
 UNKNOWN_ALLOWANCE = 50.0  # allowance weight when a tool reports none
 STRONG_BAND = 10.0        # standing points from the best still counts as among the strongest
 EXPLORE_EVERY = 10        # about one low-stakes task in ten tries a cheaper thin-record worker
+EXPLORE_FREE_EVERY = 3    # an unproven worker that costs nothing extra gets one routine task in three
 DEFAULT_STANDING_FLOOR = {1: 0.0, 2: 60.0, 3: 85.0}  # percent of the best usable standing needed
 DEFAULT_PRICE_BLEND = 3.0  # parts of input price to one part of output price in a blended price
 
@@ -313,8 +314,10 @@ def _standing_of(c):
 # ---------------------------------------------------------------- the pool, then the choice
 
 
-def _prepare(candidates, records, availability, now, exclude, avoid, review_of):
-    """The workers that may be recommended at all: (eligible, passed, stats, author_maker)."""
+def _prepare(candidates, records, availability, now, exclude, avoid, review_of, difficulty=None):
+    """The workers that may be recommended at all: (eligible, passed, stats, author_maker). An unproven
+    worker (flagged by workers.build_candidates: new, with fewer than MIN_ATTEMPTS judged attempts) is
+    offered routine work only: above difficulty 1 it is passed over whatever benchmark it has."""
     exclude = {str(x) for x in exclude}
     stats = candidate_stats(candidates, records)
     passed = []
@@ -327,6 +330,9 @@ def _prepare(candidates, records, availability, now, exclude, avoid, review_of):
             continue
         if "contributor" in str(c.get("model") or w).lower():
             passed.append((w, "its id contains 'contributor', a tier that trains on prompts"))
+            continue
+        if c.get("unproven") and isinstance(difficulty, int) and difficulty > 1:
+            passed.append((w, "unproven: a new worker with no judged record is offered routine work (difficulty 1) only"))
             continue
         down = _down_entry(c, availability, now)
         if down is not None:
@@ -439,13 +445,29 @@ def _select(eligible, assessments, difficulty):
     return pool, ("nothing" if top[0] <= 1 else "strongest")
 
 
+def _free_slot(choice, ranked, candidates, stats, kind, difficulty, basis, prefer, every):
+    """The unproven worker that costs nothing extra (a flat or free plan) to try on this routine task
+    instead of the usual choice, or None. One routine task in `every` (route.explore_free_one_in), a
+    function of the judged record like the paid slot below, so the choice stays deterministic."""
+    if choice is None or difficulty != 1 or basis != "capable" or not every or every < 1:
+        return None
+    if choice.get("unproven") or _pattern_match(choice, prefer):
+        return None
+    free = [c for c in ranked if c is not choice and c.get("unproven") and c.get("plan") == "flat"]
+    total = sum(_cell(stats, c["worker"], kind, difficulty)["n"] for c in candidates)
+    if not free or total % every != every - 1:
+        return None
+    return sorted(free, key=lambda c: (_cell(stats, c["worker"], kind, difficulty)["n"], c["worker"]))[0]
+
+
 def choose(candidates, records, availability, kind, difficulty, review_of=None, now=0.0, exclude=(),
-           avoid=None, prefer=None, floors=None):
+           avoid=None, prefer=None, floors=None, explore_free_every=EXPLORE_FREE_EVERY):
     """Pick one candidate, or none. Returns {"choice", "passed_over", "stats", "author_maker", ...}.
     `passed_over` is [(worker, plain reason)] covering every candidate not chosen. `avoid` and
     `prefer` are the user's own [{"pattern", "why"}] constraints; `floors` the standing floors."""
     now = float(now or 0)
-    eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of)
+    eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of,
+                                                     difficulty)
     assessments, best = _assess_all(eligible, stats, kind, difficulty, floors)
     key, rate, load_ratio = _make_key(stats, kind, difficulty, prefer)
 
@@ -460,7 +482,11 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
         ranked = sorted(pool, key=lambda c: (-(assessments[c["worker"]].get("measure") or 0.0), key(c)))
     choice = ranked[0] if ranked else None
     explored = None
-    if (choice is not None and difficulty == 1 and basis == "capable" and not _pattern_match(choice, prefer)
+    free_slot = _free_slot(choice, ranked, candidates, stats, kind, difficulty, basis, prefer, explore_free_every)
+    if free_slot is not None:
+        explored, choice = choice, free_slot
+        ranked = [choice] + [c for c in ranked if c is not choice]
+    elif (choice is not None and difficulty == 1 and basis == "capable" and not _pattern_match(choice, prefer)
             and _cell(stats, choice["worker"], kind, difficulty)["n"] >= MIN_ATTEMPTS):
         total = sum(_cell(stats, c["worker"], kind, difficulty)["n"] for c in candidates)
         if total >= EXPLORE_EVERY - 1 and total % EXPLORE_EVERY == EXPLORE_EVERY - 1:
@@ -488,7 +514,10 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
                     detail[w] = extra
                 continue
             if explored is not None and c is explored:
-                reason = ("the usual choice, passed over this once so a cheaper thin-record worker "
+                reason = ("the usual choice, passed over this once so an unproven worker that costs nothing extra "
+                          "gathers evidence on routine work (about one task in %d)" % explore_free_every
+                          if free_slot is not None else
+                          "the usual choice, passed over this once so a cheaper thin-record worker "
                           "gathers evidence on low-stakes work (about one task in %d)" % EXPLORE_EVERY)
             elif _pattern_match(choice, prefer) and not _pattern_match(c, prefer):
                 _pat, _why = _pattern_match(choice, prefer)
@@ -507,7 +536,7 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
     judged_first = basis == "capable" and _prefer_judged(pool, assessments, difficulty)[1]
     capable_n = len(pool) if basis == "capable" else 0
     return {"choice": choice, "passed_over": passed, "stats": stats, "author_maker": author_maker,
-            "explored": explored["worker"] if explored else None,
+            "explored": explored["worker"] if explored else None, "explored_free": free_slot is not None,
             "load_ratios": {c["worker"]: load_ratio(c) for c in candidates},
             "assessments": assessments, "basis": basis, "capable_count": capable_n, "judged_first": judged_first,
             "best_standing": best, "passed_detail": detail, "floors": floors,
@@ -561,7 +590,8 @@ def retry_choice(candidates, records, availability, kind, difficulty, rejected, 
     else is usable). Returns {"choice", "step", "assessments", ...}; step is "same", "better",
     "strongest" or "only", and choice is None when nobody is usable. Pure; the caller supplies facts."""
     now = float(now or 0)
-    eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of)
+    eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of,
+                                                     difficulty)
     assessments, best = _assess_all(eligible, stats, kind, difficulty, floors)
     key, _rate, _load = _make_key(stats, kind, difficulty, prefer)
     out = {"choice": None, "step": None, "passed_over": passed, "stats": stats, "author_maker": author_maker,
@@ -676,8 +706,9 @@ def explain_choice(result, kind, difficulty):
         if a is not None:
             lines.append(evidence_line(a, kind, difficulty, choice, basis))
         if result.get("explored"):
-            lines.append("this is an exploration pick: %s was the usual choice, passed over once so a cheaper "
-                         "thin-record worker gathers evidence" % result["explored"])
+            lines.append("this is an exploration pick: %s was the usual choice, passed over once so %s gathers evidence"
+                         % (result["explored"], "an unproven worker that costs nothing extra"
+                            if result.get("explored_free") else "a cheaper thin-record worker"))
         if result.get("author_maker"):
             choice_maker = choice.get("maker") or maker_of(choice.get("model") or choice["worker"])
             if choice_maker != result["author_maker"]:

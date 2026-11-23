@@ -233,6 +233,8 @@ def main(args=()):
                 store.log_error("watch-commit-notice", e)
         elif "--after" in args or ev in AFTER_EVENTS:
             after(payload)
+            from . import discovery
+            discovery.after_tool(payload)  # the host's capability listing and delegation tool: what it can reach
             from . import unitguard
             unitguard.after(payload)
     except Exception as e:  # fail open: a tool call must never be held up by measurement

@@ -90,6 +90,12 @@ present; nothing here names one. Read on demand: `sisi delegate guide`.
   worker: find current prices and software-engineering benchmark standing,
   then record them. Treat a newly appeared model as unproven: low-stakes
   tasks first, checked one level more carefully, until its record is thick.
+- Workers appear after sisi is installed. A new command-line tool is named once at session
+  start (`sisi workers learn NAME` prints the brief for the cheap worker that learns it);
+  what the host can reach is learned from its own capability listing and delegation calls.
+  Either way a new worker is unproven: routine work only, a free or flat one tried more
+  often, every result checked with at least the tests or a read of the diff, until its
+  judged record decides.
 - Orchestration legwork is delegable like any other legwork: discovery,
   price and benchmark research, routing lookups, first-pass review, and
   summarising the record can all go to a fast, cheap worker. The judgement
