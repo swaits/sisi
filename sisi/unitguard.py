@@ -22,9 +22,26 @@ here lets the call through.
 Entry points for sisi/watch.py: `before(payload)` (True when it refused and printed the host's
 refusal) and `after(payload)`. For the gate and `sisi unit pause`: `bound_fresh`, `verdict`.
 """
-import fnmatch, hashlib, json, os, re, shlex, sys, time
+import json, os, re, sys, time
 
-from . import assure, contract as C, paths as P, risk, store
+from . import paths as P, store
+
+
+class _Lazy:
+    """A module imported on first use: this file is loaded by every tool-call hook, and most calls (a read, a
+    search) end before they need the contract, assurance or risk code."""
+
+    def __init__(self, name):
+        self._name, self._mod = name, None
+
+    def __getattr__(self, attr):
+        if self._mod is None:
+            import importlib
+            self._mod = importlib.import_module("sisi." + self._name)
+        return getattr(self._mod, attr)
+
+
+assure, C, risk = _Lazy("assure"), _Lazy("contract"), _Lazy("risk")
 
 CLAIM_RE = re.compile(r"\bsisi\b[^\n;&|]*?\b(?:contract\s+init|unit\s+(?:continue|resume|park))\b")
 MAX_LINES = 12
@@ -95,6 +112,7 @@ def unit_key(project, c):
 
 
 def _act_path(key):
+    import hashlib
     return os.path.join(P.state(), "unitguard", hashlib.sha1(key.encode()).hexdigest()[:16] + ".json")
 
 
@@ -304,6 +322,7 @@ def bound_fresh(sess, project, c):
 # ---------------------------------------------------------------- what the work is, how risky
 
 def _ignored(rel):
+    import fnmatch
     p = rel.replace(os.sep, "/").lower()
     return any(fnmatch.fnmatchcase(p, g.lower()) or (g.startswith("**/") and fnmatch.fnmatchcase(p, g[3:].lower()))
                or (g.endswith("/**") and p.startswith(g[:-2].lower())) for g in _list("ignore_changed"))
@@ -327,6 +346,7 @@ def _is_sisi(rel):
 
 
 def _floor_sig(project):
+    import hashlib
     """Which risk tables are in force: a change to any of them makes every remembered floor stale."""
     parts = []
     for f in (P.canon("risk.json"), P.data_file("risk.json"), P.overlay_dir("risk-adjustments.json"),
@@ -543,6 +563,7 @@ def _norm_lines(cmd):
 def shell_targets(cmd, cwd):
     """Best-effort paths a shell command writes: redirects, tee, sed/perl -i, cp/mv/install/ln, rm/touch/mkdir, dd of=.
     What cannot be told from the text (an interpreter, a script) is left to the after-tool snapshot."""
+    import shlex
     try:
         lex = shlex.shlex(_norm_lines(cmd), posix=True, punctuation_chars=True)
         lex.whitespace_split = True
@@ -598,6 +619,7 @@ def shell_targets(cmd, cwd):
 
 def _is_sisi_command(cmd):
     """Every command of the line is sisi itself: it writes only personal data and the unit's own files."""
+    import shlex
     try:
         lex = shlex.shlex(_norm_lines(cmd), posix=True, punctuation_chars=True)
         lex.whitespace_split = True
