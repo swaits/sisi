@@ -323,8 +323,19 @@ def new_turn(sid, cwd=None, prompt=None):
         m["turn"] += 1
         m.update(calls=0, chars=0, ext=0, refusals=0, fails={}, ext_log=[], same_model_ok=False, unavail=None)
         m["prompts"] += 1
-        if m["prompts"] == 1 and text.lstrip()[:200].lower().startswith(brief_line()):
+        # A host may put its own context in front of a child's first prompt, so the brief's opening line is
+        # looked for near the top, not only at character zero. The session record is marked too: the contract
+        # guard and the gate read `subagent` there, and a worker must be a worker on every path.
+        if m["prompts"] == 1 and any(ln.strip().lower().startswith(brief_line())
+                                     for ln in text.lstrip()[:600].splitlines()):
             m["worker"] = True
+            try:
+                rec = store.load_session(sid) or {}
+                if not rec.get("subagent"):
+                    rec["subagent"] = True
+                    store.save_session(sid, rec)
+            except Exception as e:
+                store.log_error("orchestration-worker-mark", e)
     return None
 
 
