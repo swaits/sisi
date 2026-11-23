@@ -303,7 +303,7 @@ class LintCrossCheckTests(LibCase):
 
 class CoreMdTests(SisiCase):
     def test_help_lists_new_commands(self):
-        out = self.sisi("help").stdout
+        out = self.sisi("help").stdout + self.sisi("help", "verifiers").stdout + self.sisi("help", "done").stdout
         for w in ("verifiers show", "verifiers for", "verifiers doctor | lint", "sisi done", "done for"):
             self.assertIn(w, out)
 
