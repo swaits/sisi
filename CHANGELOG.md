@@ -6,6 +6,18 @@ All notable changes to this project are recorded here. The format follows
 
 ## Unreleased
 
+### Added
+
+- The durable work-unit record: `sisi unit close|pause|show|list`, an archive per unit in the
+  project, one summary line per unit in the user store, five delivery statuses, the policy
+  version, start and closing commits. See docs/records.md.
+- Verification with five statuses, selection by change (`when_changed`), reuse of results on
+  identical inputs, `covers`, `mandatory` and `independent` on checks, the `approach` object, and
+  refusal of checks that cannot fail. `sisi contract waive` records a deviation.
+- Telemetry with a class on every value, the eight-dimension scorecard, and `sisi status` as the
+  one report (recent units, then trends by project, risk profile, model and policy version).
+- Scratch pruning of old session state, on a counter at session start.
+
 ### Removed
 
 - `sisi note` and `sisi propose`: use `sisi retro` or `sisi learn`. Existing notes and proposal
@@ -17,6 +29,8 @@ All notable changes to this project are recorded here. The format follows
 - `sisi build-canon` and `sisi canon cost` as public commands; the functions remain for install
   and other code, and `sisi doctor` now shows the always-loaded size.
 - `sisi migrate` as a command; `sisi update` performs the migration.
+- `sisi time`, `sisi scoreboard` and the old `sisi status` counts; the `awaiting-human` and
+  `timeout` result statuses (a timeout is `not-run (timed out)`).
 
 ### Changed
 

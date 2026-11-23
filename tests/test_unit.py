@@ -283,6 +283,16 @@ class NeverLostTests(UnitCase):
         self.assertEqual(open(p, "rb").read(), before)
         self.assertTrue(os.path.exists(os.path.join(self.proj, ".sisi", "units", "proj-2.json")))
 
+    def test_archive_record_never_replaces_an_existing_archive(self):
+        """R-10.2-1: two writers racing for one id: the first record stays, byte for byte."""
+        path, created = U.archive_record({"id": "u", "v": 1}, self.proj)
+        self.assertTrue(created)
+        first = open(path, "rb").read()
+        path2, created2 = U.archive_record({"id": "u", "v": 2}, self.proj)
+        self.assertFalse(created2)
+        self.assertEqual(open(path, "rb").read(), first)
+        self.assertEqual([n for n in os.listdir(os.path.dirname(path)) if ".tmp" in n], [])
+
     def test_an_interrupted_write_leaves_no_partial_archive(self):
         """R-10.2-1: the archive appears whole or not at all."""
         self.start()
