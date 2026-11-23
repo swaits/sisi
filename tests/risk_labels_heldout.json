@@ -6,14 +6,13 @@
   {"path": "web/src/assets/icons/logo.svg", "floor": "trivial", "reason": "Vector image asset."},
   {"path": "web/src/styles/button.css", "floor": "trivial", "reason": "Styling only."},
   {"path": "app/static/css/theme-dark.scss", "floor": "trivial", "reason": "Dark theme colours, styling only."},
-  {"path": "mobile/ios/Assets.xcassets/hero.imageset/hero@2x.png", "floor": "trivial", "reason": "Image asset for the iOS app."},
+  {"path": "mobile/ios/Assets.xcassets/hero.imageset/hero-2x.png", "floor": "trivial", "reason": "Image asset for the iOS app."},
   {"path": "docs/adr/0007-caching-strategy.md", "floor": "trivial", "reason": "Decision record, documentation only."},
   {"path": "pkg/parser/README.md", "floor": "trivial", "reason": "Documentation about parsing code, not the code itself."},
   {"path": "services/ledger/docs/payments.md", "floor": "trivial", "reason": "Documentation about payments, changes no behaviour."},
-  {"path": "examples/env/.env.example", "floor": "trivial", "reason": "Template with placeholder values; not read by production."},
+  {"path": "examples/env/.env.example", "floor": "isolated", "reason": "Template with placeholder values; not read by production.", "relabelled": "lead ruling 1: a template of settings documents the configuration surface; isolated is acceptable"},
   {"path": "LICENSE", "floor": "trivial", "reason": "Licence text."},
   {"path": "docs/glossary.txt", "floor": "trivial", "reason": "Plain text glossary."},
-
   {"path": "web/src/components/locksmith/LocksmithBadge.tsx", "floor": "isolated", "reason": "A UI badge; the name is a word, not an auth feature."},
   {"path": "web/src/pages/recipes/parsley-soup.tsx", "floor": "isolated", "reason": "One recipe page component."},
   {"path": "src/helpers/payload.py", "floor": "isolated", "reason": "Generic helper, behaviour limited to its module."},
@@ -29,7 +28,6 @@
   {"path": "src/utils/hookah-timer.ts", "floor": "isolated", "reason": "A countdown timer utility; the name is incidental."},
   {"path": "web/src/components/Authors/AuthorList.tsx", "floor": "isolated", "reason": "Renders a list of authors; no auth logic."},
   {"path": "src/notifications/welcome_email.py", "floor": "isolated", "reason": "Builds one email template, contained behaviour."},
-
   {"path": "src/finance/rounding.py", "floor": "logic", "reason": "Money rounding rules; subtle mistakes give wrong amounts."},
   {"path": "pkg/tax/brackets.go", "floor": "logic", "reason": "Tax bracket arithmetic, a numeric rule."},
   {"path": "crates/codec/src/base64.rs", "floor": "logic", "reason": "Encoding logic with a wide input space."},
@@ -44,9 +42,8 @@
   {"path": "src/Money.swift", "floor": "logic", "reason": "Money type arithmetic and formatting."},
   {"path": "tests/test_auth_token_parser.py", "floor": "logic", "reason": "Test of critical token parsing, so the test carries the logic floor."},
   {"path": "tests/test_migration_backfill.py", "floor": "logic", "reason": "Test of data migration code, carries the logic floor."},
-
   {"path": "api/openapi.yaml", "floor": "integration", "reason": "Public API definition that clients depend on."},
-  {"path": "proto/payments/v2/payments.proto", "floor": "integration", "reason": "Public service interface definition."},
+  {"path": "proto/payments/v2/payments.proto", "floor": "critical", "reason": "Public service interface definition.", "relabelled": "lead ruling 7: payments interface moves money; critical"},
   {"path": "package-lock.json", "floor": "integration", "reason": "Lockfile; third-party code changes come in here."},
   {"path": "Cargo.lock", "floor": "integration", "reason": "Lockfile pinning third-party crates."},
   {"path": "go.mod", "floor": "integration", "reason": "Dependency manifest."},
@@ -59,7 +56,6 @@
   {"path": "pyproject.toml", "floor": "integration", "reason": "Build and dependency configuration."},
   {"path": "Gemfile.lock", "floor": "integration", "reason": "Lockfile for third-party gems."},
   {"path": "api/graphql/schema.graphql", "floor": "integration", "reason": "Public GraphQL interface definition."},
-
   {"path": "db/migrations/20260101_add_invoice_status.sql", "floor": "data", "reason": "Schema migration changing stored invoice shape."},
   {"path": "migrations/0042_drop_legacy_sessions.py", "floor": "data", "reason": "Migration that drops a table of stored data."},
   {"path": "db/schema.sql", "floor": "data", "reason": "Database schema definition."},
@@ -73,7 +69,6 @@
   {"path": "prisma/schema.prisma", "floor": "data", "reason": "Database schema source."},
   {"path": "db/seeds/reference_countries.sql", "floor": "data", "reason": "Seed rows written into stored reference data."},
   {"path": "migrations/V7__add_index_orders.sql", "floor": "data", "reason": "Migration adding an index to stored orders."},
-
   {"path": "src/auth/session_token.ts", "floor": "critical", "reason": "Issues and validates session tokens."},
   {"path": "internal/authz/policy.go", "floor": "critical", "reason": "Authorisation policy decisions."},
   {"path": "crates/crypto/src/aes_gcm.rs", "floor": "critical", "reason": "Cryptographic primitive usage."},
@@ -87,7 +82,6 @@
   {"path": "src/main/java/com/acme/security/RoleChecker.java", "floor": "critical", "reason": "Role-based access check."},
   {"path": "Sources/Keychain/KeychainStore.swift", "floor": "critical", "reason": "Stores credentials in the system keychain."},
   {"path": "services/auth/passwordless/magic_link.py", "floor": "critical", "reason": "Login link generation, an authentication flow."},
-
   {"path": "VERSION", "floor": "release", "reason": "Version marker file."},
   {"path": "scripts/release.sh", "floor": "release", "reason": "Release machinery."},
   {"path": ".release-please-manifest.json", "floor": "release", "reason": "Release tooling state."},
