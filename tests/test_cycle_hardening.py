@@ -548,3 +548,300 @@ class Duplicates(Base):
         r = self.apply([{"action": "disable-rule", "rule_id": "deliver-fast"}], base=L.store_base())
         self.assertIn("already has a change", r.stderr)
         self.assertEqual(len(self.pending()), 1)
+
+
+class Rules(Base):
+    """R-11.5-10, R-11.5-11, R-11.7-2 (item 6): rule text is an addition by default."""
+
+    def add(self, lid, rid="deliver-fast", text="Hand the owner a first useful result early, then refine it.",
+            shortens="nothing: every sentence of the rule is needed", **kw):
+        a = {"action": "promote", "learning": lid, "mechanism_kind": "rule-add", "rule_id": rid, "add": text}
+        if shortens is not None:
+            a["shortens"] = shortens
+        a.update(kw)
+        return a
+
+    def test_rule_add_goes_before_why_waits_for_a_one_project_learning_and_prints_the_size(self):
+        from sisi import overlay
+        _contract(self)
+        self.git_init()
+        self.retro(*PROMOTE[1:])
+        r = self.apply([self.add("L-0001", text="Name the first useful result in the plan. Hand it over early.")])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.pending()), 1)
+        self.assertEqual(self.pending()[0]["action"]["mechanism_kind"], "rule-add")
+        self.assertNotIn("Name the first useful", overlay.render())
+        listing = self.sisi("approve").stdout
+        self.assertIn("Name the first useful result in the plan.", listing)
+        self.assertIn("what it shortens: nothing", listing)
+        with terminal():
+            r = self.sisi("approve", "P-0001", "--yes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"the loaded rulebook went from \d+ to \d+ lines, \d+ to \d+ characters")
+        body = overlay.render().split("{#deliver-fast}", 1)[1].split("{#orchestrate}", 1)[0]
+        self.assertLess(body.index("Hand it over early."), body.index("Why:"))
+        self.assertIn("Never buy speed with a weaker check or a smaller result. Name the first", body)  # same paragraph
+
+    def test_the_applied_message_prints_the_size_before_and_after(self):
+        """Item 6: an applied rule-add (a learning that earned its scope) says what it cost the loaded rulebook."""
+        _contract(self)
+        self.retro(*PROMOTE[1:])
+        self.earn("L-0001")
+        r = self.apply([self.add("L-0001")], base=L.store_base())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"went from \d+ to \d+ lines, \d+ to \d+ characters")
+        self.assertEqual(self.pending(), [])
+
+    def test_twenty_sentences_are_refused_and_so_is_an_add_that_names_nothing_it_shortens(self):
+        """Item 6 abuse case: 20 sentences in one add; twenty adds that say nothing about what they shorten."""
+        _contract(self)
+        self.retro(*PROMOTE[1:])
+        twenty = " ".join("Sentence number %d says something about delivering." % i for i in range(20))
+        r = self.apply([self.add("L-0001", text=twenty)])
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("one or two plain sentences", r.stderr)
+        ids = ["L-0001"] + [self.another(n) for n in range(1, 20)]
+        rules = ["deliver-fast", "orchestrate", "size-by-risk", "own-the-outcome"]
+        acts = [self.add(lid, rid=rules[n % 4], shortens=None) for n, lid in enumerate(ids)]
+        r = self.apply(acts, base=L.store_base())
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("20 problem(s)", r.stderr)  # all of them are reported, and the output stays short
+        self.assertLessEqual(len(r.stderr.splitlines()), 15)
+        self.assertGreaterEqual(r.stderr.count("needs \"shortens\""), 10)
+        self.assertFalse(self.exists("overlay/rules"))  # nothing was applied
+        # a shortens that names no rule and does not say nothing is refused too
+        r = self.apply([self.add("L-0001", shortens="some other thing entirely")])
+        self.assertIn("must name an existing rule id", r.stderr)
+
+    def test_the_rulebook_budget_still_holds_and_is_reported_with_the_other_problems(self):
+        _contract(self)
+        self.retro(*PROMOTE[1:])
+        big = "## Huge {#huge-rule}\n\n" + "\n".join("line %d of the rule" % i for i in range(400)) + "\n\nWhy: no.\n"
+        r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-replace",
+                         "rule_id": "huge-rule", "rule_text": big}])
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("needs \"shortens\"", r.stderr)  # both problems of the one action are not hidden: first found
+        r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-replace",
+                         "rule_id": "huge-rule", "rule_text": big, "shortens": "nothing: it is all new"}])
+        self.assertIn("breaks the rulebook budget", r.stderr)
+
+    def test_protected_rules_and_unknown_rules_are_refused_for_rule_add(self):
+        """R-11.7-2: protected under its id and under a retired id; the existing tests keep the rest."""
+        _contract(self)
+        self.retro(*PROMOTE[1:])
+        r = self.apply([self.add("L-0001", rid="verify-enough")])
+        self.assertIn("protected", r.stderr)
+        r = self.apply([self.add("L-0001", rid="no-such-rule")])
+        self.assertIn("no rule 'no-such-rule'", r.stderr)
+
+    def test_rule_text_is_gone_with_a_message_that_says_what_to_use(self):
+        _contract(self)
+        self.retro(*PROMOTE[1:])
+        r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
+                         "rule_id": "deliver-fast", "rule_text": "## X {#deliver-fast}\n\nA.\n\nWhy: b.\n"}])
+        self.assertIn("use rule-add", r.stderr)
+
+
+class Check(Base):
+    """R-11.5-6, R-16-7 (items 7 and 10): check lists every problem at once, each with how to fix it."""
+
+    def test_one_check_lists_every_problem(self):
+        _contract(self)
+        self.git_init()
+        ids = [self.another(n) for n in range(6)]
+        rows = self.rows()
+        rows[5]["flagged_not_working"] = True
+        L.save_learnings(rows, "t", touched=rows, via="test")
+        acts = [
+            {"action": "reject", "learning": ids[0], "why": "not useful"},
+            {"action": "promote", "learning": ids[1], "mechanism_kind": "rule-add", "rule_id": "deliver-fast",
+             "add": "Hand the owner a first useful result early."},
+            {"action": "promote", "learning": ids[2], "mechanism_kind": "contract-requirement",
+             "when": "csv import", "require_kind": "parsing"},
+            {"action": "promote", "learning": "L-0099", "mechanism_kind": "risk", "pattern": "x", "profile": "critical"},
+            {"action": "promote", "learning": ids[3], "mechanism_kind": "command-check", "cmd": "echo ok"},
+            {"action": "frobnicate", "learning": ids[4]},
+        ]
+        p = self.cycle_file(acts, base="stale")
+        r = self.sisi("cycle", "check", p)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("7 problem(s)", r.stderr)
+        for fragment in ("stale or missing \"base\"", "generic", "needs \"shortens\"", "not something the code evaluates",
+                         "no learning 'L-0099'", "unknown action 'frobnicate'", "flagged-not-working"):
+            self.assertIn(fragment, r.stderr)
+        self.assertLessEqual(len(r.stderr.splitlines()), 15)
+        # each problem says how to fix it; fix them all and the next check passes
+        acts = [{"action": "reject", "learning": ids[0], "why": "the importer fix removed the %s row loss" % "alpha"},
+                {"action": "promote", "learning": ids[1], "mechanism_kind": "rule-add", "rule_id": "deliver-fast",
+                 "add": "Hand the owner a first useful result early.", "shortens": "nothing: every sentence is needed"},
+                {"action": "promote", "learning": ids[2], "mechanism_kind": "contract-requirement",
+                 "when": "data/*.csv", "require_kind": "parsing"},
+                {"action": "revert", "learning": ids[5], "why": "recurred twice since promotion"}]
+        r = self.sisi("cycle", "check", self.cycle_file(acts))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("valid: 4 action(s)", r.stdout)
+
+    def test_a_reject_with_a_generic_reason_is_refused_and_a_specific_one_is_not(self):
+        _contract(self)
+        self.retro(*PROMOTE[1:])
+        r = self.apply([{"action": "reject", "learning": "L-0001", "why": "not useful"}])
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("generic", r.stderr)
+        self.assertEqual(self.rows()[0]["status"], "proposed")
+        r = self.apply([{"action": "reject", "learning": "L-0001",
+                         "why": "f.txt is generated now, so a content check on it cannot fail"}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.rows()[0]["status"], "rejected")
+
+    def test_merge_into_another_learning(self):
+        _contract(self)
+        self.retro(*PROMOTE[1:])
+        self.retro("--new", *PROMOTE[1:])  # the same words again, as its own learning: L-0002
+        self.assertEqual(len(self.rows()), 2)
+        r = self.apply([{"action": "merge", "learning": "L-0002", "into": "L-0001", "why": "same finding"}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rows = {x["id"]: x for x in self.rows()}
+        self.assertEqual((rows["L-0002"]["status"], rows["L-0002"]["merged_into"]), ("merged", "L-0001"))
+        self.assertEqual(rows["L-0001"]["status"], "proposed")
+        self.assertEqual(rows["L-0001"]["history"][-1]["learning"], "L-0002")
+        # into itself, into a learning that is gone, into one that shares nothing: refused
+        other = self.another(5)
+        for into, frag in (("L-0001", "different learning"), ("L-0099", "different learning"), (other, "share too little")):
+            r = self.apply([{"action": "merge", "learning": "L-0001", "into": into}], base=L.store_base())
+            self.assertEqual(r.returncode, 2)
+            self.assertIn(frag, r.stderr)
+        self.assertEqual(self.apply([{"action": "merge", "learning": other, "into": "L-0002"}],
+                                    base=L.store_base()).returncode, 2)  # into a merged (ended) learning
+
+    def test_apply_prints_what_took_effect_what_waits_and_what_was_refused_in_fifteen_lines(self):
+        self.git_init()
+        _contract(self)
+        ids = [self.another(n) for n in range(20)]
+        acts = []
+        for n, lid in enumerate(ids):
+            if n % 2:
+                acts.append({"action": "promote", "learning": lid, "mechanism_kind": "command-check", "cmd": "make x%d" % n})
+            else:
+                acts.append({"action": "reject", "learning": lid, "why": "the %s importer path was deleted last week" % lid})
+        r = self.apply(acts)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertLessEqual(len(lines), 15)
+        self.assertRegex(lines[0], r"cycle-0001 applied: 10 took effect, 10 wait for the owner, 0 refused")
+        self.assertIn("... and", r.stdout)
+
+    def test_status_learning_prints_only_the_learning_report_and_lessons_shows_one(self):
+        _contract(self)
+        self.retro(*PROMOTE[1:])
+        r = self.sisi("status", "--learning")
+        self.assertEqual(r.returncode, 0)
+        self.assertTrue(r.stdout.startswith("Learning loop"), r.stdout[:80])
+        self.assertNotIn("closed work units yet", r.stdout)
+        self.assertNotIn("recent units", r.stdout)
+        self.assertIn("by status: proposed 1", r.stdout)
+        one = self.sisi("lessons", "L-0001")
+        self.assertEqual(one.returncode, 0)
+        self.assertEqual(json.loads(one.stdout)["id"], "L-0001")
+        self.assertEqual(self.sisi("lessons", "L-0042").returncode, 2)
+        self.assertEqual(self.sisi("lessons", "show", "L-0001").stdout, one.stdout)
+
+
+class Brief(Base):
+    """R-11.1-14, R-11.5-4, R-16-10 (item 8): a small model can act on the brief alone."""
+
+    def many(self, n, long=False):
+        _contract(self)
+        words = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango".split()
+        for i in range(n):
+            w = words[i % 20] + str(i)
+            change = "make the %s importer reject every row with a negative amount, and say in the summary which row it rejected" % w
+            if long:
+                change += ", " + "and keep a count of every rejected row by reason in the run summary " * 12
+            r = self.retro("--new", "--finding", "the %s importer accepted a negative amount in row %d" % (w, i),
+                           "--cause", "no check covered the %s amount column" % w, "--impact", "correctness",
+                           "--disposition", "promote", "--change", change, "--mechanism", "verification",
+                           "--expect", "negative amounts in %s are caught" % w, "--validate", "run the %s importer on a bad file" % w)
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_the_brief_is_small_complete_and_limited_to_eight_learnings(self):
+        self.many(30, long=True)
+        text = self.sisi("cycle").stdout
+        self.assertLessEqual(len(text), 6000, len(text))
+        listed = [l for l in text.splitlines() if l.startswith("- L-")]
+        self.assertLessEqual(len(listed), 8)
+        self.assertGreaterEqual(len(listed), 2)
+        self.assertIn("more wait for the next cycle", text)
+        self.assertNotIn("sisi cycle help", text)
+        for needle in ("command-check", "contract-requirement", "rule-add", "rule-replace", "library", "risk", "routing",
+                       "benchmark", "reject", "merge", "revise", "revert",
+                       "trivial|isolated|logic|integration|data|critical|release", "general|concurrency",
+                       "Takes effect at once", "Held for the owner", "Refused", "recipe|verifier"):
+            self.assertIn(needle, text)
+        self.assertNotRegex(text, r"(?m)^\s*(expect|validate):\s*$")
+        self.assertNotIn("None", text)
+
+    def test_each_learning_has_its_full_statement_origin_unit_and_commit_flag(self):
+        self.many(3)
+        rows = self.rows()
+        rows[1]["source_unit"] = rows[2]["source_unit"] = "another-unit"
+        L.save_learnings(rows, "t", touched=rows, via="test")
+        self.archive_unit("a" * 40, "b" * 40, uid=self.rows()[0]["source_unit"])
+        text = self.sisi("cycle").stdout
+        blocks = text.split("\n- L-")[1:]
+        self.assertEqual(len(blocks), 3)
+        r0 = self.rows()[0]
+        full = r0["proposed"]["description"]
+        self.assertGreater(len(full), 95)  # the old brief cut at 95
+        self.assertIn(full, text)
+        self.assertIn("origin: proj, unit %s, commits recorded: yes" % r0["source_unit"], text)
+        self.assertIn("commits recorded: no", text)
+        self.assertIn("expected effect: negative amounts", text)
+
+    def test_the_most_recurrent_come_first_then_the_oldest_and_flagged_always_appear(self):
+        self.many(12)
+        rows = self.rows()
+        by = {r["id"]: r for r in rows}
+        for n in (9, 10):  # L-0010 and L-0011 recurred in two more units
+            by["L-%04d" % (n + 1)]["provenance"] += [{"unit": "x%d" % k, "project": "p", "kind": "recurrence"} for k in (1, 2)]
+        rows[11]["flagged_not_working"] = True
+        L.save_learnings(rows, "t", touched=rows, via="test")
+        text = self.sisi("cycle").stdout
+        order = [l.split()[1] for l in text.splitlines() if l.startswith("- L-")]
+        self.assertEqual(order[0], "L-0012")  # flagged leads
+        self.assertEqual(order[1:3], ["L-0010", "L-0011"])  # most recurrent
+        self.assertEqual(order[3:6], ["L-0001", "L-0002", "L-0003"])  # then the oldest
+        self.assertIn("FLAGGED NOT WORKING", text)
+
+    def test_every_example_in_the_brief_is_valid_json_and_names_a_known_kind(self):
+        from sisi import cycle
+        text = cycle.format_text("b")
+        n = 0
+        for line in text.splitlines():
+            if not line.startswith(" {"):
+                continue
+            for part in line.replace("   {", "\n{").splitlines():
+                part = part.strip().replace('"revise"|"revert"', '"revise"').replace("{...}", "{}")
+                d = json.loads(part)
+                self.assertIn(d["action"], ("promote", "reject", "merge", "revise"))
+                if d["action"] == "promote":
+                    self.assertIn(d["mechanism_kind"], cycle.MECHANISM_KINDS)
+                n += 1
+        self.assertEqual(n, 11)
+
+    def test_a_cheap_agent_can_write_the_file_from_the_brief_alone(self):
+        """The examples, filled in with the ids from the brief, check clean."""
+        self.git_init()
+        self.many(4)
+        text = self.sisi("cycle").stdout
+        ids = [l.split()[1] for l in text.splitlines() if l.startswith("- L-")]
+        base_value = text.split('{"base": "', 1)[1].split('"', 1)[0]
+        acts = [{"action": "promote", "learning": ids[0], "mechanism_kind": "risk", "pattern": "importers/**", "profile": "critical"},
+                {"action": "reject", "learning": ids[1], "why": "the importers directory was deleted in the last release"},
+                {"action": "promote", "learning": ids[2], "mechanism_kind": "contract-requirement",
+                 "when": "importers/**", "require_kind": "parsing"}]
+        p = os.path.join(self.tmp, "c.json")
+        with open(p, "w") as f:
+            json.dump({"base": base_value, "actions": acts}, f)
+        r = self.sisi("cycle", "check", p)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.sisi("cycle", "apply", p).returncode, 0)

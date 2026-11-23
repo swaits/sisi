@@ -120,7 +120,7 @@ class Base(SisiCase):
                        "--mechanism", "verification", "--expect", "the %s case is caught" % word,
                        "--validate", "run the %s fixture" % word)
         self.assertEqual(r.returncode, 0, r.stderr)
-        return "L-%04d" % (n + 1)
+        return self.rows()[-1]["id"]
 
     def set_config(self, cfg):
         os.makedirs(self.data, exist_ok=True)
@@ -763,7 +763,7 @@ class Mechanisms(Base):
         bad = [{"action": "promote", "learning": "L-0002", "mechanism_kind": "risk",
                 "pattern": "y/**", "profile": "logic"}]
         self.assertNotEqual(self.apply(bad).returncode, 0)
-        good = [{"action": "reject", "learning": "L-0001", "why": "wrong idea"}]
+        good = [{"action": "reject", "learning": "L-0001", "why": "the f.txt content check was replaced by a type check"}]
         self.assertEqual(self.apply(good).returncode, 0)
         self.assertEqual(self.rows()[0]["status"], "rejected")
 

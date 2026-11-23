@@ -1,39 +1,37 @@
 """The learning cycle: proposed learnings become mechanisms in the user store.
 
-Due by a counter (no scheduler). A worker writes a cycle file; `sisi cycle apply FILE`
-treats it as untrusted input, validates and plans everything before writing anything,
-replays command checks against the originating unit's commits in a temporary worktree
-(one replay implementation: evaluate.validate_command), refuses protected rules, parks
-consequential changes for the owner (`sisi approve`), and commits each change to the user
-store so revert is exact. What cannot be replayed is `unvalidated` and always reported as
-such; nothing is labelled `validated` without a validation run that passed.
+Due by a counter (no scheduler): learnings a cycle can act on (`proposed`, not tool changes, not
+waiting for the owner). `sisi cycle` prints a brief a small agent can act on alone: the file format
+with an example per action, every enumerated value, what each kind of action does, and at most
+eight learnings with statement, origin and whether commits are recorded, in at most 6000
+characters. The agent writes a cycle file. `sisi cycle check FILE` runs nothing and lists every
+problem at once; `sisi cycle apply FILE` treats the file as untrusted input, validates and plans
+everything before writing anything, replays command checks (one replay implementation:
+evaluate.validate_command) only between the two commits the learning's own record holds, in an
+exported copy of each tree with no history and a reduced environment, refuses protected rules,
+parks consequential changes for the owner (`sisi approve`, which needs the word typed at the
+terminal), and commits each change to the user store so revert is exact. What cannot be replayed is
+`unvalidated` and always reported as such; nothing is labelled `validated` without a validation run
+that passed.
 
 What a mechanism reaches is decided here from the learning, never from the cycle file: a
 mechanism is written with the learning's id and the scope the learning has *earned*
 (learning.earned_scope: its origin project, unless it was seen in two units in two projects or
 is an owner statement made at user scope). A scope or `every_project` flag in the file is only
 a request for more; a request for more than the learning has earned, any enforced command that
-is not proven in its origin project, any risk pattern that lowers a profile, any replacement or
-disabling of a rule, and any rule or library entry from a learning confined to one project
-wait for the owner. Readers filter by project; nothing reads a flag the cycle author wrote.
+is not proven in its origin project, any risk pattern that lowers a profile, any whole-rule
+replacement or disabling of a rule, any sentence added to a rule or library entry from a learning
+confined to one project, and any mechanism for a project that no longer exists wait for the owner.
+Readers filter by project; nothing reads a flag the cycle author wrote.
 
-Cycle file (JSON):
-  {"base": "<store base from `sisi cycle` brief>", "actions": [
-    {"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check",
-     "cmd": "...", "expect": {"exit": 0}, "before": "<sha>", "after": "<sha>"},
-    {"action": "promote", "learning": "L-0002", "mechanism_kind": "contract-requirement",
-     "when": "csv import", "require_kind": "property"},
-    {"action": "promote", "learning": "L-0003", "mechanism_kind": "rule-text",
-     "rule_id": "new-rule", "rule_text": "## Title {#new-rule}\\n\\n... Why: ..."},
-    {"action": "promote", "learning": "L-0004", "mechanism_kind": "library",
-     "library_kind": "recipe"|"verifier", "entry_text": "..."},
-    {"action": "promote", "learning": "L-0005", "mechanism_kind": "risk",
-     "pattern": "src/auth/**", "profile": "critical"},
-    {"action": "promote", "learning": "L-0006", "mechanism_kind": "routing",
-     "kind": "impl", "difficulty": 2, "prefer": "worker-x"},
-    {"action": "promote", "learning": "L-0007", "mechanism_kind": "benchmark",
-     "name": "csv-import", "case": {"...": "..."}},
-    {"action": "revise"|"revert"|"reject", "learning": "L-0008", "why": "..."}]}
+A learning waiting for the owner is `pending-approval`; a change to sisi itself is `backlog` (it
+goes out with `sisi promote --export`). Neither is in a brief or counts towards "due".
+
+Actions (the brief carries a filled example of each): promote with mechanism_kind
+command-check, contract-requirement (`when` is a risk profile or a path glob), rule-add (one or
+two sentences before a rule's Why, naming what it shortens), rule-replace (the whole rule, always
+the owner's), library, risk, routing, benchmark; reject (a specific reason), merge (into another
+learning), revise, revert; disable-rule.
 
 Mechanism data files (user store overlay); every entry carries learning, scope, project:
   enforced.json {"checks": [{"type": "command"|"contract-requirement", "learning": id, ...}]}
@@ -222,28 +220,109 @@ def due_notice(session=None):
     return "\n".join(lines)
 
 
+BRIEF_MAX_LEARNINGS = 8
+BRIEF_MAX_CHARS = 6000
+STATEMENT_MAX = 600  # a longer statement is cut, with the command that shows it whole
+
+FORMAT = """Write one JSON file, then run `sisi cycle check FILE` (runs nothing; lists every problem at once) and
+`sisi cycle apply FILE`. Never run `sisi approve`: only the owner decides what waits.
+{"base": "@BASE@", "actions": [ one action per learning below; leave a learning out to leave it ]}
+Actions (L-0000 stands for an id listed below):
+ {"action":"promote","learning":"L-0000","mechanism_kind":"command-check","cmd":"grep -q fixed f.txt","expect":{"exit":0}}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"contract-requirement","when":"src/auth/**","require_kind":"parsing"}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"rule-add","rule_id":"deliver-fast","add":"One or two sentences.","shortens":"nothing: <why>"}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"rule-replace","rule_id":"deliver-fast","rule_text":"## Title {#deliver-fast}\\n\\nBody.\\n\\nWhy: ...","shortens":"..."}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"library","library_kind":"recipe","entry_text":"---\\nid: x\\n---\\n..."}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"risk","pattern":"src/auth/**","profile":"critical"}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"routing","kind":"impl","difficulty":2,"prefer":"worker-x"}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"benchmark","name":"csv-import","case":{...}}
+ {"action":"reject","learning":"L-0000","why":"names the evidence: the retry loop in sync.py was already removed"}
+ {"action":"merge","learning":"L-0000","into":"L-9999","why":"same cause"}   {"action":"revise"|"revert","learning":"L-0000","why":"..."}
+Values: mechanism_kind @KINDS@; risk profile @PROFILES@; require_kind @REQKINDS@;
+ library_kind recipe|verifier; difficulty 1|2|3; when = a risk profile (that or higher) or a path glob.
+A command check: cmd must name a path the fix changed; apply replays it in a copy of the tree without .git, between the
+ commits recorded for the learning (never ones you write): it must fail at the start and pass at the end. No commits: it waits.
+Takes effect at once: reject, merge, revise, revert; risk (not lowering), routing, benchmark, contract-requirement; a replayed
+ command check; rule-add and library only from a learning seen in 2 units in 2 projects.
+Held for the owner: rule-replace, disable-rule, rule-add or library from a one-project learning, a command check that was not
+ replayed, risk that lowers a profile, scope beyond what was earned, a project gone from disk.
+Refused (whole file, every reason listed): protected rules (@PROTECTED@), a vacuous or failed replay, a generic reject reason,
+ a learning acted on twice or already waiting, a rule with a change waiting, a rulebook over @BUDGET@, a flagged learning left out.
+Rules you may change (id): @RULES@. Rulebook now @SIZE@. Adding to it means naming what it shortens, or "nothing: <why>".
+"""
+
+
+def _learning_block(r):
+    pr = r.get("proposed") or {}
+    prov = r.get("provenance") or []
+    units = len({p.get("unit") for p in prov})
+    projects = len({p.get("project") for p in prov})
+    stmt = " ".join(str(pr.get("description") or r.get("title") or "").split())
+    if len(stmt) > STATEMENT_MAX:
+        stmt = stmt[:STATEMENT_MAX].rstrip() + " ... (`sisi lessons %s` shows it whole)" % r["id"]
+    commits = "yes" if L.replay_commits(r) else "no"
+    lines = ["- %s [%s; earned scope %s; seen in %d unit(s), %d project(s)]" % (
+        r["id"], pr.get("mechanism") or "policy", L.earned_scope(r), units, projects),
+        "  statement: %s" % stmt,
+        "  origin: %s, unit %s, commits recorded: %s" % (os.path.basename(str(r.get("origin_project") or "").rstrip("/")) or "?",
+                                                        r.get("source_unit") or "?", commits)]
+    if r.get("expected_effect"):
+        lines.append("  expected effect: %s" % " ".join(str(r["expected_effect"]).split())[:160])
+    return "\n".join(lines)
+
+
+def _rank(rows):
+    """The most recurrent first, then the oldest; flagged learnings (which the cycle must act on) lead."""
+    def key(r):
+        prov = r.get("provenance") or []
+        return (0 if r.get("flagged_not_working") else 1, -len({p.get("unit") for p in prov}), str(r.get("created") or ""),
+                r["id"])
+    return sorted(rows, key=key)
+
+
+def format_text(base):
+    from . import risk, contract as _contract
+    rules = overlay.effective()[1]
+    prot = protected_rules()
+    ids = ", ".join(r["id"] for r in rules if r["id"] not in prot)
+    lines, chars = _book_size()
+    return (FORMAT.replace("@BASE@", base).replace("@KINDS@", "|".join(MECHANISM_KINDS))
+            .replace("@PROFILES@", "|".join(risk.PROFILES)).replace("@REQKINDS@", "|".join(_contract.KINDS))
+            .replace("@PROTECTED@", ", ".join(sorted(p for p in prot if p in {r["id"] for r in rules})))
+            .replace("@BUDGET@", "%d lines/%d characters" % (overlay.MAX_LINES, overlay.MAX_CHARS))
+            .replace("@RULES@", ids).replace("@SIZE@", "%d lines/%d characters" % (lines, chars)))
+
+
 def brief_text():
+    """The whole brief for a cheap agent working alone: the file format with one example per action,
+    every enumerated value, what happens to each kind of action, and at most BRIEF_MAX_LEARNINGS
+    learnings (flagged first, then the most recurrent, then the oldest), each with its statement,
+    origin project, source unit and whether commits are recorded, in at most BRIEF_MAX_CHARS."""
     rows = L.load_learnings()
     changed = L.monitor(rows)
     if changed:
         L.save_learnings(rows, "monitoring: %d learning(s) now monitored" % len(changed), touched=changed, via="cycle")
-    lines = ["Learning cycle brief. Base: %s" % L.store_base(rows), "",
-             "Write one cycle file (JSON, format in `sisi cycle help`) turning proposed "
-             "learnings into mechanisms. Prefer an executable mechanism over rule text. "
-             "A command check is replayed against its unit's commits and must fail before "
-             "the fix and pass after (the repository must be trusted and the command must exist "
-             "at both commits). A mechanism reaches only the scope its learning has earned; "
-             "anything wider, any command that is not proven, any replaced or disabled rule "
-             "waits for the owner. Protected rules (canon/protected.json) cannot be touched.", ""]
-    for r in proposed(rows):
-        lines.append("- %s [%s] %s (earned scope: %s)\n  change: %s\n  expect: %s  validate: %s"
-                     % (r["id"], r.get("proposed", {}).get("mechanism"), r.get("title"), L.earned_scope(r),
-                        r.get("proposed", {}).get("description"), r.get("expected_effect"),
-                        (r.get("validation") or {}).get("method")))
-    for r in L.flagged(rows):
-        lines.append("- %s FLAGGED NOT WORKING (%d recurrences since promotion): this cycle "
-                     "must revise or revert it." % (r["id"], r.get("recurrences_after_promotion", 0)))
-    return "\n".join(lines) + "\n"
+    base = L.store_base(rows)
+    flagged = {r["id"] for r in L.flagged(rows)}
+    todo = _rank([r for r in proposed(rows) if r["id"] not in flagged] + L.flagged(rows))
+    text = "Learning cycle brief.\n" + format_text(base)
+    blocks, left = [], 0
+    for r in todo[:BRIEF_MAX_LEARNINGS]:
+        if r["id"] in flagged:
+            blk = "- %s FLAGGED NOT WORKING (%d recurrences since promotion): act on it with revise or revert." % (
+                r["id"], r.get("recurrences_after_promotion", 0))
+        else:
+            blk = _learning_block(r)
+        if len(text) + sum(len(b) + 1 for b in blocks) + len(blk) + 120 > BRIEF_MAX_CHARS and r["id"] not in flagged:
+            left += 1
+            continue
+        blocks.append(blk)
+    left += max(0, len(todo) - BRIEF_MAX_LEARNINGS)
+    out = text + "Learnings (%d of %d; the most recurrent first, then the oldest):\n" % (len(blocks), len(todo)) \
+        + ("\n".join(blocks) if blocks else "(none a cycle can act on)") + "\n"
+    if left:
+        out += "%d more wait for the next cycle.\n" % left
+    return out
 
 
 # ---- replay validation (one implementation: evaluate.validate_command) -----------------
@@ -1175,40 +1254,52 @@ def cmd_approve(argv):
         return 2
 
 
-HELP = """sisi cycle: turn proposed learnings into mechanisms. JSON cycle file:
-  {"base": "<from `sisi cycle`>", "actions": [ ... ]}
-promote actions, by mechanism_kind:
-  command-check        {learning, cmd, expect?, before?, after?}  replayed in the origin project's trusted
-                       repository: it must exist at both commits, fail before and pass after
-  contract-requirement {learning, when, require_kind, max_rung?}
-  rule-text            {learning, rule_id, rule_text}   (protected rules refused)
-  library              {learning, library_kind: recipe|verifier, entry_text, entry_id?, replacing?}
-  risk                 {learning, pattern, profile}     -> overlay/risk-adjustments.json
-  routing              {learning, kind, difficulty?, prefer|avoid} -> overlay/routing-adjustments.json
-  benchmark            {learning, name, case:{...}}     -> overlay/benchmarks/<name>.json
-other actions: {action: revise|revert|reject, learning, why}; {action: disable-rule, rule_id}
-Every mechanism is written with its learning's id and the scope that learning has earned (its origin
-project unless it was seen in two units in two projects, or is an owner statement); a scope or
-every_project flag only asks for more. These wait for the owner (`sisi approve`, in a terminal):
-more scope than earned, a command not proven by replay, a risk pattern that lowers a profile, a
-replaced or disabled rule, a rule or library entry from a learning confined to one project.
-A cycle that ignores a flagged learning is refused. `sisi cycle revert` undoes only that cycle's changes.
-"""
+APPLY_LINES = 15  # what `apply` prints at most
+
+
+def _capped(lines, n=APPLY_LINES):
+    return lines if len(lines) <= n else lines[:n - 1] + ["... and %d more line(s)" % (len(lines) - n + 1)]
+
+
+def _summary(cid, lines):
+    """What took effect, what waits and what was refused, in at most APPLY_LINES lines."""
+    wait = [x for x in lines if "waits for the owner" in x]
+    took = [x for x in lines if x not in wait]
+    head = "%s applied: %d took effect, %d wait for the owner, 0 refused" % (cid, len(took), len(wait))
+    body = ["took effect: " + x for x in took] + ["waits: " + x.split(": `sisi approve`")[0] for x in wait]
+    if wait:
+        body.append("the owner decides: `sisi approve` lists each in full, then `sisi approve ID --yes|--no`")
+    return [head] + _capped(body, APPLY_LINES - 1)
+
+
+def _check_summary(plan):
+    cmds = sum(1 for p in plan if p["kind"] == "promote" and p["action"].get("mechanism_kind") == "command-check")
+    wait = sum(1 for p in plan if p["pending"] and not (p["kind"] == "promote"
+               and p["action"].get("mechanism_kind") == "command-check"))
+    lines = ["valid: %d action(s); %d apply at once, %d wait for the owner%s" % (
+        len(plan), len(plan) - wait - cmds, wait,
+        ", %d command check(s) are replayed only by `apply`, which decides whether each takes effect or waits" % cmds
+        if cmds else "")]
+    for p in plan:
+        if p["pending"] and p["reasons"] and not (p["kind"] == "promote"
+                                                   and p["action"].get("mechanism_kind") == "command-check"):
+            lines.append("waits: %s: %s" % (p["rec"]["id"] if p["rec"] else p["action"].get("rule_id"),
+                                             "; ".join(p["reasons"])))
+    return _capped(lines)
 
 
 def cmd_cycle(args):
     if args and args[0] == "help":
-        sys.stdout.write(HELP)
+        sys.stdout.write(format_text("<the base `sisi cycle` prints>"))
         return 0
     if args and args[0] == "apply" and len(args) > 1:
         try:
             cid, lines = apply_file(args[1])
         except (CycleError, OSError, documents.DocumentError, overlay.OverlayError) as e:
-            print("sisi cycle: %s" % e, file=sys.stderr)
+            msg = str(e).splitlines()
+            print("\n".join(_capped(["sisi cycle: " + msg[0]] + msg[1:])), file=sys.stderr)
             return 2
-        print("%s applied:" % cid)
-        for x in lines:
-            print("- " + x)
+        print("\n".join(_summary(cid, lines)))
         return 0
     if args and args[0] == "check" and len(args) > 1:
         try:
@@ -1216,10 +1307,10 @@ def cmd_cycle(args):
                 doc = json.load(f)
             plan = validate_doc(doc, L.load_learnings(), run=False)
         except (CycleError, OSError, ValueError, documents.DocumentError, overlay.OverlayError) as e:
-            print("sisi cycle: %s" % e, file=sys.stderr)
+            msg = str(e).splitlines()
+            print("\n".join(_capped(["sisi cycle: " + msg[0]] + msg[1:])), file=sys.stderr)
             return 2
-        wait = sum(1 for p in plan if p["pending"])
-        print("valid: %d action(s) apply at once, %d wait for the owner" % (len(plan) - wait, wait))
+        print("\n".join(_check_summary(plan)))
         return 0
     if args and args[0] == "revert":
         try:

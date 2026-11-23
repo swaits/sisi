@@ -39,7 +39,10 @@ GENERIC_WORDS = set((
     "went go goes gone smooth smoothly expected nicely perfect perfectly success successful successfully "
     "finished complete completed happened happen hitch hitches without notable remarkable report reported "
     "particular special specific cause causes reason reasons known unknown clear obvious say said "
-    "passed pass green").split())
+    "passed pass green "
+    # a verdict with no reason ("not useful", "wrong idea") says nothing about what is wrong
+    "useful useless unneeded unnecessary needed relevant irrelevant important valuable worthwhile pointless "
+    "redundant wrong incorrect invalid idea ideas").split())
 
 
 class LearningError(Exception):
