@@ -195,7 +195,7 @@ scratch folders are left alone; delete them yourself if you want them gone. Then
 
 ## Status
 
-Version 0.1.0, an early release.
+An early release. `sisi --version` prints the version, and [CHANGELOG.md](CHANGELOG.md) lists what changed.
 
 Works today, with tests:
 
