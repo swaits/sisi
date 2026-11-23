@@ -441,6 +441,13 @@ class NoDeadlockAfterARefusedEdit(TG.GuardCase):
         self.open_unit()
         self.assertIsNone(self.bash('for f in src/*.py; do sed -i "s/a/b/" "$f"; done'))
 
+    def test_a_line_that_cannot_be_split_but_plainly_writes_is_ordinary_source(self):
+        cmd = ("for i in 01 02; do sed -i \"s/a$i/b/\" src/mod$i.py; done && python3 -c \"\nimport sys\nprint(f'x{1}')\n\" ; "
+               "git diff | grep '^[-+] ' \"")  # an unbalanced quote: no tokenizer reads it
+        self.assertEqual(G.shell_targets(cmd, self.proj), [G.UNPARSED])
+        self.assertIn("sisi contract init", self.bash(cmd))
+        self.assertEqual(G.shell_targets('echo "unbalanced; ls', self.proj), [])  # nothing plainly writing: left to the snapshot
+
     def test_a_cache_folder_is_as_ignorable_as_the_files_in_it(self):
         self.assertIsNone(self.bash("rm -rf src/__pycache__"))
 

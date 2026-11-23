@@ -53,8 +53,9 @@ PROMPT3 = ("This project is in the current directory. Every function in src/ sho
            "f1 returns x + 1 today and should return x + 2, f2 returns x + 2 and should return x + 3, and so on for all "
            "fourteen modules (mod07 has a bug of its own, leave it as it is). Make the change, then tell me which files "
            "you changed. Nobody is available to answer questions during this run.")
-PROMPT = ("This project is in the current directory. Read the test in tests/ and every file in src/, then tell me "
-          "what each file in src/ does, one line per file, and whether the test would pass.")
+PROMPT = ("This project is in the current directory. Open the test in tests/ and each of the fourteen modules in src/ "
+          "one file at a time, then tell me what each file in src/ does, one line per file, and whether the test would pass. "
+          "Change nothing.")
 
 
 def build_project(root):

@@ -589,6 +589,10 @@ def _norm_lines(cmd):
     return "\n".join(out)
 
 
+UNPARSED = "$unparsed"
+_WRITES = re.compile(r"(?:^|[\s;&|(])(?:sed|perl)\b[^;&|\n]*?\s-\w*i\b|(?:^|[\s;&|(])(?:tee|rm|mv|cp|install|ln|touch|dd)\s|[^<>\d&]>>?\s*[^\s&|;)>]")
+
+
 def shell_targets(cmd, cwd):
     """Best-effort paths a shell command writes: redirects, tee, sed/perl -i, cp/mv/install/ln, rm/touch/mkdir, dd of=.
     What cannot be told from the text (an interpreter, a script) is left to the after-tool snapshot."""
@@ -598,7 +602,9 @@ def shell_targets(cmd, cwd):
         lex.whitespace_split = True
         toks = list(lex)
     except ValueError:
-        return []
+        # the line cannot be split into words (nested quotes, a loop with an embedded script): if it plainly
+        # writes, say so with a target that is named by nothing, so the guard treats it as ordinary source
+        return [UNPARSED] if _WRITES.search(cmd or "") else []
     segs, cur = [], []
     for t in toks:
         if t in (";", "&", "|", "&&", "||"):
