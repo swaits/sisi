@@ -349,28 +349,25 @@ def _merge_rule(core_text, pid, rule_md):
     return body
 
 
+def _waiting_for_product():
+    """Learning records in force that belong in the product: changes to sisi itself (`tool`) and
+    learnings that earned organization scope (seen in two units in two projects), not yet in it."""
+    from . import learning as L
+    ledger = L.load_ledger()
+    return [r for r in L.load_learnings()
+            if L.is_registered(r, ledger) and not r.get("candidate") and not r.get("in_product")
+            and r.get("status") not in L.ENDED and not r.get("owner_statement")
+            and ((r.get("proposed") or {}).get("mechanism") == "tool" or L.earned_scope(r) == "organization")]
+
+
 def core_items():
-    """Core-tier items not yet in the product: ([lesson rows], [statement texts])."""
-    lessons = []
-    try:
-        from . import retro
-        if os.path.exists(retro.db_path()):
-            con = retro.connect()
-            try:
-                lessons = [dict(r) for r in con.execute(
-                    "SELECT * FROM lessons WHERE scope='core' AND status IN ('open','applied') "
-                    "AND COALESCE(promoted,'')='' ORDER BY id")]
-            finally:
-                con.close()
-    except Exception:
-        lessons = []
-    statements = []
-    try:
-        from . import principles
-        statements = [r["text"] for r in principles.core_statements()]
-    except Exception:
-        statements = []
-    return lessons, statements
+    """What is waiting for the product: ([learning records], [organization-scope statement texts])."""
+    from . import learning as L
+    ledger = L.load_ledger()
+    statements = [(r.get("proposed") or {}).get("description") or r.get("title") or ""
+                  for r in L.owner_statements() if (r.get("proposed") or {}).get("scope") == "organization"
+                  and not r.get("in_product") and L.is_registered(r, ledger)]
+    return _waiting_for_product(), [t for t in statements if t]
 
 
 def _norm_text(t):
@@ -408,20 +405,16 @@ def _drop_personal_copy(kind, pid, f):
             overlay.build_canon()
     except Exception:
         pass
-    try:
-        from . import retro, store
-        if os.path.exists(retro.db_path()):
-            con = retro.connect()
-            try:
-                con.execute("UPDATE lessons SET promoted=? WHERE scope='core' AND "
-                            "(folded_into=? OR folded_into=? OR folded_into LIKE ?)",
-                            (store.now(), pid, "rule:" + pid, "%" + pid + "%"))
-                con.commit()
-            finally:
-                con.close()
-            retro.sync("lessons: core item %s promoted into the product" % pid)
-    except Exception:
-        pass
+    from . import learning as L
+    rows = L.load_learnings()
+    ledger = L.load_ledger()
+    hit = [r for r in rows if L.is_registered(r, ledger) and not r.get("in_product")
+           and ((r.get("proposed") or {}).get("target") == pid
+                or str(r.get("mechanism_ref") or "").split()[-1:] == [pid])]
+    for r in hit:
+        r["in_product"] = L.now()
+    if hit:
+        L.save_learnings(rows, "learning: item %s promoted into the product" % pid, touched=hit, via="cycle")
 
 
 def _promote_overlay(pid, apply, src):
@@ -473,41 +466,31 @@ def _promote_overlay(pid, apply, src):
     return 0
 
 
+def _learning_id(arg):
+    """`lesson:N`, `lesson:L-0003` or `L-0003` -> the learning id."""
+    t = arg[7:] if arg.startswith("lesson:") else arg
+    return "L-%04d" % int(t) if t.isdigit() else t
+
+
 def _promote_lesson(lid, apply):
-    from . import retro
-    if not os.path.exists(retro.db_path()):
-        print("sisi promote: no lessons yet", file=sys.stderr)
+    from . import learning as L
+    rec = L.get(L.load_learnings(), lid)
+    if rec is None or not L.is_registered(rec):
+        print("sisi promote: no learning %s (`sisi lessons` lists them)" % lid, file=sys.stderr)
         return 1
-    con = retro.connect()
-    try:
-        row = con.execute("SELECT * FROM lessons WHERE id=?", (lid,)).fetchone()
-    finally:
-        con.close()
-    if not row:
-        print("sisi promote: no lesson with id %d" % lid, file=sys.stderr)
-        return 1
-    r = dict(row)
-    if retro._get(r, "scope") != "core":
-        print("sisi promote: lesson #%d is in the %s tier, not core; only core items are queued "
-              "for the product" % (lid, retro._get(r, "scope") or "unscoped-tier"), file=sys.stderr)
-        return 1
-    if retro._get(r, "promoted"):
-        print("lesson #%d is already in the product (promoted %s)" % (lid, retro._get(r, "promoted")))
+    if rec.get("in_product"):
+        print("learning %s is already in the product (promoted %s)" % (lid, rec["in_product"]))
         return 0
-    targets = [t.strip() for t in str(r.get("folded_into") or "").split(",") if t.strip()]
-    pid = None
-    for t in targets:
-        cand = t[5:] if t.startswith("rule:") else t
-        if cand.startswith("draft:") or cand == "enforced":
-            continue
-        if _find_item(cand):
-            pid = cand
-            break
+    if rec not in _waiting_for_product():
+        print("sisi promote: learning %s is neither a change to sisi itself (mechanism tool) nor seen in "
+              "two units in two projects, so it is not queued for the product" % lid, file=sys.stderr)
+        return 1
+    targets = [(rec.get("proposed") or {}).get("target")] + str(rec.get("mechanism_ref") or "").split()[-1:]
+    pid = next((t for t in targets if t and _find_item(t)), None)
     if pid is None:
-        print("sisi promote: lesson #%d is core but is not folded into a personal rule, recipe or "
-              "technique yet, so there is no product file to write. Fold it in a learning round "
-              "(`sisi cycle`) first, then promote it; or send it upstream with "
-              "`sisi promote --export`." % lid, file=sys.stderr)
+        print("sisi promote: learning %s is not folded into a personal rule, recipe or technique yet, so "
+              "there is no product file to write. Fold it in a learning round (`sisi cycle`) first, then "
+              "promote it; or send it upstream with `sisi promote --export`." % lid, file=sys.stderr)
         return 1
     try:
         src = source()
@@ -520,51 +503,31 @@ def _promote_lesson(lid, apply):
 
 
 def _export_core(path=None):
-    lessons, statements = core_items()
-    if not lessons and not statements:
-        print("no core items are waiting: nothing to export")
+    recs, statements = core_items()
+    if not recs and not statements:
+        print("no items are waiting: nothing to export")
         return 0
     extra_terms = set()
-    try:
-        from . import retro
-        con = retro.connect()
-        try:
-            for r in lessons:
-                for (repo,) in con.execute("SELECT repo FROM occurrences WHERE lesson_id=?", (r["id"],)):
-                    if repo:
-                        extra_terms.add(os.path.basename(str(repo).rstrip("/")))
-        finally:
-            con.close()
-    except Exception:
-        pass
-    lines = ["# sisi core contributions", "",
+    for r in recs:
+        for p in [r.get("origin_project")] + [x.get("project") for x in r.get("provenance") or []]:
+            if p:
+                extra_terms.add(os.path.basename(str(p).rstrip("/")))
+    lines = ["# sisi contributions", "",
              "Universal text only: no history, no user or project names. Nothing was sent "
              "anywhere; send this file upstream yourself if you choose.", ""]
     for t in statements:
-        lines += ["## Statement (core)", "", t, ""]
-    for r in lessons:
-        pat = ""
-        try:
-            from . import retro
-            con = retro.connect()
-            try:
-                if r.get("pattern_id"):
-                    prow = con.execute("SELECT statement FROM patterns WHERE id=?",
-                                       (r["pattern_id"],)).fetchone()
-                    pat = prow[0] if prow else ""
-            finally:
-                con.close()
-        except Exception:
-            pat = ""
-        lines += ["## Lesson %d (core, kind %s%s)" % (r["id"], r.get("change_kind") or "",
-                                                      ", target " + r["target"] if r.get("target") else ""), ""]
-        if pat:
-            lines += ["Pattern: " + pat, ""]
-        if r.get("short"):
-            lines += [str(r["short"]), ""]
-        lines += [str(r.get("change") or ""), ""]
-        if r.get("when_terms"):
-            lines += ["When: " + str(r["when_terms"]), ""]
+        lines += ["## Statement (organization)", "", t, ""]
+    for r in recs:
+        pr = r.get("proposed") or {}
+        lines += ["## Learning %s (%s%s)" % (r["id"], pr.get("mechanism") or "policy",
+                                              ", target " + pr["target"] if pr.get("target") else ""), ""]
+        if r.get("title") and r["title"] != pr.get("description"):
+            lines += [str(r["title"]), ""]
+        lines += [str(pr.get("description") or ""), ""]
+        if r.get("expected_effect"):
+            lines += ["Expected effect: " + str(r["expected_effect"]), ""]
+        if r.get("limits"):
+            lines += ["Applies: " + str(r["limits"]), ""]
     text = "\n".join(lines)
     for term in sorted(extra_terms):
         if len(term) >= 3:
@@ -578,8 +541,8 @@ def _export_core(path=None):
     path = path or os.path.join(os.getcwd(), "sisi-core-contribution.md")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(clean if clean.endswith("\n") else clean + "\n")
-    print("wrote %s (%d lesson(s), %d statement(s); universal text only). Nothing was sent anywhere."
-          % (path, len(lessons), len(statements)))
+    print("wrote %s (%d learning(s), %d statement(s); universal text only). Nothing was sent anywhere."
+          % (path, len(recs), len(statements)))
     return 0
 
 
@@ -593,30 +556,28 @@ def cmd_promote(args):
             return 1
         return _export_core(rest[0] if rest else None)
     if not args:
-        lessons, statements = core_items()
-        if not lessons and not statements:
-            print("no core items are waiting to be promoted")
+        recs, statements = core_items()
+        if not recs and not statements:
+            print("no items are waiting to be promoted")
             print("promote one overlay rule, recipe or technique by id: sisi promote <id> [--apply]")
             return 0
-        print("Core items not yet in the product (in force for you through the personal overlay):")
-        for r in lessons:
-            from . import retro
-            print("  lesson:%d [%s] %s (`sisi promote lesson:%d --apply` on a developer install)"
-                  % (r["id"], r.get("change_kind") or "", retro.heading_text(r, 100), r["id"]))
+        print("Items not yet in the product (in force for you through your own store):")
+        from . import learning as L
+        for r in recs:
+            print("  %s [%s] %s (`sisi promote %s --apply` on a developer install)"
+                  % (r["id"], (r.get("proposed") or {}).get("mechanism") or "policy",
+                     L.derive_title(r.get("title") or "", 100), r["id"]))
         for t in statements:
-            print("  statement (core): %r (fold it into a rule in a learning round, then promote "
+            print("  statement (organization): %r (fold it into a rule in a learning round, then promote "
                   "the rule; or `sisi promote --export`)" % t[:100])
         return 0
     if len(args) != 1:
-        print("usage: sisi promote [<id>|lesson:N] [--apply] | sisi promote --export [PATH]",
+        print("usage: sisi promote [<id>|L-NNNN] [--apply] | sisi promote --export [PATH]",
               file=sys.stderr)
         return 1
     pid = args[0]
-    if pid.startswith("lesson:"):
-        if not pid[7:].isdigit():
-            print("usage: sisi promote lesson:N [--apply]", file=sys.stderr)
-            return 1
-        return _promote_lesson(int(pid[7:]), apply)
+    if pid.startswith("lesson:") or re.match(r"^L-\d+$", pid):
+        return _promote_lesson(_learning_id(pid), apply)
     try:
         src = source()
     except ReleaseError as e:

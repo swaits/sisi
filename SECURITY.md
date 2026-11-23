@@ -16,6 +16,40 @@ written by someone else, and it is treated as such.
 - Every check has a time limit. After a few send-backs in a row the gate lets the agent through and marks the
   result unverified, so a broken check cannot hold a session forever.
 
+## What learning can change, and who decides
+
+A learning cycle can install checks, rules and risk patterns that shape later sessions. What it may do alone is
+limited, and the rest waits for you:
+
+- A mechanism a cycle installs carries its learning's id and the scope that learning has earned (its own project,
+  unless it was seen in two units in two projects, or you stated it at user scope). Nothing the cycle file claims
+  about scope or project is trusted: a request for more only makes the change wait.
+- These always wait for you: more scope than earned, a shell command that was not seen to fail and then pass in its
+  own trusted project, a risk pattern that lowers a profile, any replaced or disabled rule, and rule text or a
+  library entry from a learning confined to one project. Protected rules (`canon/protected.json`) cannot be changed
+  by a cycle or by `sisi overlay` at all, and if that file cannot be read, no rule can be changed.
+- Replaying a command check runs it, so a replay happens only in a repository on the trust list, only if the
+  command exists at both commits, and only if the earlier commit is an ancestor of the later one.
+
+`sisi approve` lists every waiting change in full (the exact command, the pattern and profile, the rule text as a
+diff) and decides it with `--yes` or `--no`. What this does guarantee: a decision from a process with no terminal
+(an agent, a script, a pipe) is refused, unless your config has `learning.agent_relayed_approval` set (off by
+default), and then the record says `relayed by an agent`; every decision is written to `approvals.jsonl` with the
+time, the session if known, and whether it came from a terminal. What it does not guarantee: sisi cannot tell a
+person at a terminal from a program that allocates one, and anyone who can write your personal data folder can
+edit the config, the pending list or the ledger directly. The protection is that an agent is told to show you the
+change and to give you the command to type yourself, and that the cycle cannot apply anything consequential on its
+own; it is not a defence against code that already runs with your permissions.
+
+The same limit applies to who recorded something. A learning recorded from a subagent is held as a candidate until
+the parent adopts it by id. "Recorded by a subagent" is read from what the hooks recorded in the session record, not
+from the environment; a tool without those hooks, or a process that picks another session id, is not detected. A
+row added or edited by hand in `learnings.jsonl` is never delivered: only rows that sisi's own commands wrote, as
+they wrote them, are in the ledger. `sisi learn` records whether your words appear in a message you typed in the
+session transcript; when they do not, or there is no transcript, the statement is marked `relayed by an agent`
+and `sisi oracle` shows that. `sisi learn --withdraw ID --reason ...` takes a statement recorded by mistake out of
+delivery for good.
+
 ## What sisi does not protect against
 
 - A trusted project's contract runs with your permissions. Trust only projects you trust.

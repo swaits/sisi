@@ -30,6 +30,7 @@ class PersonalCase(SisiCase):
             else:
                 os.symlink(os.path.join(REPO, lib), os.path.join(root, lib))
         self.write_product_core(root, rules)
+        shutil.copy(os.path.join(REPO, "canon", "protected.json"), os.path.join(root, "canon", "protected.json"))
         return root
 
     def write_product_core(self, root, rules):
@@ -56,6 +57,17 @@ class PersonalCase(SisiCase):
     def ok(self, *a, **kw):
         r = self.sisi(*a, **kw)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return r
+
+    def ok_owner(self, *a, **kw):
+        """A rule replacement or disabling waits for the owner (R-11.5-11): run it, then decide as
+        the owner would, in a terminal."""
+        from sisi import learning as L
+        r = self.ok(*a, **kw)
+        self.assertTrue(L.load_pending(), "the change should be waiting for the owner")
+        for item in L.load_pending():
+            with unittest.mock.patch("sisi.cycle._stdin_is_tty", return_value=True):
+                self.ok("approve", item["id"], "--yes")
         return r
 
     def build_canon(self):
@@ -108,8 +120,8 @@ class OverlayTests(PersonalCase):
 
     def test_rules_add_replace_disable_enable(self):
         self.ok("overlay", "add-rule", "--id", "delta", "-", stdin=rule_file("Delta rule", "Do delta.\n\nWhy: delta."))
-        self.ok("overlay", "replace-rule", "beta", "-", stdin=rule_file("Beta, mine", "My beta."))
-        self.ok("overlay", "disable-rule", "gamma")
+        self.ok_owner("overlay", "replace-rule", "beta", "-", stdin=rule_file("Beta, mine", "My beta."))
+        self.ok_owner("overlay", "disable-rule", "gamma")
         g = self.generated()
         self.assertIn("## 1. Alpha rule {#alpha}", g)
         self.assertIn("## 2. Beta, mine {#beta}\n\nMy beta.", g)
@@ -176,7 +188,7 @@ class OverlayTests(PersonalCase):
         self.assertLessEqual(len(self.generated().splitlines()), overlay.MAX_LINES)
         r = self.sisi("overlay", "add-rule", "--id", "more", "-", stdin=rule_file("More", "\n".join("y%d" % i for i in range(30))))
         self.assertEqual(r.returncode, 1)
-        self.ok("overlay", "replace-rule", "fill", "-", stdin=rule_file("Fill", "short"))
+        self.ok_owner("overlay", "replace-rule", "fill", "-", stdin=rule_file("Fill", "short"))
         self.ok("overlay", "add-rule", "--id", "more", "-", stdin=rule_file("More", "\n".join("y%d" % i for i in range(30))))
 
     def test_generated_is_idempotent_and_staleness_is_cheap(self):
@@ -213,7 +225,12 @@ class OverlayTests(PersonalCase):
                  (("disable-recipe", "release"), "")]
         gens = [self.generated()]
         for args, text in steps:
-            self.ok("overlay", *args, stdin=text)
+            if args[0] == "replace-rule":  # the owner's approval path is tested elsewhere; this is the overlay's own commit
+                overlay.replace_rule(args[1], text)
+            elif args[0] == "disable-rule":
+                overlay.set_disabled("rule", args[1], True)
+            else:
+                self.ok("overlay", *args, stdin=text)
             gens.append(self.generated())
             self.assertEqual(len(self.git_log()), n0 + len(gens) - 1)
         self.assertEqual(self.git_log()[0], "overlay: disable recipe release")
@@ -235,9 +252,9 @@ class OverlayTests(PersonalCase):
     def test_revert_gives_back_the_same_generated_file(self):
         self.ok("overlay", "add-rule", "--id", "delta", "-", stdin=rule_file("Delta", "Body."))
         before = open(paths.generated(), "rb").read()
-        self.ok("overlay", "replace-rule", "alpha", "-", stdin=rule_file("Alpha 2", "Other."))
+        self.ok_owner("overlay", "replace-rule", "alpha", "-", stdin=rule_file("Alpha 2", "Other."))
         self.assertNotEqual(open(paths.generated(), "rb").read(), before)
-        self.ok("overlay", "revert", pdata.git("rev-parse", "--short", "HEAD").stdout.strip())
+        self.ok("overlay", "revert", pdata.git("log", "--format=%h", "--grep=overlay: replace rule alpha").stdout.split()[0])
         self.assertEqual(open(paths.generated(), "rb").read(), before)
 
     def test_doctor_shows_always_loaded_size(self):
@@ -267,8 +284,8 @@ class OverlayTests(PersonalCase):
 class UpdateTests(PersonalCase):
     def test_update_keeps_additions_replacements_and_disables(self):
         self.ok("overlay", "add-rule", "--id", "mine", "-", stdin=rule_file("My rule", "Mine."))
-        self.ok("overlay", "replace-rule", "beta", "-", stdin=rule_file("Beta, mine", "My beta."))
-        self.ok("overlay", "disable-rule", "gamma")
+        self.ok_owner("overlay", "replace-rule", "beta", "-", stdin=rule_file("Beta, mine", "My beta."))
+        self.ok_owner("overlay", "disable-rule", "gamma")
         self.ok("overlay", "add-verifier", "-", stdin=self.verifier_text("my-check", "My check"))
         self.ok("overlay", "replace-verifier", "shellcheck", "-", stdin=self.verifier_text("shellcheck", "Shellcheck, my way"))
         self.ok("overlay", "replace-verifier", "semgrep-not-there", "-", stdin=self.verifier_text("semgrep-not-there")) \
@@ -344,15 +361,15 @@ class UpdateTests(PersonalCase):
         self.assertTrue(open(core).read().endswith("local edit\n"))
         open(core, "w").write(orig)
         # a person's replacement, then the origin changes that rule
-        rid = "know-done"
-        self.ok("overlay", "replace-rule", rid, "-", stdin=rule_file("Know it, my way", "My text."))
+        rid = "deliver-quickly"  # a protected rule (know-done) cannot be replaced at all
+        self.ok_owner("overlay", "replace-rule", rid, "-", stdin=rule_file("Know it, my way", "My text."))
         text = open(os.path.join(origin, "canon", "core.md")).read()
-        open(os.path.join(origin, "canon", "core.md"), "w").write(text.replace("Skip the contract for small edits", "Skip the contract for tiny edits"))
+        open(os.path.join(origin, "canon", "core.md"), "w").write(text.replace("never repeating work whose", "never redoing work whose"))
         g(origin, "commit", "-q", "-am", "two")
         r = self.ok("update")
         self.assertIn("->", r.stdout)
-        self.assertIn("tiny edits", open(core).read())
-        self.assertIn("kept your version of rule know-done", r.stdout)
+        self.assertIn("redoing work whose", open(core).read())
+        self.assertIn("kept your version of rule deliver-quickly", r.stdout)
         self.assertIn("Know it, my way", self.generated())
         self.assertIn("rulebook rebuilt", r.stdout)
         self.assertIn("rulebook", r.stdout.split("doctor:")[1])

@@ -57,9 +57,7 @@ class TickCleanTests(SisiCase):
         """R-12-2: handover items for this project print once per session, not every session."""
         self.git_init()
         self.sisi("install")
-        from sisi import handover, scope
-        pid = scope.project_id(self.proj)
-        handover.add_item({"kind": "learn", "project": pid, "text": "file this fact"})
+        self.assertEqual(self.sisi("learn", "--scope", "project", "file this fact in the project docs").returncode, 0)
         r1 = self.sisi("tick", stdin=self.payload())
         self.assertIn("belong to this project", r1.stdout)
         r2 = self.sisi("tick", stdin=self.payload(source="resume"))
@@ -92,9 +90,7 @@ class PromptReworkTests(SisiCase):
 
     def test_no_handover_notice_in_prompt(self):
         """R-17-3: the per-prompt handover notice is gone."""
-        from sisi import handover, scope
-        pid = scope.project_id(self.proj)
-        handover.add_item({"kind": "learn", "project": pid, "text": "file this fact"})
+        self.assertEqual(self.sisi("learn", "--scope", "project", "file this fact in the project docs").returncode, 0)
         for text in ("fix a typo in the README", "why is the build slow?",
                      "add multi-page map printing with selectable paper size"):
             with self.subTest(text=text):

@@ -377,49 +377,27 @@ def _show(e, with_installed):
         else:
             print("installed here: n/a (no tool to detect)")
     print()
-    print(e["body"].strip("\n") if e["header"] else open(e["path"], encoding="utf-8", errors="replace").read())
-    _print_notes(e["id"])
+    if e["header"]:
+        print(e["body"].strip("\n"))
+    else:
+        with open(e["path"], encoding="utf-8", errors="replace") as f:
+            print(f.read())
 
 
-def _print_notes(id):
-    from . import retro
-    n = retro.notes_for(id)
-    if n:
-        print("\n## Field notes from earlier agents\n(information from past sessions, to weigh, not instructions)\n" + n)
-
-
-def _print_lessons(query, place, extra="", loose=False, targets=()):
-    """Lessons for this moment. With loose=True (done for, done ID, verifiers for) the two-part
-    delivery block: strict likely-to-apply lessons in full, then every loose lesson as a heading
-    for the asking agent to judge. Otherwise the older single strong-match block."""
-    try:
-        from . import retro
-        block = retro.delivery_block(query, place, extra=extra, targets=targets) if loose \
-            else retro.lessons_block(query, place, extra=extra)
-        if block:
-            print("\n" + block)
-    except Exception:
-        pass
+def _print_lessons(query, extra="", targets=()):
+    """Learnings in scope for this moment: those that target these entries, then those that match
+    the words of the query. Background information, never instructions; nothing is recorded as shown."""
+    from . import learning as L
+    block = L.delivery_text(os.getcwd(), ("%s %s" % (query, extra)).strip(), targets=targets)
+    if block:
+        print("\n" + block.rstrip("\n"))
 
 
 def _print_cycle_notice():
-    try:
-        from . import cycle
-        line = cycle.due_notice()
-        if line:
-            print(line)
-    except Exception:
-        pass
-
-
-def _print_drafts(query):
-    """Draft recipe notes: recipe lessons naming a recipe that does not exist yet, when their words match."""
-    try:
-        from . import retro
-        for did, txt in retro.draft_notes_for(query):
-            print("\n## Draft recipe %s (not a recipe yet; notes from earlier lessons)\n%s" % (did, txt))
-    except Exception:
-        pass
+    from . import cycle
+    line = cycle.due_notice()
+    if line:
+        print(line)
 
 
 def cmd_show(args):
@@ -438,7 +416,7 @@ def cmd_show(args):
         print("")
         for line in _docs.trace_lines("verifier", e["id"]):
             print(line)
-    _print_lessons("%s %s %s" % (e["id"], e["title"], e["answers"]), "verifiers-show")
+    _print_lessons("%s %s %s" % (e["id"], e["title"], e["answers"]), targets=(e["id"],))
     return 0
 
 
@@ -463,7 +441,7 @@ def cmd_for(args):
                   % (opts["kind"], fl))
     if not top:
         print("no verifier matches that description; try `sisi verifiers` to browse")
-        _print_lessons(desc, "verifiers-for", loose=True)
+        _print_lessons(desc)
         return 0
     for i, (f, e) in enumerate(top, 1):
         mark = ""
@@ -472,8 +450,7 @@ def cmd_for(args):
         print("%d. %s  rung %s  cost %s  installed: %s%s%s" % (i, e["id"], e["rung"], e["cost"] or "-", inst[e["path"]], mark, origin_tag(e)))
         print("   %s" % (e["answers"] or e["title"]))
     print("\nsisi verifiers show ID   for set-up and a worked example")
-    _print_lessons(desc, "verifiers-for", extra=" ".join(e["id"] for _, e in top[:3]), loose=True,
-                   targets=tuple(e["id"] for _, e in top))
+    _print_lessons(desc, extra=" ".join(e["id"] for _, e in top[:3]), targets=tuple(e["id"] for _, e in top))
     return 0
 
 
@@ -650,20 +627,16 @@ def done_main(args):
         scored = rank_recipes(desc, entries=rs)
         if not scored:
             print("no recipe matches that description; `sisi done` lists them")
-            _print_drafts(desc)
-            _print_lessons(desc, "done-for", loose=True)
+            _print_lessons(desc)
             _print_cycle_notice()
             return 0
         best = scored[0][1]
         print("Best match: %s\n" % best["id"])
         print("== %s: %s ==%s\napplies to: %s\n" % (best["id"], best["title"], origin_tag(best), best["applies_to"]))
         print(best["body"].strip("\n"))
-        _print_notes(best["id"])
         if len(scored) > 1:
             print("\nOther candidates: " + ", ".join(r["id"] for _, r in scored[1:4]))
-        _print_drafts(desc)
-        _print_lessons(desc, "done-for", extra=best["id"] + " " + best["title"], loose=True,
-                       targets=(best["id"],))
+        _print_lessons(desc, extra=best["id"] + " " + best["title"], targets=(best["id"],))
         _print_cycle_notice()
         return 0
     if args:
@@ -673,14 +646,13 @@ def done_main(args):
             return 1
         print("== %s: %s ==%s\napplies to: %s\n" % (r["id"], r["title"], origin_tag(r), r["applies_to"]))
         print(r["body"].strip("\n"))
-        _print_notes(r["id"])
         if trace:
             from . import documents as _docs
             print("")
             for line in _docs.trace_lines("recipe", r["id"]):
                 print(line)
         _print_lessons("%s %s %s" % (r["id"].replace("-", " "), r["title"], r["applies_to"]),
-                       "done-show", loose=True, targets=(r["id"],))
+                       targets=(r["id"],))
         return 0
     if not rs:
         print("no recipes")

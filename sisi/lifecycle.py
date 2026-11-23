@@ -245,124 +245,173 @@ def run():
     return notes
 
 
-def migrate_learnings():
-    """Old lesson store -> learning records. Idempotent, with a backup first, lossless.
-
-    lessons.jsonl mixed lesson rows with occurrence and impression rows. Lessons become
-    learning records with honest statuses (folded into prose is `implemented`, always
-    unvalidated; nothing becomes `validated`); occurrences become provenance; impressions
-    (sisi's own showings) are dropped, never evidence. learn.jsonl owner statements become
-    owner-statement records in the same store. Returns notes with before/after counts.
-    """
-    from . import learning as L
-    if os.path.exists(L.learnings_path()):
-        return []
-    src = paths.data_file("lessons.jsonl")
-    learn_src = paths.data_file("learn.jsonl")
-    if not os.path.exists(src) and not os.path.exists(learn_src) \
-            and not os.path.exists(paths.data_file("retro.db")):
-        return []
-    bdir = snapshot("learning-migration")
-    lessons, occs, impressions = {}, {}, 0
-    db = paths.data_file("retro.db")
-    if not os.path.exists(src) and os.path.exists(db):
-        # an install whose committed dump was never written: read the sqlite store directly
-        con = sqlite3.connect(db, timeout=30)
-        con.row_factory = sqlite3.Row
-        try:
-            for r in con.execute("SELECT * FROM lessons ORDER BY id"):
-                lessons[r["id"]] = dict(r)
-            for r in con.execute("SELECT * FROM occurrences ORDER BY id"):
-                occs.setdefault(r["lesson_id"], []).append(dict(r))
-        except sqlite3.Error:
-            lessons, occs = {}, {}
-        finally:
-            con.close()
-    if os.path.exists(src):
-        with open(src, encoding="utf-8") as f:
+def _jsonl_rows(path):
+    """(rows, malformed line count) of a jsonl file that may not exist."""
+    rows, bad = [], 0
+    try:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 if not line.strip():
                     continue
                 try:
-                    r = json.loads(line)
+                    d = json.loads(line)
                 except ValueError:
+                    bad += 1
                     continue
-                t = r.get("t")
-                if t == "lesson":
-                    lessons[r.get("id")] = r
-                elif t == "occurrence":
-                    occs.setdefault(r.get("lesson_id"), []).append(r)
-                elif t == "impression":
-                    impressions += 1
-    rows = []
+                if isinstance(d, dict):
+                    rows.append(d)
+                else:
+                    bad += 1
+    except OSError:
+        pass
+    return rows, bad
+
+
+def migrate_learnings():
+    """Old lesson store -> learning records. Whenever the old store exists and the `migrated`
+    marker does not; a backup first; merged by legacy id (a lesson already carried over is not
+    carried twice, so running `sisi learn` before the first migration loses nothing).
+
+    lessons.jsonl and the sqlite store hold lesson rows, occurrence rows, impression rows (sisi's
+    own showings, dropped: never evidence) and pattern rows (not carried; the backup keeps them).
+    Lessons become learning records with honest statuses (folded into prose is `implemented`,
+    always unvalidated; nothing becomes `validated`); occurrences become provenance, with the old
+    repo values normalised to the project key new code uses; a learning is earned wider only under
+    the same two-units-two-projects rule as a new one. learn.jsonl owner statements become
+    owner-statement records, keeping their scope. Malformed lines are counted, not hidden. Returns
+    notes with the counts.
+    """
+    from . import learning as L
+    marker = paths.data_file("learnings-migrated.json")
+    if os.path.exists(marker):
+        return []
+    src = paths.data_file("lessons.jsonl")
+    learn_src = paths.data_file("learn.jsonl")
+    db = paths.data_file("retro.db")
+    if not (os.path.exists(src) or os.path.exists(learn_src) or os.path.exists(db)):
+        return []
+    bdir = snapshot("learning-migration")
+    lessons, occs = {}, {}
+    dropped = {"impression": 0, "sighting": 0, "pattern": 0}
+    malformed = {"lessons.jsonl": 0, "learn.jsonl": 0}
+    jrows, malformed["lessons.jsonl"] = _jsonl_rows(src)
+    for r in jrows:
+        t = r.get("t")
+        if t == "lesson":
+            lessons[r.get("id")] = r
+        elif t == "occurrence":
+            occs[r.get("id")] = r
+        elif t in dropped:
+            dropped[t] += 1
+    if os.path.exists(db):
+        con = sqlite3.connect(db, timeout=30)
+        con.row_factory = sqlite3.Row
+        try:
+            for r in con.execute("SELECT * FROM lessons ORDER BY id"):
+                lessons.setdefault(r["id"], dict(r))
+            for r in con.execute("SELECT * FROM occurrences ORDER BY id"):
+                occs.setdefault(r["id"], dict(r))
+        except sqlite3.Error:
+            pass
+        finally:
+            con.close()
+    rows = L.load_learnings()
+    have_legacy = {r.get("legacy_id") for r in rows if r.get("legacy_id") is not None}
+    have_text = {" ".join(str((r.get("proposed") or {}).get("description") or "").lower().split())
+                 for r in rows if r.get("owner_statement")}
+    by_lesson = {}
+    for o in occs.values():
+        by_lesson.setdefault(o.get("lesson_id"), []).append(o)
+    added, already, attached, touched = 0, 0, 0, []
     for lid in sorted(lessons, key=lambda x: (x is None, x)):
+        if lid in have_legacy:
+            already += 1
+            continue
         old = lessons[lid]
         prov = []
-        for o in occs.get(lid, []):
-            prov.append({"unit": "session:%s" % (o.get("session") or o.get("id")),
-                         "project": o.get("repo") or o.get("cwd") or old.get("project") or "",
-                         "ts": o.get("ts") or "", "kind": "occurrence"})
-        origin = old.get("project") or (prov[0]["project"] if prov else "")
+        for o in sorted(by_lesson.get(lid, []), key=lambda x: x.get("id") or 0):
+            proj = L.normalize_project(o.get("repo") or o.get("cwd") or old.get("project"))
+            unit = ("session:%s" % o["session"]) if o.get("session") else "legacy:%s:%s" % (lid, proj)
+            prov.append({"unit": unit, "project": proj, "ts": o.get("ts") or "", "kind": "occurrence"})
+        attached += len(prov)
+        origin = L.normalize_project(old.get("project")) or (prov[0]["project"] if prov else "")
         if not prov:
-            prov = [{"unit": "legacy:%s" % lid, "project": origin, "ts": old.get("created") or "",
-                     "kind": "origin"}]
+            prov = [{"unit": "legacy:%s" % lid, "project": origin, "ts": old.get("created") or "", "kind": "origin"}]
         status = {"applied": "implemented", "retired": "reverted"}.get(old.get("status"), "observed")
         kind = old.get("change_kind")
-        rows.append({
-            "id": "L-%04d" % (len(rows) + 1), "legacy_id": lid,
+        target = str(old.get("target") or "")
+        rec = {
+            "id": L.next_id(rows), "legacy_id": lid,
             "title": L.derive_title(old.get("short") or old.get("change") or old.get("moment") or ""),
             "source_unit": prov[0]["unit"], "origin_project": origin,
-            "observation": {"evidence": old.get("moment") or "", "impact": "correctness"},
-            "root_cause": old.get("cause") or "",
-            "proposed": {"description": old.get("change") or "",
+            "observation": {"evidence": L.scrub_secrets(old.get("moment") or ""), "impact": "correctness"},
+            "root_cause": L.scrub_secrets(old.get("cause") or ""),
+            "proposed": {"description": L.scrub_secrets(old.get("change") or ""),
                          "mechanism": "tool" if kind == "tool" else ("verification" if kind in ("check", "test") else "policy"),
-                         "scope": "project", "target": old.get("target")},
+                         "scope": "project", "scope_asked": None,
+                         "target": target[5:] if target.startswith("rule:") else (target or None)},
             "expected_effect": "", "limits": "", "why_not": "",
             "validation": {"method": "", "benchmark": None, "result": "unvalidated",
                            "detail": "migrated from the old lesson store; never replay-validated"},
             "status": status, "version": 1, "confidence": "low", "provenance": prov,
             "terms": L.derive_terms(old.get("moment") or "", old.get("cause") or "", old.get("change") or ""),
-            "owner_statement": False, "candidate": False, "entered_via": "migration",
+            "owner_statement": False, "candidate": False,
             "recurrences_after_promotion": 0, "flagged_not_working": False,
-            "promoted_at": None, "promoted_unit_seq": None, "mechanism_ref": old.get("folded_into"),
-            "replay": None, "created": old.get("created") or L.now()})
-    statements = 0
-    if os.path.exists(learn_src):
-        with open(learn_src, encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                try:
-                    r = json.loads(line)
-                except ValueError:
-                    continue
-                text = r.get("text") or r.get("statement") or ""
-                if not text:
-                    continue
-                statements += 1
-                rows.append({
-                    "id": "L-%04d" % (len(rows) + 1), "title": L.derive_title(text),
-                    "source_unit": "owner", "origin_project": r.get("cwd") or "",
-                    "observation": {"evidence": text, "impact": "value"},
-                    "root_cause": "owner statement",
-                    "proposed": {"description": text, "mechanism": "knowledge",
-                                 "scope": "user", "target": None},
-                    "expected_effect": "the agent acts on this statement", "limits": "", "why_not": "",
-                    "validation": {"method": "", "benchmark": None, "result": "unvalidated", "detail": ""},
-                    "status": "promoted", "version": 1, "confidence": "high",
-                    "provenance": [{"unit": "owner", "project": r.get("cwd") or "",
-                                    "ts": r.get("ts") or "", "kind": "origin"}],
-                    "terms": L.derive_terms(text), "owner_statement": True, "candidate": False,
-                    "entered_via": "migration", "recurrences_after_promotion": 0,
-                    "flagged_not_working": False, "promoted_at": r.get("ts") or L.now(),
-                    "promoted_unit_seq": None, "mechanism_ref": None, "replay": None,
-                    "created": r.get("ts") or L.now()})
-    L.save_learnings(rows, "migrate: lessons and owner statements become learning records")
-    return ["learning migration: backed up to %s; %d lesson(s) and %d owner statement(s) became "
-            "%d learning record(s); %d occurrence(s) became provenance; %d impression(s) dropped "
-            "(showings are never evidence); nothing is validated"
-            % (bdir, len(lessons), statements, len(rows),
-               sum(len(v) for v in occs.values()), impressions)]
+            "promoted_at": None, "mechanism_ref": old.get("folded_into"),
+            "replay": None, "created": old.get("created") or L.now()}
+        rows.append(rec)
+        touched.append(rec)
+        added += 1
+    orphans = sum(len(v) for k, v in by_lesson.items() if k not in lessons)
+    srows, malformed["learn.jsonl"] = _jsonl_rows(learn_src)
+    statements, dup = 0, 0
+    for r in srows:
+        text = r.get("text") or r.get("statement") or ""
+        if not text:
+            continue
+        key = " ".join(text.lower().split())
+        if key in have_text:
+            dup += 1
+            continue
+        have_text.add(key)
+        statements += 1
+        scope = r.get("scope") if r.get("scope") in ("user", "project", "organization") else "user"
+        proj = L.normalize_project(r.get("cwd"))
+        text = L.scrub_secrets(text)
+        rec = {
+            "id": L.next_id(rows), "title": L.derive_title(text),
+            "source_unit": "owner", "origin_project": proj,
+            "observation": {"evidence": text, "impact": "value"},
+            "root_cause": "owner statement",
+            "proposed": {"description": text, "mechanism": "knowledge", "scope": scope,
+                         "scope_asked": scope, "target": None},
+            "expected_effect": "the agent acts on this statement", "limits": "", "why_not": "",
+            "validation": {"method": "", "benchmark": None, "result": "unvalidated", "detail": ""},
+            "status": "promoted", "version": 1, "confidence": "high",
+            "provenance": [{"unit": "owner", "project": proj, "ts": r.get("ts") or "", "kind": "origin"}],
+            "terms": L.derive_terms(text), "owner_statement": True, "candidate": False,
+            "statement_origin": "migrated from the old statement file",
+            "recurrences_after_promotion": 0,
+            "flagged_not_working": False, "promoted_at": r.get("ts") or L.now(),
+            "mechanism_ref": None, "replay": None, "created": r.get("ts") or L.now()}
+        rows.append(rec)
+        touched.append(rec)
+    counts = {"lessons_in_old_store": len(lessons), "lessons_migrated": added, "lessons_already_migrated": already,
+              "owner_statements_migrated": statements, "owner_statements_duplicate": dup,
+              "occurrences_attached": attached, "occurrences_without_a_lesson": orphans,
+              "malformed_lines_skipped": dict(malformed), "dropped_rows": dict(dropped),
+              "learning_records_after": len(rows)}
+    pdata.ensure()
+    pdata.write_text("learnings-migrated.json", json.dumps(dict(counts, ts=L.now(), backup=bdir), indent=2, sort_keys=True) + "\n")
+    L.save_learnings(rows, "migrate: lessons and owner statements become learning records", created=touched, via="migration")
+    pdata.commit("migrate: learning migration recorded", ["learnings-migrated.json"])
+    return ["learning migration: backed up to %s; %d lesson(s) in the old store, %d carried over (%d already there); "
+            "%d owner statement(s) carried over (%d duplicate); %d occurrence(s) attached as provenance, %d without "
+            "a lesson left out; %d malformed line(s) skipped (lessons.jsonl %d, learn.jsonl %d); dropped as not "
+            "evidence or not carried: %d impression(s), %d sighting(s), %d pattern row(s); now %d learning record(s); "
+            "nothing is validated" % (bdir, len(lessons), added, already, statements, dup, attached, orphans,
+                                      sum(malformed.values()), malformed["lessons.jsonl"], malformed["learn.jsonl"],
+                                      dropped["impression"], dropped["sighting"], dropped["pattern"], len(rows))]
 
 
 # ---- snapshots (before an update) -------------------------------------------------------------
