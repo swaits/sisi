@@ -611,6 +611,27 @@ class Mechanisms(Base):
         self.assertNotIn("deliver-fast", overlay.disabled("rule"))  # not yet: it waits
         self.assertEqual(len(self.pending()), 1)
 
+    def test_protected_rules_are_refused_under_new_ids_old_ids_and_the_map(self):
+        """R-14.3-1, R-11.7-2, R-11.5-11: a cycle cannot replace or disable any protected rule, under
+        its new id or under a retired id that the map points at it; the map is no way round."""
+        from sisi import overlay
+        self.propose()
+        protected = ["stay-inside-the-lines", "verify-enough", "report-plainly", "define-done", "close-with-retro"]
+        self.assertEqual(sorted(overlay.protected_rules() & set(protected)), sorted(protected))
+        old_ids = [old for old, new in overlay.retired_ids().items() if new in protected]
+        self.assertEqual(sorted(old_ids), ["finish-by-verifying", "know-done", "protect-working",
+                                           "retro-every-time", "strongest-check"])
+        for rid in protected + old_ids:
+            rule = "## Weak {#%s}\n\nSkip checks.\n\nWhy: faster.\n" % rid
+            r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "rule-text",
+                             "rule_id": rid, "rule_text": rule}], base=L.store_base())
+            self.assertNotEqual(r.returncode, 0, rid)
+            r = self.apply([{"action": "disable-rule", "rule_id": rid}], base=L.store_base())
+            self.assertNotEqual(r.returncode, 0, rid)
+            self.assertEqual(self.sisi("overlay", "disable-rule", rid).returncode, 1, rid)
+        self.assertEqual(self.pending(), [])
+        self.assertEqual(overlay.disabled("rule"), [])
+
     def test_cycle_refusals_apply_nothing(self):
         """R-14.3-1, R-11.7-2, R-16-11: protected rule, stale base, ignored flag."""
         _contract(self)

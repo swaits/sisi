@@ -56,6 +56,59 @@ class RuleDetailTests(SisiCase):
         self.assertIn("overlay", r.stdout.lower())
 
 
+class RetiredRuleIdTests(SisiCase):
+    """R-14.3-1, R-11.5-11, R-12-1: personal rule changes keyed by a retired rule id were written
+    against the old wording. They are never applied to the new rule; they stay in the store."""
+
+    def put(self, rel, text):
+        p = os.path.join(self.data, "overlay", rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write(text)
+
+    def fixture(self):
+        self.sisi("tick")  # creates the personal store
+        self.put("rules/deliver-quickly.md", "## Deliver quickly\n\nOld replacement text.\n\nWhy: mine.\n")
+        self.put("rules/disabled.txt", "strongest-check\n")
+        self.put("rules/my-own-rule.md", "## Mine\n\nAn addition that replaces nothing.\n\nWhy: mine.\n")
+
+    def test_map_covers_every_old_rule_and_points_at_a_real_rule(self):
+        ids = {r["id"] for r in overlay.base_rules()[1]}
+        ret = overlay.retired_ids()
+        self.assertEqual(len(ret), 9)
+        for old, new in ret.items():
+            self.assertNotIn(old, ids)
+            self.assertTrue(new is None or new in ids, (old, new))
+
+    def test_old_id_replacement_and_disabling_are_stale_additions_are_kept(self):
+        self.fixture()
+        _, rules = overlay.effective()
+        by = {r["id"]: r for r in rules}
+        self.assertNotIn("Old replacement text.", overlay.render())
+        self.assertEqual(by["deliver-fast"]["origin"], "base")  # the new rule is untouched
+        self.assertEqual(by["verify-enough"]["origin"], "base")  # not disabled through the map
+        self.assertEqual(by["my-own-rule"]["origin"], "added")
+        self.assertEqual([(i, h) for i, h, _ in overlay.stale_entries()],
+                         [("deliver-quickly", "replacement"), ("strongest-check", "disabling")])
+        out = self.sisi("overlay", "list").stdout
+        self.assertIn("stale", out)
+
+    def test_stale_entries_are_reported_once_and_nothing_is_deleted(self):
+        self.fixture()
+        first = overlay.scan_retests()
+        self.assertEqual(sorted(r["id"] for r in first), ["deliver-quickly", "strongest-check"])
+        self.assertTrue(all(r["action"].startswith("stale") for r in first))
+        self.assertEqual(overlay.scan_retests(), [])  # reported once
+        self.assertTrue(os.path.exists(os.path.join(self.data, "overlay", "rules", "deliver-quickly.md")))
+        self.assertIn("strongest-check", overlay.disabled("rule"))
+        self.assertIn("deliver-quickly", overlay.overlay_rules(include_stale=True))
+
+    def test_a_new_rule_cannot_be_added_under_a_retired_id(self):
+        r = self.sisi("overlay", "add-rule", "--id", "know-done", "-", stdin="## X\n\nBody.\n\nWhy: y.\n")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("retired", r.stderr)
+
+
 class MoreLineTests(SisiCase):
     def test_generated_rulebook_points_each_rule_at_its_detail(self):
         text = overlay.render()
