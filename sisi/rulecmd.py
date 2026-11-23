@@ -131,7 +131,11 @@ def _orchestrate():
                           "the end-of-turn gate asks for the judgement of each finished delegation, once per set of runs"
                           if _gate_wired() and _has("orchestration", "judgement_sendback") else None,
                           "a shell command that failed three times in a row with no file changed is refused once (rule 5)"
-                          if meter else None],
+                          if meter else None,
+                          "an unavailable worker (a limit, quota, login or connection failure arriving as a delegation result or as "
+                          "a later notice) is recorded down with the reset time parsed from the message, the router's next worker "
+                          "is handed over for the same brief, and a question-dialog call right after it is refused once"
+                          if meter and _has("fallback", "handle", "fallback_text") else None],
                 measured=["the delegation ledger and `sisi delegate judge`, `sisi route` recommends the worker from that record"
                           if _has("routing", "choose") and _has("workers", "cmd_delegate") else None,
                           "the unit record and `sisi status` show direct calls and characters, refusals, extensions with their reasons, "

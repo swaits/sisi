@@ -113,14 +113,21 @@ def build_context(query, session=None):
 
 
 def meter_new_turn(session, cwd, query):
-    """Every prompt the session receives starts the orchestration meter's turn again (and the first one may
-    show the session is a worker). Never raises."""
+    """Every prompt the session receives goes to the orchestration meter (a human request starts its turn again;
+    a host notice that a worker is unavailable returns the fallback to hand over). Returns text or None; never
+    raises."""
     try:
         if session and query:
             from . import orchestration
-            orchestration.new_turn(session, cwd, query)
+            return orchestration.new_turn(session, cwd, query)
     except Exception as e:
         store.log_error("prompt-meter", e)
+    return None
+
+
+def _is_notice(query):
+    from . import orchestration
+    return query.lstrip().startswith(orchestration.NOTIFICATION)
 
 
 def extract_prompt(payload):
@@ -161,8 +168,8 @@ def main(args=()):
                 os.chdir(cwd)
         if not query:
             return 0
-        meter_new_turn(session, os.getcwd(), query)
-        text = build_context(query, session=session)
+        fb = meter_new_turn(session, os.getcwd(), query)
+        text = "\n".join(x for x in (fb, "" if _is_notice(query) else build_context(query, session=session)) if x)
         if not text:
             return 0
         if plain:

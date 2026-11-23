@@ -219,8 +219,9 @@ def prompt_main(tool, args=()):
             if cwd and _os.path.isdir(cwd):
                 _os.chdir(cwd)
             query = P.extract_prompt(norm)
-            P.meter_new_turn(norm.get("session_id"), _os.getcwd(), query)
-            text = P.build_context(query, session=norm.get("session_id")) if query else ""
+            fb = P.meter_new_turn(norm.get("session_id"), _os.getcwd(), query)
+            text = "\n".join(x for x in (fb, "" if (not query or P._is_notice(query)) else
+                                         P.build_context(query, session=norm.get("session_id"))) if x)
         out = _prompt_out(tool, text)
     except Exception as e:  # fail open: a prompt hook must never fail a turn
         store.log_error("prompt-%s" % tool, e)

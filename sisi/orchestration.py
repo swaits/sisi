@@ -224,15 +224,18 @@ def _tag(text, name):
     return m.group(1).strip() if m else None
 
 
-def _task_done(m, text):
-    """A host's notice that a background worker finished: complete the run it started."""
-    from . import workers
+def _pending_for(m, text):
+    """(key, entry) of the pending delegation a host notice is about, else (None, None)."""
     use_id, task_id = _tag(text, "tool-use-id"), _tag(text, "task-id")
     key = use_id if use_id in m["pending"] else next(
         (k for k, v in m["pending"].items() if task_id and v.get("agent") == task_id), None)
-    if key is None:
-        return
-    ent = m["pending"].pop(key)
+    return key, (m["pending"].get(key) if key else None)
+
+
+def _task_done(m, key, ent, text, superseded=False):
+    """A host's notice that a background worker finished: complete the run it started."""
+    from . import workers
+    m["pending"].pop(key, None)
     now = time.time()
     tokens = _tag(text, "subagent_tokens")
     ms = _tag(text, "duration_ms")
@@ -241,7 +244,8 @@ def _task_done(m, text):
     workers.append_record({"kind": "run-end", "run_id": ent["run"], "ts": round(now), "ended": round(now),
                            "minutes": minutes, "tokens": int(tokens) if tokens and tokens.isdigit() else None,
                            "tokens_class": "measured" if tokens and tokens.isdigit() else "unavailable",
-                           "model": ent.get("model"), "status": "waiting" if ok else "failed"})
+                           "model": ent.get("model"),
+                           "status": "superseded" if superseded else ("waiting" if ok else "failed")})
     _event(m, m.get("sid"), "delegation-done", run=ent["run"])
 
 
@@ -250,28 +254,45 @@ def brief_line():
     return brief.template().splitlines()[0].strip().lower()
 
 
+def _session_is_worker(m, sess):
+    return bool(m.get("worker") or sess.get("subagent") or os.environ.get("SISI_WORKER_RUN"))
+
+
 def new_turn(sid, cwd=None, prompt=None):
-    """A prompt reached the session: the meter for the turn starts again. The first prompt of a session
-    that opens with the brief template's line makes it a worker for good."""
+    """A prompt reached the session. A human request starts the meter's turn again (the first one that opens
+    with the brief template's line makes the session a worker for good). A host notice about a background worker
+    gives no new budget: it completes the run it names, and when it reports an unavailable worker the fallback
+    is recorded and returned (text for the prompt hook to hand over), or None."""
+    from . import fallback
+    sess = store.load_session(sid)
     with Meter(sid) as m:
-        if isinstance(prompt, str) and prompt.lstrip().startswith(NOTIFICATION):
-            _task_done(m, prompt)  # the host reporting a background worker: not a new request, no new budget
-            return m
-        m["turn"] += 1
-        m.update(calls=0, chars=0, ext=0, refusals=0, fails={}, ext_log=[], same_model_ok=False)
-        m["prompts"] += 1
         if cwd:
             _project(m, cwd)
-        if m["prompts"] == 1 and isinstance(prompt, str) \
-                and prompt.lstrip()[:200].lower().startswith(brief_line()):
+        text = prompt if isinstance(prompt, str) else ""
+        is_notice = text.lstrip().startswith(NOTIFICATION)
+        failed = fallback.failure_notice(text) if text else None
+        if is_notice or failed:
+            out = None
+            key, ent = _pending_for(m, text) if is_notice else (None, None)
+            if failed and not _session_is_worker(m, sess):
+                out = fallback.handle(m, sid, cwd or m.get("project") or os.getcwd(), failed["text"],
+                                      own_model=_own_model({}, sess, m), worker=(ent or {}).get("worker"),
+                                      run_id=(ent or {}).get("run"))
+            if ent is not None:
+                _task_done(m, key, ent, text, superseded=bool(out))
+            return out
+        m["turn"] += 1
+        m.update(calls=0, chars=0, ext=0, refusals=0, fails={}, ext_log=[], same_model_ok=False, unavail=None)
+        m["prompts"] += 1
+        if m["prompts"] == 1 and text.lstrip()[:200].lower().startswith(brief_line()):
             m["worker"] = True
-        return m
+    return None
 
 
 def end_turn(sid):
     """The turn ended (the gate let the agent finish): counts start again at the next call."""
     with Meter(sid) as m:
-        m.update(calls=0, chars=0, ext=0, refusals=0, fails={}, ext_log=[], same_model_ok=False)
+        m.update(calls=0, chars=0, ext=0, refusals=0, fails={}, ext_log=[], same_model_ok=False, unavail=None)
 
 
 # ---------------------------------------------------------------- messages
@@ -422,6 +443,8 @@ def before(payload, host=None):
     inp = next((payload[k] for k in ("tool_input", "toolInput", "input") if isinstance(payload.get(k), dict)), {})
     kind = classify(host, tool, inp, cmd)
     shell = watch.is_shell(tool, cmd)
+    if str(tool or "").lower() in {str(n).lower() for n in (hd.get("exempt") or {}).get("dialog") or []}:
+        return _dialog_guard(payload, host, sid, cwd)
     if kind == "exempt" and not shell:
         return {}
     sess = store.load_session(sid)
@@ -467,6 +490,29 @@ def before(payload, host=None):
     return {}
 
 
+def _dialog_guard(payload, host, sid, cwd):
+    """The question dialog on a main thread, after an unavailability was recorded and before the agent has
+    fallen back: refused once with the fallback instruction. State, not wording: the question is never read.
+    Nothing usable to fall back to, a worker session, or a host that cannot refuse: allowed."""
+    from . import fallback, workers
+    if refuse_style(host) not in ("json-deny", "exit-2"):
+        return {}
+    sess = store.load_session(sid)
+    with Meter(sid) as m:
+        info = m.get("unavail")
+        if not info or _is_worker(payload, sess, m):
+            return {}
+        own = _own_model(payload, sess, m)
+        project = _project(m, cwd)
+        worker, _mech, _n = workers.recommend(info.get("kind") or "implementation", info.get("difficulty") or 2, project, own)
+        if worker is None:
+            return {}
+        m["unavail"] = None  # once: a second question this turn is the agent's own
+        m["refusals"] += 1
+        _event(m, sid, "refusal", why="question-after-unavailable", tool=payload.get("tool_name"))
+        return {"deny": fallback.fallback_text(info, project, own)}
+
+
 def _before_delegation(payload, hd, tool, inp, host, sid, sess, m, c, cwd):
     spec = delegation_spec(hd, tool) or {}
     model = _dig(inp, spec.get("model", "model"))
@@ -497,7 +543,8 @@ def _before_delegation(payload, hd, tool, inp, host, sid, sess, m, c, cwd):
     except OSError as e:
         store.log_error("orchestration-run", e)
     key = payload.get("tool_use_id") if isinstance(payload.get("tool_use_id"), str) else "last"
-    m["pending"][key] = {"run": run_id, "t0": now}
+    m["pending"][key] = {"run": run_id, "t0": now, "worker": worker}
+    m["unavail"] = None  # the agent is falling back (or delegating anew): nothing left to refuse a question for
     _event(m, sid, "delegation", run=run_id, worker=worker)
     lines = ["sisi: delegation recorded as run %s. When it returns, judge it: `sisi delegate judge %s --outcome "
              "accepted|rejected --check read|tests|diffstat|review|none --type KIND --difficulty 1|2|3`."
@@ -537,7 +584,13 @@ def after(payload, host=None):
             return {}
         _project(m, cwd)
         if kind == "delegation":
-            return _after_delegation(payload, ev, sid, m)
+            return _after_delegation(payload, ev, sid, m, sess, cwd)
+        if shell and kind == "exempt" and " delegate" in " " + (cmd or ""):
+            from . import fallback
+            note = fallback.shell_notice(_flat(payload))
+            if note:  # `sisi delegate` recorded the worker down itself; hand over the fallback in the same breath
+                text = fallback.handle(m, sid, cwd, note[1], own_model=_own_model(payload, sess, m), worker=note[0], record=False)
+                return {"context": text} if text else {}
         if shell:
             key = _norm(cmd)
             if _failed(payload, ev):
@@ -560,7 +613,20 @@ def after(payload, host=None):
     return out
 
 
-def _after_delegation(payload, ev, sid, m):
+def _flat(payload):
+    parts, stack = [], [payload.get(k) for k in _RESP_KEYS if payload.get(k) is not None][:1]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, str):
+            parts.append(x)
+        elif isinstance(x, dict):
+            stack.extend(x.values())
+        elif isinstance(x, list):
+            stack.extend(x)
+    return "\n".join(parts)
+
+
+def _after_delegation(payload, ev, sid, m, sess=None, cwd=None):
     from . import workers
     key = payload.get("tool_use_id") if isinstance(payload.get("tool_use_id"), str) else "last"
     ent = m["pending"].get(key)
@@ -575,6 +641,14 @@ def _after_delegation(payload, ev, sid, m):
         # the worker was only launched: it is finished when the host's notice arrives (new_turn), not now
         m["pending"][key] = dict(ent, agent=resp.get("agentId"), model=resp.get("resolvedModel"))
         return {}
+    from . import fallback
+    text = _flat(payload)
+    if fallback.looks_failed(text, failure_event="failure" in str(ev or "").lower()):
+        out = fallback.handle(m, sid, cwd or m.get("project") or os.getcwd(), text, own_model=_own_model(payload, sess or {}, m),
+                              worker=ent.get("worker"), run_id=ent["run"])
+        if out:
+            m["pending"].pop(key, None)
+            return {"context": out}
     tokens, _cost = workers.extract_usage(json.dumps(resp) if resp is not None else "")
     minutes = round((now - ent["t0"]) / 60.0, 2)
     if isinstance(resp, dict):

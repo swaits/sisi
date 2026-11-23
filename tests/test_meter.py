@@ -1,7 +1,7 @@
 """The direct-work meter, the delegation guard and the repeat-failure stop (rule 6, SPEC section 7; R-7.1-1,
 R-7.2-2, R-6.3-1, R-6.3-3, R-15-4). Every test is written from the side of an agent trying to keep working
 directly; hook input is what Claude Code sends, the output is what the host reads."""
-import json, os, subprocess, unittest
+import json, os, subprocess, time, unittest
 from unittest import mock
 from support import *
 
@@ -480,5 +480,174 @@ class RecordTests(MeterBase):
         self.assertIn("enforced", line)
         self.assertNotIn("not enforced", line)
         detail = self.sisi("rule", "orchestrate").stdout
-        for phrase in ("direct tool calls", "sisi unit direct", "names no model", "judg"):
+        for phrase in ("direct tool calls", "sisi unit direct", "names no model", "judg", "unavailable worker",
+                       "question-dialog call"):
             self.assertIn(phrase, detail)
+
+
+FUTURE = "2036-11-30T05:00:00Z"
+
+
+def future_ts():
+    return workers._parse_time(FUTURE)
+
+
+class FallbackTests(MeterBase):
+    """Item 9 (R-7.2-1, R-7.2-2, R-15-1, R-15-5, R-17-3): a worker's unavailability is recorded and the fallback handed
+    over where it arrives; the person is not asked."""
+
+    QUOTA = ("[failed]: API error 429 [request_id=req_011]: Subscription quota exhausted. "
+             "Your usage window resets at " + FUTURE)
+
+    def setUp(self):
+        super().setUp()
+        # one prefixed provider (a command-line tool's model) besides the two host-native workers
+        with open(os.path.join(self.data, "workers.json"), "w") as f:
+            json.dump({"checked": time.time(), "tools": [{"name": "opencode", "installed": True, "usable": True,
+                                                          "models": ["provx/model-1"]}]}, f)
+        with open(os.path.join(self.data, "worker-prices.json"), "w") as f:
+            json.dump({"models": {"provx/model-1": {"cost_per_million_tokens": 0.1},
+                                  "alpha-small": {"cost_per_million_tokens": 1},
+                                  "beta-large": {"cost_per_million_tokens": 9}}}, f)
+        for t in ("research", "implementation"):
+            workers.append_record({"kind": "attempt", "id": "px" + t[:2], "run_id": None, "ts": 1, "project": "p", "type": t,
+                                   "difficulty": 1, "worker": "provx/model-1", "outcome": "accepted", "check": "read"})
+
+    def context(self, r):
+        out = json.loads(r.stdout) if r.stdout.strip() else {}
+        return (out.get("hookSpecificOutput") or {}).get("additionalContext") or ""
+
+    def notice(self, text=None, use_id="toolu_Q", task="agentQ", status="failed"):
+        body = text or self.QUOTA
+        return ("<task-notification>\n<task-id>%s</task-id>\n<tool-use-id>%s</tool-use-id>\n<status>%s</status>\n"
+                "<summary>Agent \"read the code\" failed</summary>\n<result>%s</result>\n</task-notification>"
+                % (task, use_id, status, body))
+
+    def launch(self, model="provx/model-1", use_id="toolu_Q"):
+        self.pre("Agent", {"description": "read the code", "prompt": "Outcome: x", "model": model}, tool_use_id=use_id)
+        self.post("Agent", {"description": "d", "prompt": "p", "model": model},
+                  response={"isAsync": True, "status": "async_launched", "agentId": "agentQ"}, tool_use_id=use_id)
+
+    def down(self):
+        return workers.read_availability()
+
+    def test_the_quota_notice_through_the_prompt_hook_marks_the_provider_down_and_hands_over_the_fallback(self):
+        self.prompt()
+        self.launch()
+        ctx = self.context(self.prompt(self.notice()))
+        entry = self.down()["provx"]                                  # the provider, not one model
+        self.assertEqual((entry["retry_at"], entry["reason"]), (future_ts(), "limit"))
+        self.assertIn("quota exhausted", entry["note"].lower())
+        lines = ctx.splitlines()
+        self.assertLessEqual(len(lines), 6)
+        self.assertIn("provx/model-1 is unavailable", ctx)
+        self.assertIn("2036-11-30 05:00 UTC", ctx)
+        self.assertIn("alpha-small", ctx)                              # every prefixed provider is down: host-native
+        self.assertIn("host's own subagent tool", ctx)
+        self.assertIn("do not ask the person", ctx.lower().replace("not ask", "not ask"))
+        self.assertIn("one line", ctx)
+        self.assertIn("Cancel or interrupt", ctx)
+
+    def test_the_same_through_a_delegation_tool_result(self):
+        self.prompt()
+        self.pre("Agent", {"description": "d", "prompt": "Outcome: x", "model": "provx/model-1"}, tool_use_id="t9")
+        r = self.post("Agent", {"description": "d", "prompt": "p", "model": "provx/model-1"}, response=self.QUOTA, tool_use_id="t9")
+        ctx = self.context(r)
+        self.assertEqual(self.down()["provx"]["retry_at"], future_ts())
+        self.assertIn("alpha-small", ctx)
+        self.assertLessEqual(len(ctx.splitlines()), 6)
+        run = workers.merged_runs()[0]
+        self.assertEqual(run["status"], "superseded")                   # never asked to be judged
+        self.assertEqual(workers.unjudged_runs(), [])
+
+    def test_a_tool_failure_event_for_the_delegation_counts_too(self):
+        self.prompt()
+        self.pre("Agent", {"description": "d", "prompt": "Outcome: x", "model": "provx/model-1"}, tool_use_id="t8")
+        self.sisi("watch", "--after", "--tool", "claude-code", stdin=self.payload(
+            "PostToolUseFailure", "Agent", {"description": "d", "model": "provx/model-1"}, error="API error 429: quota exhausted", tool_use_id="t8"))
+        self.assertIn("provx", self.down())
+
+    def test_a_rejected_or_failed_on_its_merits_result_marks_nothing_down(self):
+        """Unavailability is never a quality judgement, and a failure of the work itself is not unavailability."""
+        self.prompt()
+        self.pre("Agent", {"description": "d", "prompt": "Outcome: x", "model": "provx/model-1"}, tool_use_id="m1")
+        r = self.post("Agent", {"description": "d", "model": "provx/model-1"},
+                      response="Failed: 3 tests still fail: assertion error in parser.py line 40", tool_use_id="m1")
+        self.assertEqual(self.context(r).count("unavailable"), 0)
+        self.pre("Agent", {"description": "d", "prompt": "Outcome: x", "model": "provx/model-1"}, tool_use_id="m2")
+        report = "I added a rate limit handler and a usage limit warning to the client. " + "Details. " * 200
+        r = self.post("Agent", {"description": "d", "model": "provx/model-1"}, response=report, tool_use_id="m2")
+        self.assertEqual(self.context(r).count("unavailable"), 0)
+        run = workers.merged_runs()[0]
+        self.sisi("delegate", "judge", run["id"], "--outcome", "rejected", "--check", "tests", "--type", "research", "--difficulty", "1")
+        self.assertEqual(self.down(), {})
+        ctx = self.context(self.prompt(self.notice("Tests failed: the patch does not compile", status="failed")))
+        self.assertEqual((self.down(), ctx.count("unavailable")), ({}, 0))
+
+    def test_the_question_dialog_is_refused_once_after_an_unavailability(self):
+        """State, not wording: any dialog call right after the unavailability is refused once; the second is allowed."""
+        self.prompt()
+        self.launch()
+        self.prompt(self.notice())
+        denied, reason, _ = self.pre("AskUserQuestion", {"questions": [{"question": "When should this run?"}]})
+        self.assertTrue(denied)
+        self.assertIn("alpha-small", reason)
+        self.assertIn("do not ask the person", reason.lower())
+        self.assertFalse(self.pre("AskUserQuestion", {"questions": [{"question": "something else"}]})[0])
+        self.assertEqual([e["why"] for e in self.events("refusal")], ["question-after-unavailable"])
+
+    def test_a_question_with_no_unavailability_is_never_refused(self):
+        self.prompt()
+        self.assertFalse(self.pre("AskUserQuestion", {"questions": []})[0])
+
+    def test_starting_the_fallback_clears_the_state(self):
+        self.prompt()
+        self.launch()
+        self.prompt(self.notice())
+        self.pre("Agent", {"description": "d", "prompt": "Outcome: x", "model": "alpha-small"}, tool_use_id="fb")
+        self.assertFalse(self.pre("AskUserQuestion", {"questions": []})[0])
+
+    def test_nothing_usable_says_so_with_the_earliest_due_time_and_does_not_refuse_the_dialog(self):
+        os.unlink(workers.ledger_path())
+        os.unlink(os.path.join(self.data, "workers.json"))
+        workers.append_record({"kind": "attempt", "id": "only", "run_id": None, "ts": 1, "project": "p", "type": "research",
+                               "difficulty": 1, "worker": "alpha-small", "outcome": "accepted", "check": "read"})
+        self.prompt()
+        ctx = self.context(self.prompt(self.notice("[failed]: alpha-small: API error 429: Subscription quota exhausted. "
+                                                   "Your usage window resets at " + FUTURE, use_id="zz")))
+        self.assertIn("No other worker is usable now", ctx)
+        self.assertIn("earliest due: alpha-small at 2036-11-30 05:00 UTC", ctx)
+        self.assertLessEqual(len(ctx.splitlines()), 6)
+        self.assertFalse(self.pre("AskUserQuestion", {"questions": []})[0])
+
+    def test_a_worker_that_cannot_be_identified_records_nothing_but_still_hands_over_the_fallback(self):
+        self.prompt()
+        ctx = self.context(self.prompt("[failed]: API error 429: Subscription quota exhausted. Your usage window resets at " + FUTURE))
+        self.assertEqual(self.down(), {})
+        self.assertIn("a delegated worker is unavailable", ctx)
+        self.assertIn("do not ask the person", ctx.lower())
+        self.assertTrue(self.pre("AskUserQuestion", {"questions": []})[0])   # the agent was told to fall back
+
+    def test_a_session_that_is_itself_a_worker_gets_none_of_this(self):
+        from sisi import brief
+        self.prompt(brief.template().splitlines()[0] + "\n\n## Outcome and scope\nfix it")
+        ctx = self.context(self.prompt(self.notice()))
+        self.assertEqual((ctx, self.down()), ("", {}))
+        self.assertFalse(self.pre("AskUserQuestion", {"questions": []})[0])
+
+    def test_a_date_only_reset_and_a_missing_one_are_both_handled(self):
+        self.assertEqual(workers.parse_reset("quota exhausted, resets on 2036-12-01"), workers._parse_time("2036-12-01"))
+        self.assertIsNone(workers.parse_reset("quota exhausted, resets at 2001-01-01T00:00:00Z"))   # in the past
+        self.assertIsNone(workers.parse_reset("rate limit, try later"))
+        self.prompt()
+        self.launch()
+        self.prompt(self.notice("[failed]: API error 429: usage limit reached, try again later"))
+        e = self.down()["provx"]
+        self.assertGreater(e["retry_at"], time.time())                     # the existing widening wait
+
+    def test_the_new_signatures_classify(self):
+        for text, reason in (("API error 429 quota exhausted", "limit"), ("HTTP 403 Forbidden", "auth"),
+                             ("billing: payment required", "limit"), ("provider not connected", "missing"),
+                             ("tool not found: opencode", "missing"), ("Subscription quota exhausted", "limit")):
+            self.assertEqual(workers.classify_failure(text)[0], reason, text)
+        self.assertIsNone(workers.classify_failure("assertion error in parser.py"))

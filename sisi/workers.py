@@ -104,13 +104,20 @@ AUTH_SIGNATURES = (
     "authentication required", "run 'agent login'", 'run "agent login"',
     "you are not authenticated", "not authenticated", "no credentials", "no codex credentials",
     "invalid or missing api key", "run 'amp login'", "run codex login", "use /login",
-    "no models available", "401 unauthorized", "http 401",
+    "no models available", "401 unauthorized", "http 401", "api error 401", "api error 403", "http 403",
+    "403 forbidden", "not logged in", "login required", "please log in", "invalid api key",
 )
 LIMIT_SIGNATURES = (
     "provider.go-limit", "monthly usage limit reached", "usage limit reached", "usage limit",
     "rate limit", "you've hit the rate limit", "you've hit your session rate limit",
     "you've reached your weekly rate limit", "quota exceeded", "insufficient credits",
     "out of credits", "http 429", '"status":429', '"status": 429',
+    "api error 429", "error 429", "too many requests", "quota exhausted", "out of quota", "subscription quota",
+    "insufficient quota", "credit balance", "billing", "payment required", "http 402",
+)
+MISSING_SIGNATURES = (
+    "tool not found", "command not found", "provider not connected", "not connected", "provider not found",
+    "model not found", "unknown model",
 )
 ERROR_SIGNATURES = (
     "http 500", "http 502", "http 503", "http 529", "service unavailable", "bad gateway",
@@ -126,15 +133,40 @@ def classify_failure(text, returncode=0):
     m = re.search(r"retryafterms\D{0,4}(\d+)", low)
     if m:
         retry = int(m.group(1)) / 1000.0
+    elif "reset" in low:
+        until = parse_reset(text)
+        if until is not None:
+            retry = until - time.time()
     for sig in AUTH_SIGNATURES:
         if sig in low:
             return "auth", "not logged in (%s)" % _phrase(text, sig), retry
     for sig in LIMIT_SIGNATURES:
         if sig in low:
             return "limit", _phrase(text, sig), retry
+    for sig in MISSING_SIGNATURES:
+        if sig in low:
+            return "missing", _phrase(text, sig), retry
     for sig in ERROR_SIGNATURES:
         if sig in low:
             return "error", _phrase(text, sig), retry
+    return None
+
+
+_ISO_TIME = r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
+
+
+def parse_reset(text, now=None):
+    """The epoch second a limit message says the worker is back at (an ISO date-time or date, best after the
+    word "reset"), or None when it names none or only a past one."""
+    now = time.time() if now is None else now
+    t = text or ""
+    for pat in (r"reset\w*\s*(?:at|on|in|:)?\s*[:=]?\s*(%s)" % _ISO_TIME, r"(%s)" % _ISO_TIME):
+        for m in re.finditer(pat, t, re.I):
+            ts = _parse_time(m.group(1))
+            if ts is not None and ts > now:
+                return ts
+        if re.search(r"reset", t, re.I) is None:
+            break  # without the word, only the first (keyword) pattern was worth trying
     return None
 
 
@@ -419,6 +451,64 @@ def record_down(keys, reason, note=None, now=None, retry_after_s=None, until_ts=
     return avail
 
 
+_MODEL_ONLY = re.compile(r"\bmodel\b.{0,80}(not found|not available|unavailable|not supported|overloaded|does not exist|"
+                         r"deprecated)|(unknown|invalid|unsupported) model", re.I | re.S)
+
+
+def identify_worker(text, candidates=None):
+    """The one candidate worker a message names (by worker id, model or alias, longest spelling first), or
+    None when it names none or more than one."""
+    low = (text or "").lower()
+    cands = _cached_candidates()[0] if candidates is None else candidates
+    found = {}
+    for c in cands:
+        names = [c.get("worker"), c.get("model")] + list(c.get("aliases") or [])
+        hits = [str(n).lower() for n in names if n and len(str(n)) >= 3 and str(n).lower() in low]
+        if hits:
+            found[c["worker"]] = max(len(h) for h in hits)
+    if not found:
+        return None
+    best = max(found.values())
+    top = [w for w, n in found.items() if n == best]
+    return top[0] if len(top) == 1 else None
+
+
+def mark_unavailable(worker, text, now=None):
+    """Record, without being asked, that the worker named failed for a reason that is not about its work
+    (limit, login, missing, passing error): its provider when the whole provider is out, the single model
+    when the text shows only the model is. The time it is back is parsed from the message when it gives one,
+    else the usual widening wait. Returns {"worker", "keys", "reason", "note", "until"} or None when the text
+    is no such failure. Never a quality judgement."""
+    failure = classify_failure(text)
+    if failure is None or not worker:
+        return None
+    reason, note, retry = failure
+    now = time.time() if now is None else now
+    cand = resolve_worker(worker, _cached_candidates()[0]) or {"worker": worker, "model": worker, "tool": None}
+    model = str(cand.get("model") or "")
+    if _MODEL_ONLY.search(text or ""):
+        keys = [cand["worker"]]
+    elif "/" in model:
+        keys = [cand["worker"], model.split("/", 1)[0]]
+    elif cand.get("tool") and not cand.get("host_native"):
+        keys = [cand["worker"], cand["tool"]]
+    else:
+        keys = [cand["worker"]]
+    until = parse_reset(text, now)
+    avail = record_down(keys, reason, note, now=now, retry_after_s=None if until else retry, until_ts=until)
+    shown = avail.get(str(keys[-1]).lower()) or {}
+    return {"worker": cand["worker"], "keys": keys, "reason": reason, "note": note,
+            "until": until if until is not None else shown.get("retry_at")}
+
+
+def earliest_due(now=None):
+    """(key, epoch) of the worker or provider due for another try soonest, or None when nothing is down."""
+    now = time.time() if now is None else now
+    rows = [(float(e.get("retry_at") or 0), k) for k, e in read_availability().items()
+            if isinstance(e, dict) and float(e.get("retry_at") or 0) > now]
+    return (min(rows)[1], min(rows)[0]) if rows else None
+
+
 def clear_down(worker):
     avail = read_availability()
     if not avail:
@@ -500,11 +590,15 @@ def merged_runs(records=None):
     return out
 
 
+NOT_JUDGED_STATUSES = ("pending", "superseded")  # in flight, or replaced by a fallback: nothing to judge
+
+
 def unjudged_runs(records=None):
-    """Finished runs with no judgement. A run still in flight (status "pending") is not waiting yet."""
+    """Finished runs with no judgement. A run still in flight (status "pending") is not waiting yet, and one
+    replaced by a fallback (status "superseded") is never asked for."""
     records = read_records() if records is None else records
     judged = {r.get("run_id") for r in records if r.get("kind") == "attempt" and r.get("run_id")}
-    return [r for r in merged_runs(records) if r.get("id") not in judged and r.get("status") != "pending"]
+    return [r for r in merged_runs(records) if r.get("id") not in judged and r.get("status") not in NOT_JUDGED_STATUSES]
 
 
 # ---------------------------------------------------------------- candidates
