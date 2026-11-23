@@ -23,6 +23,36 @@ class TickCleanTests(SisiCase):
         self.assertIn("sisi doctor", r.stdout)
         self.assertLessEqual(len(r.stdout.strip().splitlines()), 1)
 
+    def test_deep_state_and_backlog_are_silent_at_session_start(self):
+        """Ported from the retired tiers tests: session start prints no deep-check
+        state and no backlog; `sisi verify --state` owns the deep state."""
+        import time  # noqa: F401  (kept with the ported test's original imports)
+        def deepc(id, cmd="true"):
+            c = check(id, cmd, rung=3)
+            c["tier"] = "deep"
+            return c
+        self.git_init()
+        self.sisi("install")
+        self.write_contract(contract([check("f", "true"), deepc("d")]))
+        self.assertEqual(self.sisi("tick", stdin=self.payload()).stdout, "")
+        self.sisi("verify", "--deep")
+        self.assertEqual(self.sisi("tick", stdin=self.payload()).stdout, "")
+        with open(os.path.join(self.proj, "n.txt"), "w") as f:
+            f.write("x")
+        self.assertEqual(self.sisi("tick", stdin=self.payload()).stdout, "")
+        self.write_contract(contract([check("f", "true"), deepc("d", "false")]))
+        self.sisi("verify", "--deep")
+        self.assertEqual(self.sisi("tick", stdin=self.payload()).stdout, "")
+        self.assertNotIn("backlog", self.sisi("tick", stdin=self.payload()).stdout)
+
+    def test_help_points_to_retro_and_retired_store_commands_are_gone(self):
+        """Ported from the retired retro tests: help names retro; note/propose stay retired."""
+        out = self.sisi("help").stdout
+        self.assertIn("sisi retro", out)
+        for retired in ("note", "propose"):
+            self.assertNotIn("sisi " + retired + " ", out)
+            self.assertEqual(self.sisi(retired, "still works").returncode, 64)
+
     def test_handover_shown_once_per_session(self):
         """R-12-2: handover items for this project print once per session, not every session."""
         self.git_init()

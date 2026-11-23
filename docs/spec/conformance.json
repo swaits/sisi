@@ -1444,8 +1444,8 @@
   {
     "id": "R-11.1-14",
     "status": "met",
-    "how": "cmd_retro persists each learning review as a structured lesson row with occurrences in the personal store",
-    "evidence": "tests/test_retro.py",
+    "how": "cmd_retro persists each finding as a structured learning record with provenance in the personal store",
+    "evidence": "tests/test_learning_loop.py",
     "gap": ""
   },
   {

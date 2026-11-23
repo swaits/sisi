@@ -81,14 +81,17 @@ class StoreTests(SisiCase):
         with open(os.path.join(self.data, name)) as f:  # what the person taught sisi is personal data
             return [json.loads(l) for l in f]
 
-    def test_learn_appends_with_context(self):
-        self.assertEqual(self.sisi("learn", "--scope", "everywhere", "first", "entry", env={"SISI_TOOL": "codex", "SISI_SESSION_ID": "s9"}).returncode, 0)
-        self.sisi("learn", "--scope", "everywhere", "second")
-        recs = self.read("learn.jsonl")
-        self.assertEqual([r["text"] for r in recs], ["first entry", "second"])
-        self.assertEqual(recs[0]["cwd"], self.proj)
-        self.assertEqual((recs[0]["tool"], recs[0]["session"]), ("codex", "s9"))
-        self.assertIn("ts", recs[0])
+    def test_learn_records_a_statement(self):
+        r = self.sisi("learn", "--scope", "user", "always record the statement plainly")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("always record the statement plainly", self.sisi("oracle").stdout)
+        recs = self.read("learnings.jsonl")
+        self.assertEqual(len(recs), 1)
+        self.assertTrue(recs[0]["owner_statement"])
+
+    def test_empty_learn_rejected(self):
+        self.assertNotEqual(self.sisi("learn").returncode, 0)
+        self.assertFalse(os.path.exists(os.path.join(self.data, "learnings.jsonl")))
 
     def test_oracle_prints_file(self):
         r = self.sisi("oracle")
