@@ -35,10 +35,11 @@ MAIN_MODEL = "haiku"                     # the host's least expensive model, the
 WORKERS = (("sonnet", 3), ("opus", 15))  # fixture workers (names the host's subagent tool accepts) and a price each
 RESET = "2036-12-01T00:00:00Z"            # the reset time the fake provider's error message names
 QUOTA_TEXT = ("API error 429 [request_id=req_live]: Subscription quota exhausted. Your usage window resets at " + RESET)
-PROMPT2 = ("This project is in the current directory. Have a worker do one small task: list the python "
-           "files in src/, one per line. Ask `sisi route --kind research --difficulty 1` who the cheapest suitable worker is, write the brief "
-           "(`sisi delegate brief` prints the template; save it as brief.md), and run it with "
-           "`sisi delegate --kind research --difficulty 1 --brief brief.md`. The listing must come from a worker, not from your own commands. The list is what I want back: reply with it.")
+PROMPT2 = ("This project is in the current directory. Have a worker do one small task: list the python files in src/, "
+           "one per line. `sisi route --kind research --difficulty 1` tells you which worker to use, `sisi delegate brief` prints "
+           "the brief template (save the brief as brief.md), and `sisi delegate --kind research --difficulty 1 --brief brief.md` "
+           "runs a brief on a command-line worker. The listing must come from a worker, not from your own commands. "
+           "The list is what I want back: reply with it.")
 PROMPT = ("This project is in the current directory. Find and fix the bug (a test in tests/ fails), then tell me "
           "what each file in src/ does, one line per file.")
 
@@ -101,6 +102,23 @@ def fixture_fallback(data, tmpbin):
         f.write("#!/bin/sh\nif [ \"$1\" = models ]; then echo fakeprov/fake-model; exit 0; fi\n"
                 "echo '%s' >&2\nexit 1\n" % QUOTA_TEXT)
     os.chmod(exe, 0o755)
+
+
+def changed_by_this_run(before, after, root, markers):
+    """Files under the real data folder that changed between two snapshots AND mention something only this run
+    could have written (its temporary folder's name). Other sisi sessions on the machine change the real data
+    too; a change that never names this run is theirs, and is listed so nobody has to trust that."""
+    b = {r[0]: r for r in before}
+    changed = [r[0] for r in after if b.get(r[0]) != r]
+    mine, others = [], []
+    for rel in changed:
+        try:
+            with open(os.path.join(root, rel), "rb") as f:
+                text = f.read(5 * 1024 * 1024).decode("utf-8", "replace")
+        except OSError:
+            continue
+        (mine if any(m in text for m in markers) else others).append(rel)
+    return mine, others
 
 
 def real_data_dir():
@@ -321,8 +339,12 @@ def main(argv):
             failures += f
             report += r
             worlds.append(w)
-    if snapshot(real) != before_real:
-        failures.append("(d) files under the real sisi data folder (%s) changed" % real)
+    after_real = snapshot(real)
+    mine, others = changed_by_this_run(before_real, after_real, real, [os.path.basename(w["tmp"]) for w in worlds if w])
+    if mine:
+        failures.append("(d) files under the real sisi data folder (%s) changed and name this run: %s" % (real, mine))
+    report.append("(d) real sisi data folder: %d file(s) changed during the run, none naming this run%s"
+                  % (len(others), (" (other sessions' activity: %s)" % ", ".join(others[:4])) if others else ""))
     print("\n\n".join(report))
     if failures:
         print("\nLIVE CHECK FAILED:\n  " + "\n  ".join(failures))

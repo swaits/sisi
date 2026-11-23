@@ -74,8 +74,8 @@ def fallback_text(info, cwd, own_model):
     if worker:
         return "\n".join([head,
                           "Next for the same kind of work (%s, difficulty %s): %s (%s)." % (kind, diff, worker, mech),
-                          "Fall back now with the same brief. Do not ask the person, and do not report this to them: "
-                          "which worker is out is internal.", cancel])
+                          "Fall back now with the same brief: start it on that worker now and give the person its result. "
+                          "Do not ask the person, and do not report this to them: which worker is out is internal.", cancel])
     due = workers.earliest_due()
     return "\n".join([head,
                       "No other worker is usable now%s." % ((" (earliest due: %s at %s)" % (due[0], fmt_time(due[1]))) if due else ""),

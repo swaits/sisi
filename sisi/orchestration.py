@@ -115,11 +115,17 @@ def _segments(cmd):
     return segs
 
 
+# what may stand around a `sisi` command without making the line legwork: trivial output handling
+_TRIVIAL = {"echo", "printf", "true", "false", "head", "tail", "grep", "wc", "sort", "uniq", "cut", "tr"}
+
+
 def runs_sisi(cmd):
-    """True when every command in the shell line is an invocation of `sisi` itself."""
+    """True when the shell line is `sisi` itself: at least one `sisi` invocation, and nothing else on the line but
+    trivial output handling (`; echo "exit=$?"`, `| head -20`). `sisi x && cat src/*` is not."""
     segs = _segments(cmd or "")
     if not segs:
         return False
+    found = False
     for seg in segs:
         toks = [t for t in seg if not re.match(r"^[A-Za-z_]\w*=", t)]
         if not toks:
@@ -127,9 +133,11 @@ def runs_sisi(cmd):
         first = toks[0]
         if re.match(r"^python[\d.]*$", os.path.basename(first)) and len(toks) > 1:
             first = toks[1]
-        if os.path.basename(first) != "sisi":
+        if os.path.basename(first) == "sisi":
+            found = True
+        elif os.path.basename(toks[0]) not in _TRIVIAL:
             return False
-    return True
+    return found
 
 
 def classify(host, tool, inp, cmd):

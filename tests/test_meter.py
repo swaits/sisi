@@ -128,6 +128,17 @@ class BudgetTests(MeterBase):
         self.read_n(6)
         self.assertTrue(self.pre("Bash", {"command": "sisi status && cat src/*"})[0])
         self.assertTrue(self.pre("Bash", {"command": "echo sisi"})[0])
+        self.assertTrue(self.pre("Bash", {"command": "sisi status; cat src/a.py"})[0])
+        self.assertTrue(self.pre("Bash", {"command": "sisi status | xargs cat"})[0])
+
+    def test_trivial_output_handling_around_a_sisi_command_does_not_make_it_legwork(self):
+        """Found by the live check: `sisi unit direct "..."; echo "exit=$?"` was refused as a counted command, so the
+        agent could not use either way on."""
+        self.prompt()
+        self.read_n(6)
+        for cmd in ('sisi unit direct "a specific reason of 40 lines"; echo "exit=$?"', "sisi route --kind test --difficulty 1 --explain 2>&1; echo \"exit=$?\"",
+                    "sisi delegate brief | head -20", "sisi status && echo done"):
+            self.assertFalse(self.pre("Bash", {"command": cmd})[0], cmd)
 
     def test_the_turn_resets_at_each_prompt(self):
         self.prompt()
