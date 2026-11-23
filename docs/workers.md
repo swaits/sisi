@@ -1,108 +1,74 @@
 # Workers: discovery, choice and delegation
 
 sisi finds the agent command-line tools on the machine, keeps a judged record of work given to
-them, and chooses the most affordable worker that is good enough for each new piece of work. No
-list of preferred models is shipped in code, and nothing is scheduled: information refreshes when
-a command runs and the stored copy is old, or after a failure.
+them, and recommends the most affordable worker that is good enough. No model, price or ranking
+ships in the product: everything specific is discovered here, researched into the user store,
+or learned from judged results. The strategy is [canon/orchestration.md](../canon/orchestration.md)
+(`sisi delegate guide` prints it); this page is the mechanics.
 
 ## The commands
 
-- `sisi workers` prints, in plain words, each tool found on `PATH`, the models it lists, whether
-  it is usable now and why not (not logged in, limit reached until a stated time), the allowance
-  left where the tool itself reports one, and the price where one is known. A tool with no model
-  listing command is shown as "models learned by use": the record names its models as they are
-  used. `sisi workers --refresh` reads the tools again instead of using the stored copy.
-- `sisi route --kind K --difficulty N [--review-of W] [--explain]` prints the worker the record
-  chooses for a kind of task (such as `search`, `impl`, `tests`, `review`) at a difficulty of 1, 2
-  or 3. It is plain arithmetic over the record; no model is called. `--explain` also prints why
-  each other candidate was passed over. `--review-of W` chooses a reviewer from a different maker
-  than the author `W`, peer review style.
+- `sisi workers [--refresh]` — each tool found, the models it lists, whether it is usable now
+  and why not, allowance and price where known, runs waiting for a judgement, then the judged
+  record as three tables: by task type and difficulty (attempts, accepted, checked well, later
+  wrong, median minutes; thin rows marked), what fixed each rejection, and difficulty-guess
+  calibration.
+- `sisi workers fact WORKER --price N|--score N --source S [--date D] [--plan flat|per-use]
+  [--maker M]` — record a price (per million tokens) or a benchmark standing (0–100), each with
+  its source and date, in the user store. A fact without a source is refused.
+- `sisi workers avoid|prefer PATTERN --why TEXT` — the user's own routing constraints.
+- `sisi workers down WORKER --reason limit|auth|missing|error [--until DATE] [--note TEXT]` and
+  `sisi workers up WORKER` — availability. Without `--until`, the wait widens on repeat failures.
+- `sisi workers import FILE` — merge another ledger file into the delegation ledger, idempotently,
+  printing row counts before and after. The source file is only read.
+- `sisi route --kind K --difficulty 1|2|3 [--review-of W] [--explain]` — the recommended worker
+  and the mechanism to start it with (the host's own subagents, its cross-provider delegation,
+  or `sisi delegate`). `--explain` says why, briefly, and why the rest were passed over.
+- `sisi delegate brief` prints the delegation-contract template (eight parts);
+  `sisi delegate check FILE` lists the parts a brief lacks.
 - `sisi delegate --kind K --difficulty N --brief FILE [--worker W] [--review-of W] [--cwd DIR]`
-  runs the brief unattended on the chosen worker in the given folder, writes the full transcript
-  to a file under the state folder, and prints only the worker's final report, the transcript path
-  and the command that records the judgement.
-- `sisi delegate judge ID --outcome accepted|rejected --check none|diffstat|tests|read|review
-  [--minutes N]` records how a run turned out and how strongly it was checked. That judgement is
-  what later choices learn from. A run nobody judged is listed by `sisi workers` and named at
-  session start.
-- `sisi delegate amend ID` marks a judged result that later proved wrong, so it stops counting as
-  a success.
+  runs a brief through the worker's own CLI when the host has no delegation of its own. A brief
+  lacking outcome, acceptance or the files it may change is refused.
+- `sisi delegate judge` is the only way a result enters the ledger: by run id for
+  `sisi delegate` runs, or directly (`--worker --type --difficulty`) for work run any other way.
+  It carries outcome, the strongest check applied, minutes, tokens, cost, retry-of, and project,
+  session and start/end times when known. `sisi delegate amend ID` marks one later proved
+  wrong; `sisi delegate recent [-n N] [--project P]` lists judgements to find an id.
 
 ## How the choice is made
 
-In order: a model whose id contains "contributor" is never chosen, because those tiers train on
-prompts. A worker marked unavailable is skipped until its retry time, as is a flat-rate plan whose
-allowance is known to be spent. For a review, the author's maker is skipped while another maker
-is available.
+Candidates are only workers with a judged record, a known price or a benchmark prior; discovered
+catalogue models with none of those are listed but never routed to. On a cold start nobody
+qualifies: the pick is then a trial among usable workers, `--explain` says so, and asks for the
+result to be judged and facts recorded.
 
-A worker counts as proven for a kind and difficulty after enough judged attempts (one threshold
-constant in code) with an accepted rate at or above the bar, where accepted means accepted and not
-later found wrong. Above the lowest difficulty, proven workers come first. At the lowest
-difficulty, workers with a thin record stay in the pool, so low-stakes work is what gathers their
-first attempts. A worker with enough attempts and a rate below the bar is passed over while
-anything else remains.
+In order: a tier that trains on prompts is never chosen; unavailable and allowance-spent workers
+are skipped and named; `avoid` patterns remove a worker unless that leaves nobody; a reviewer
+comes from a different maker than the author (a stored `maker` fact, else derived from the model
+id). Proven workers (enough attempts at or above the accepted-rate bar, not later found wrong)
+come first above difficulty 1; proven-bad workers are passed over. Cheapest first within that:
+flat-rate allowance before per-use prices, unknown prices last, the benchmark prior ordering a
+thin record at equal price, `prefer` patterns first, then load balancing across allowances.
+About one difficulty-1 task in ten goes to a cheaper thin-record worker instead, so cheaper
+options gather evidence. The choice is deterministic for one fixed record.
 
-Cheapest means: a flat-rate plan with allowance left and no recent failure comes before anything
-billed per use, because one more task on it costs nothing extra. Per-use workers order by their
-known price. An unknown price is treated as the most expensive of its class until it is learned;
-`--explain` says so rather than inventing a number.
+## Costs and failures
 
-Work is then spread, not drained: within one price tier and price, the worker that has taken the
-least work relative to the allowance it has left goes first. Every delegation is recorded, so the
-choice rotates as work is done, yet is deterministic for one fixed record. Ties break on the
-worker id.
+Tokens and cost are captured where the worker's output reports them, and marked `unavailable`
+otherwise; when tokens are known but cost is not, cost is estimated from the price fact and
+marked `estimated`. Failure is recognised from output text, never the exit status alone: a
+limit, login, missing tool or outage is unavailability with a retry time, the brief falls
+through to the next choice, and quality is untouched. Poor work is a rejected judgement, which
+never marks a worker down. No approval- or sandbox-switching flag is passed unless the config
+allows it per tool (`workers.allow_bypass`).
 
-On a fresh install the record is empty and no prices are known, so every worker is thin and
-unpriced: the first usable worker in id order is chosen, with flat-rate allowance winning where a
-tool reports it. Each judgement then shapes the next choice. That is the whole bootstrap; there is
-no shipped roster to fall back on.
+## Stored, and when facts go stale
 
-## Failures that are not bad work
-
-Some tools report a limit or a missing login with a success exit status, so failure is recognised
-from the output text, never from the exit status alone. A limit, login, missing tool or outage is
-recorded as unavailability, with a retry time that grows on repeat failures, and the same brief is
-tried on the next choice at once. Unavailability never counts against a worker's quality. A worker
-that ran and did poor work is a different thing: that is a rejected judgement.
-
-sisi never passes a flag that switches off a tool's approvals or sandbox unless the config
-explicitly allows it for that tool (`workers.allow_bypass`). When a run times out, the message
-says it may be stalled on such a decision and names that setting.
-
-## The main thread
-
-Hook payloads carry the session's model; sisi keeps it with the session record. Model strength
-comes from the judged record where it is thick enough, otherwise from a stored prior table in
-which every figure carries its source and date. No ranking ships in code: with no prior and no
-record, the strength of a model is stated as unknown.
-
-At session start, one plain line follows from that: a session whose model is among the strongest
-available on the machine is told to plan, delegate with `sisi delegate` and judge; a weaker one is
-told to do the work itself, and told once which stronger models are available. A session another
-agent started (a subagent, or a worker run by `sisi delegate`) is told nothing about delegating.
-
-## What is stored, and the seams left open
-
-In the personal data folder: `workers.json` (discovery, with the time it was read),
-`delegations.jsonl` (the ledger: runs, judged attempts, amendments), `worker-availability.json`
-(unavailable workers and retry times), and two tables that start empty:
-
-- `worker-prices.json`: `{"models": {"<model or worker>": {"plan": "flat" or "per-use",
-  "cost_per_million_tokens": number, "maker": name, "source": text, "date": "YYYY-MM-DD"}},
-  "tools": {"<tool>": entries of the same shape}}`.
-- `model-strength.json`: `{"models": {"<model or worker>": {"score": number from 0 to 100,
-  "source": text, "date": "YYYY-MM-DD"}}}`.
-
-A ledger kept by the earlier hand-written orchestrator is imported once, without changing the
-original, when its path is named by the `ledger` config key or the `SISI_LEDGER` environment
-variable; `sisi workers` reports how many rows came in.
-
-Settings live under a `workers` key in the config: `refresh_after_s` (how old discovery may get
-before a command refreshes it), `timeout_s` (how long one delegated run may take), and
-`allow_bypass` (per tool, whether approval- or sandbox-switching flags may be passed; off unless
-named).
-
-Deliberately not built in this slice, with the tables above ready for them: refreshing prices and
-published benchmark scores by web research into those tables; using a cheap fast model to classify
-tasks, match lessons or draft review plans; a driver for hosts that delegate through their own
-interface rather than a command line; and removing the prose orchestrator this replaces.
+In the user store: `workers.json` (discovery cache), `delegations.jsonl` (the ledger),
+`worker-availability.json`, `worker-prices.json` and `model-strength.json` (worker facts),
+`worker-prefs.json` (avoid/prefer). When facts are missing or older than
+`workers.facts_max_age_days` (default 30), session start prints one line asking for a fast,
+cheap worker to research current prices and benchmark standing and record them — an age check
+during normal use, never a scheduler. Settings live under `workers` in the config:
+`refresh_after_s`, `timeout_s`, `allow_bypass`, `facts_max_age_days`, `digest_days`,
+`host_cross_provider`.

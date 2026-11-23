@@ -7,8 +7,10 @@ reason (why not usable), and aliases (every spelling the record may use for this
 The rule, in order:
   1. Never a model whose id contains "contributor" (those tiers train on prompts).
   2. Never a worker marked unavailable whose retry time is still ahead, nor one whose flat
-     allowance is known to be spent.
-  3. For a review, never the author's maker while another maker is available.
+     allowance is known to be spent. A user's own `avoid` patterns also remove a worker, unless
+     that would leave nobody.
+  3. For a review, never the author's maker while another maker is available. A stored `maker`
+     fact wins; otherwise the maker is derived from the model id (see maker_of).
   4. Among the rest, a worker is proven for a kind and difficulty with MIN_ATTEMPTS judged attempts
      and an accepted rate of at least MIN_ACCEPTED_RATE (accepted and not later found wrong). Above
      difficulty 1, proven workers are preferred; at difficulty 1, workers with a thin record stay in
@@ -16,15 +18,21 @@ The rule, in order:
      below the bar) is passed over whenever anything else remains.
   5. Cheapest first: a flat-rate plan with allowance left costs nothing more per task, so it comes
      before anything billed per use; per-use workers order by their known price; an unknown price is
-     treated as the most expensive until learned.
-  6. Load balancing: within the same price tier and price, the worker that has taken the least work
+     treated as the most expensive until learned. A stored benchmark prior (`prior_score`) ranks
+     within the same price, so a thin record is ordered by price and prior, never arbitrarily.
+     A user's `prefer` patterns put a worker first within the eligible pool.
+  6. About one low-stakes task in ten (difficulty 1, every tenth judged attempt for that kind and
+     difficulty) goes to a cheaper worker with a thin record instead, so cheaper options keep
+     gathering evidence. The slot is a function of the record, so the choice stays deterministic
+     for one fixed record.
+  7. Load balancing: within the same price tier and price, the worker that has taken the least work
      relative to its remaining allowance goes first (recorded uses divided by allowance left, an
      unknown allowance counting as half). Because every delegation is recorded, the choice rotates
      as work is done, yet stays deterministic for one fixed record. Ties break on the worker id.
 
-On a fresh install the record is empty and no prices are known, so every candidate is thin and
-priced unknown: the first in worker-id order among the usable ones is chosen, and each judged
-result from then on shapes the next choice.
+Candidates reach here already restricted to workers with a judged record, a known price or a
+benchmark prior (see workers.routable_candidates); on a cold start none qualifies and every usable
+worker is offered, with the explanation saying so.
 """
 import re
 
@@ -32,19 +40,31 @@ MIN_ATTEMPTS = 8          # below this, a worker's record for a kind and difficu
 MIN_ACCEPTED_RATE = 0.6   # "good enough" among workers with at least MIN_ATTEMPTS attempts
 UNKNOWN_ALLOWANCE = 50.0  # allowance weight when a tool reports none
 STRONG_BAND = 10.0        # strength points from the best still counts as among the strongest
-
-_MAKER_ALIASES = {"haiku": "claude", "sonnet": "claude", "opus": "claude", "fable": "claude"}
+EXPLORE_EVERY = 10        # about one low-stakes task in ten tries a cheaper thin-record worker
 
 
 def maker_of(name):
-    """A best-effort maker from a worker or model id: the first word of the model part.
-    Stored tables may state a maker explicitly; those win wherever a candidate carries one."""
+    """A best-effort maker derived from a worker or model id: the first word of the model part.
+    A stored `maker` fact wins wherever a candidate carries one; no table of names ships here."""
     s = str(name or "").strip().lower()
     if not s:
         return ""
     model = s.rsplit("/", 1)[-1]
-    token = re.split(r"[-_:. ]", model)[0] or model
-    return _MAKER_ALIASES.get(token, token)
+    return re.split(r"[-_:. ]", model)[0] or model
+
+
+def _pattern_match(c, patterns):
+    """The (pattern, why) a candidate matches, or None. A pattern matches as a substring of the
+    worker, model or tool name, case aside."""
+    hay = " ".join(str(x or "").lower() for x in (c.get("worker"), c.get("model"), c.get("tool")))
+    for entry in patterns or []:
+        if isinstance(entry, dict):
+            pat, why = str(entry.get("pattern") or ""), str(entry.get("why") or "")
+        else:
+            pat, why = str(entry), ""
+        if pat and pat.lower() in hay:
+            return pat, why
+    return None
 
 
 def _alias_map(candidates):
@@ -109,9 +129,11 @@ def _cell(stats, worker, kind, difficulty):
     return stats.get(worker, {}).get("by_cell", {}).get((kind, difficulty), {"n": 0, "good": 0})
 
 
-def choose(candidates, records, availability, kind, difficulty, review_of=None, now=0.0, exclude=()):
+def choose(candidates, records, availability, kind, difficulty, review_of=None, now=0.0, exclude=(),
+           avoid=None, prefer=None):
     """Pick one candidate, or none. Returns {"choice", "passed_over", "stats", "author_maker"}.
-    `passed_over` is [(worker, plain reason)] covering every candidate not chosen."""
+    `passed_over` is [(worker, plain reason)] covering every candidate not chosen. `avoid` and
+    `prefer` are the user's own [{"pattern", "why"}] constraints."""
     now = float(now or 0)
     exclude = {str(x) for x in exclude}
     stats = candidate_stats(candidates, records)
@@ -137,6 +159,16 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
             passed.append((w, "its flat-rate allowance is spent"))
             continue
         eligible.append(c)
+
+    avoided = [(c, _pattern_match(c, avoid)) for c in eligible]
+    kept = [c for c, m in avoided if m is None]
+    if kept:
+        for c, m in avoided:
+            if m is not None:
+                pat, why = m
+                passed.append((c["worker"], "avoided by the user's own pattern %r%s"
+                               % (pat, (" (%s)" % why) if why else "")))
+        eligible = kept
 
     author_maker = ""
     if review_of:
@@ -192,19 +224,47 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
         weight = float(left) if left else UNKNOWN_ALLOWANCE
         return stats.get(c["worker"], {}).get("uses", 0) / max(weight, 1.0)
 
+    def prior_key(c):
+        score = c.get("prior_score")
+        return -float(score) if isinstance(score, (int, float)) else 1.0
+
     def key(c):
         r = rate(c)
-        return (_price_tier(c),
+        return (0 if _pattern_match(c, prefer) else 1,
+                _price_tier(c),
                 float(c["cost"]) if c.get("cost") is not None else float("inf"),
+                prior_key(c),
                 load_ratio(c),
                 -(r if r is not None else -1.0),
                 c["worker"])
 
+    def price_of(c):
+        return (_price_tier(c), float(c["cost"]) if c.get("cost") is not None else float("inf"))
+
     pool.sort(key=key)
     choice = pool[0] if pool else None
+    explored = None
+    if (choice is not None and difficulty == 1 and not _pattern_match(choice, prefer)
+            and _cell(stats, choice["worker"], kind, difficulty)["n"] >= MIN_ATTEMPTS):
+        total = sum(_cell(stats, c["worker"], kind, difficulty)["n"] for c in candidates)
+        if total >= EXPLORE_EVERY - 1 and total % EXPLORE_EVERY == EXPLORE_EVERY - 1:
+            thinner = [c for c in pool
+                       if c is not choice
+                       and _cell(stats, c["worker"], kind, difficulty)["n"] < MIN_ATTEMPTS
+                       and price_of(c) <= price_of(choice)]
+            if thinner:
+                thinner.sort(key=key)
+                explored, choice = choice, thinner[0]
+                pool = [choice] + [c for c in pool if c is not choice]
     if choice is not None:
         for c in pool[1:]:
-            if _price_tier(c) > _price_tier(choice) or (c.get("cost") is not None and choice.get("cost") is not None
+            if explored is not None and c is explored:
+                reason = ("the usual choice, passed over this once so a cheaper thin-record worker "
+                          "gathers evidence on low-stakes work (about one task in %d)" % EXPLORE_EVERY)
+            elif _pattern_match(choice, prefer) and not _pattern_match(c, prefer):
+                _pat, _why = _pattern_match(choice, prefer)
+                reason = "the choice matches the user's own prefer pattern %r%s" % (_pat, (" (%s)" % _why) if _why else "")
+            elif _price_tier(c) > _price_tier(choice) or (c.get("cost") is not None and choice.get("cost") is not None
                                                         and float(c["cost"]) > float(choice["cost"])):
                 reason = "more expensive than the choice (per-use price or unknown price counts as most expensive)"
             elif load_ratio(c) > load_ratio(choice):
@@ -216,6 +276,7 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
                           "equal on price and load; the choice came first in worker-id order")
             passed.append((c["worker"], reason))
     return {"choice": choice, "passed_over": passed, "stats": stats, "author_maker": author_maker,
+            "explored": explored["worker"] if explored else None,
             "load_ratios": {c["worker"]: load_ratio(c) for c in candidates}}
 
 
@@ -244,8 +305,20 @@ def explain_choice(result, kind, difficulty):
         lines.append("chose %s: %s; %s; load so far is %s recorded use(s) against the allowance it has left, "
                      "the lowest in its price tier, so work spreads instead of draining one plan"
                      % (choice["worker"], price, record, result["stats"].get(choice["worker"], {}).get("uses", 0)))
+        if isinstance(choice.get("prior_score"), (int, float)) and cell["n"] < MIN_ATTEMPTS:
+            lines.append("its benchmark prior is %g (%s, %s); with a thin record, price and prior decide the order"
+                         % (float(choice["prior_score"]), choice.get("prior_source") or "no source stated",
+                            choice.get("prior_date") or "no date stated"))
+        if result.get("explored"):
+            lines.append("this is an exploration pick: %s was the usual choice, passed over once so a cheaper "
+                         "thin-record worker gathers evidence" % result["explored"])
         if result.get("author_maker"):
-            lines.append("it is from a different maker than the author (%s)" % result["author_maker"])
+            choice_maker = choice.get("maker") or maker_of(choice.get("model") or choice["worker"])
+            if choice_maker != result["author_maker"]:
+                lines.append("it is from a different maker than the author (%s)" % result["author_maker"])
+            else:
+                lines.append("no worker from a different maker than the author (%s) is available, "
+                             "so the review stays with the same maker" % result["author_maker"])
     groups, order = {}, []
     for worker, reason in result["passed_over"]:
         if reason not in groups:

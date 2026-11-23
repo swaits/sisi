@@ -54,7 +54,16 @@ class WorkerCase(SisiCase):
 
     def brief(self):
         p = os.path.join(self.proj, "brief.md")
-        open(p, "w").write("You are a worker. Do the toy task and report back.\n")
+        open(p, "w").write(
+            "You are a worker.\n\n"
+            "## Outcome and scope\nDo the toy task.\n\n"
+            "## Context and sources of truth\nThis brief.\n\n"
+            "## Constraints and interfaces\nNone.\n\n"
+            "## Acceptance\nThe final report says done.\n\n"
+            "## Deliverables and report format\nA short report.\n\n"
+            "## Files you may change\ntoy.txt only.\n\n"
+            "## Verification\nNone needed.\n\n"
+            "## Budget and escalation\nFive minutes; escalate if blocked.\n")
         return p
 
 

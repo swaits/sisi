@@ -9,25 +9,36 @@ configured age, or after a failure marks it stale.
 
 Personal files (all in the personal data folder):
   workers.json             the discovery cache, with the time it was read
-  delegations.jsonl        the ledger: judged attempts, runs awaiting judgement, amendments
+  delegations.jsonl        the ledger: judged attempts, runs awaiting judgement, amendments.
+                           `sisi delegate judge` is the only way a result enters it.
   worker-availability.json unavailability (limit, login, missing, error) with retry times
-  worker-prices.json       stored prices: {"models": {"<model or worker>": {"plan": "flat"|"per-use",
-                           "cost_per_million_tokens": number, "maker": name, "source": text,
-                           "date": "YYYY-MM-DD"}}, "tools": {"<tool>": same shape}}
-  model-strength.json      stored strength prior: {"models": {"<model or worker>":
+  worker-prices.json       worker facts (prices): {"models": {"<model or worker>":
+                           {"plan": "flat"|"per-use", "cost_per_million_tokens": number,
+                           "maker": name, "source": text, "date": "YYYY-MM-DD"}},
+                           "tools": {"<tool>": same shape}}, written by `sisi workers fact`
+  model-strength.json      worker facts (benchmark standing): {"models": {"<model or worker>":
                            {"score": 0..100, "source": text, "date": "YYYY-MM-DD"}}}
-The last two start empty and are the seam later research fills in; unknown simply means unknown.
+  worker-prefs.json        the user's own routing constraints: {"avoid": [{"pattern", "why"}],
+                           "prefer": [...]}, written by `sisi workers avoid|prefer`
+The fact tables start empty; unknown simply means unknown, and session start asks for them to be
+researched when they are missing or old. No price, score or model name ships in the product.
 """
-import json, os, re, shutil, subprocess, sys, time, uuid
+import datetime, json, os, re, shutil, statistics, subprocess, sys, time, uuid
 
+from . import brief as brief_contract
 from . import paths, routing, store
 
 LIST_TIMEOUT_S = 30
 DEFAULT_REFRESH_AFTER_S = 24 * 3600
 DEFAULT_RUN_TIMEOUT_S = 900
 CHECKS = ("none", "diffstat", "tests", "read", "review")
+STRONG_CHECKS = ("tests", "read", "review")  # a result checked one of these ways was checked well
 OUTCOMES = ("accepted", "rejected")
+REASONS = ("limit", "auth", "missing", "error")
 EFFORTS = {1: "low", 2: "medium", 3: "high"}
+DIGEST_DAYS = 45            # the judged-record tables cover this window; older evidence goes stale
+MAX_DIGEST_ROWS = 40
+FACTS_MAX_AGE_DAYS = 30     # older worker facts than this (config: workers.facts_max_age_days) are stale
 
 # One small driver per tool. Run templates use tokens expanded by build_command():
 # {prompt} the brief text, {model_flag} / {effort_flag} / {cwd_flag} the driver's flag pair (dropped
@@ -357,9 +368,27 @@ def _wait_s(reason, fails):
     return min(24 * 3600 * 2 ** (fails - 1), 7 * 24 * 3600)
 
 
-def record_down(keys, reason, note=None, now=None, retry_after_s=None):
+def _parse_time(value):
+    """Epoch seconds from a number, an epoch string, or an ISO date/datetime; None if unparsable."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    try:
+        return float(text)
+    except ValueError:
+        pass
+    try:
+        return datetime.datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return None
+
+
+def record_down(keys, reason, note=None, now=None, retry_after_s=None, until_ts=None):
     """Record unavailability under one or more keys (a worker, its tool, its plan prefix).
-    Unavailability is kept apart from judged work: it never counts against quality."""
+    Unavailability is kept apart from judged work: it never counts against quality. Without an
+    explicit `until_ts`, the wait before the next try widens with each repeat failure."""
     now = time.time() if now is None else now
     avail = read_availability()
     for key in keys:
@@ -371,7 +400,10 @@ def record_down(keys, reason, note=None, now=None, retry_after_s=None):
         entry["reason"] = reason
         if note:
             entry["note"] = note
-        entry["retry_at"] = now + (retry_after_s if retry_after_s else _wait_s(reason, entry["fails"]))
+        if until_ts is not None:
+            entry["retry_at"] = float(until_ts)
+        else:
+            entry["retry_at"] = now + (retry_after_s if retry_after_s else _wait_s(reason, entry["fails"]))
         avail[key] = entry
     write_json(availability_path(), avail)
     return avail
@@ -387,6 +419,55 @@ def clear_down(worker):
             if k.lower() not in (w, model) and not w.startswith(k.lower() + "/")}
     if keep != avail:
         write_json(availability_path(), keep)
+
+
+def _row_signature(row):
+    return json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def import_ledger(src, now=None):
+    """Merge another ledger file into the delegation ledger, losslessly and idempotently.
+    Returns (rows before, rows after, rows added). The source file is only read. Down/up rows
+    are replayed into availability, so what was known to be down stays known."""
+    now = time.time() if now is None else now
+    existing = read_records()
+    before = len(existing)
+    seen = {_row_signature(r) for r in existing}
+    seen_attempt_ids = {r.get("id") for r in existing if r.get("kind") == "attempt" and r.get("id")}
+    added = 0
+    new_rows = []
+    for row in read_records(src):
+        if _row_signature(row) in seen:
+            continue
+        if row.get("kind") == "attempt" and row.get("id") in seen_attempt_ids:
+            continue
+        append_record(dict(row))
+        seen.add(_row_signature(row))
+        if row.get("kind") == "attempt" and row.get("id"):
+            seen_attempt_ids.add(row.get("id"))
+        new_rows.append(row)
+        added += 1
+    avail = read_availability()
+    changed = False
+    for row in new_rows:
+        ts = row.get("ts") if isinstance(row.get("ts"), (int, float)) else now
+        if row.get("kind") == "down" and row.get("worker"):
+            key = str(row["worker"]).lower()
+            e = avail.get(key) or {"since": ts, "fails": 0}
+            e["fails"] = int(e.get("fails") or 0) + 1
+            e["reason"] = row.get("reason") or "error"
+            if row.get("note"):
+                e["note"] = row["note"]
+            until = _parse_time(row.get("until"))
+            e["retry_at"] = until if until is not None else ts + _wait_s(e["reason"], e["fails"])
+            avail[key] = e
+            changed = True
+        elif row.get("kind") == "up" and row.get("worker"):
+            if avail.pop(str(row["worker"]).lower(), None) is not None:
+                changed = True
+    if changed:
+        write_json(availability_path(), avail)
+    return before, before + added, added
 
 
 def ensure_imported(now=None):
@@ -405,37 +486,16 @@ def ensure_imported(now=None):
         return None
     if os.path.realpath(src) == os.path.realpath(ledger_path()):
         return None
-    rows = read_records(src)
-    existing_ids = {r.get("id") for r in read_records() if r.get("kind") == "attempt"}
-    count = 0
-    for row in rows:
-        if row.get("kind") == "attempt" and row.get("id") in existing_ids:
-            continue
-        append_record(dict(row))
-        count += 1
-    # Replay its down/up rows, and merge the availability file that sat beside it, so what was
-    # known to be down stays known.
-    avail = read_availability()
-    for row in rows:
-        ts = row.get("ts") if isinstance(row.get("ts"), (int, float)) else now
-        if row.get("kind") == "down" and row.get("worker"):
-            key = str(row["worker"]).lower()
-            e = avail.get(key) or {"since": ts, "fails": 0}
-            e["fails"] = int(e.get("fails") or 0) + 1
-            e["reason"] = row.get("reason") or "error"
-            if row.get("note"):
-                e["note"] = row["note"]
-            e["retry_at"] = ts + _wait_s(e["reason"], e["fails"])
-            avail[key] = e
-        elif row.get("kind") == "up" and row.get("worker"):
-            avail.pop(str(row["worker"]).lower(), None)
+    _before, _after, count = import_ledger(src, now=now)
+    # Merge the availability file that sat beside the old ledger, so nothing is forgotten.
     sibling = os.path.join(os.path.dirname(src), "availability.json")
     if os.path.isfile(sibling):
+        avail = read_availability()
         for k, v in read_json(sibling).items():
             if isinstance(v, dict):
                 avail[str(k).lower()] = v
-    if avail:
-        write_json(availability_path(), avail)
+        if avail:
+            write_json(availability_path(), avail)
     write_json(marker, {"source": src, "rows": count, "ts": now})
     return count
 
@@ -496,12 +556,9 @@ def _guess_tool(worker, disc_tools):
                 return t["name"]
         if head in DRIVER_BY_NAME:
             return head
-    if model.startswith("muse-"):
-        return "muse"
-    if model.startswith("claude") or routing.maker_of(model) == "claude":
-        return "claude"
-    if model.startswith("grok"):
-        return "grok"
+    for name in DRIVER_BY_NAME:
+        if model == name or model.startswith(name + "-") or model.startswith(name + "_"):
+            return name
     return None
 
 
@@ -511,6 +568,7 @@ def build_candidates(disc=None, records=None):
     disc = discover() if disc is None else disc
     records = read_records() if records is None else records
     prices = load_prices()
+    prior = load_strength_prior()
     disc_tools = disc.get("tools") or []
     cands, seen = [], set()
 
@@ -521,12 +579,17 @@ def build_candidates(disc=None, records=None):
         seen.add(worker.lower())
         price = _price_for(prices, tool, model, worker)
         cost = price.get("cost_per_million_tokens", price.get("cost"))
+        prior_entry = next((prior[k] for k in (worker, model)
+                            if k and isinstance(prior.get(k), dict)), {})
+        score = prior_entry.get("score")
         c = {"worker": worker, "tool": tool, "model": model,
-             "maker": price.get("maker") or routing.maker_of(model or worker),
+             "maker": price.get("maker") or prior_entry.get("maker") or routing.maker_of(model or worker),
              "plan": price.get("plan") or tool_plan,
              "cost": float(cost) if isinstance(cost, (int, float)) else None,
              "allowance_pct_left": allowance, "usable": usable, "reason": reason,
              "price_source": price.get("source"), "price_date": price.get("date"),
+             "prior_score": float(score) if isinstance(score, (int, float)) else None,
+             "prior_source": prior_entry.get("source"), "prior_date": prior_entry.get("date"),
              "aliases": [worker, model, ("%s/%s" % (tool, model)) if tool and model else None,
                          tool if model is None else None]}
         c["aliases"] = [a for a in c["aliases"] if a]
@@ -575,6 +638,265 @@ def resolve_worker(name, candidates):
                     "allowance_pct_left": None, "usable": shutil.which(DRIVER_BY_NAME[tool]["exe"]) is not None,
                     "reason": None, "aliases": [str(name), model]}
     return None
+
+
+# ---------------------------------------------------------------- facts, prefs, digest
+
+
+def prefs_path():
+    return _data_file("worker-prefs.json")
+
+
+def load_prefs():
+    d = read_json(prefs_path())
+    out = {}
+    for key in ("avoid", "prefer"):
+        rows = d.get(key)
+        out[key] = [r for r in rows if isinstance(r, dict) and r.get("pattern")] if isinstance(rows, list) else []
+    return out
+
+
+def _fact_dates():
+    dates = []
+    prices = load_prices()
+    for table in ("models", "tools"):
+        rows = prices.get(table)
+        if isinstance(rows, dict):
+            for entry in rows.values():
+                if isinstance(entry, dict) and entry.get("date"):
+                    dates.append(str(entry["date"]))
+    for entry in load_strength_prior().values():
+        if isinstance(entry, dict) and entry.get("date"):
+            dates.append(str(entry["date"]))
+    return sorted(dates)
+
+
+def facts_status(now=None):
+    """{"state": "missing"|"stale"|"ok", "newest": date or None, "max_age_days": n}.
+    Missing means no price and no benchmark prior is recorded at all; stale means the newest
+    recorded fact is older than the configured age (workers.facts_max_age_days)."""
+    now = time.time() if now is None else now
+    try:
+        max_age = float(workers_cfg().get("facts_max_age_days", FACTS_MAX_AGE_DAYS))
+    except (TypeError, ValueError):
+        max_age = FACTS_MAX_AGE_DAYS
+    prices = load_prices()
+    has_price = any(isinstance(prices.get(t), dict) and prices[t] for t in ("models", "tools"))
+    if not has_price and not load_strength_prior():
+        return {"state": "missing", "newest": None, "max_age_days": max_age}
+    dates = _fact_dates()
+    newest = dates[-1] if dates else None
+    newest_ts = _parse_time(newest) if newest else None
+    if newest_ts is None or now - newest_ts > max_age * 86400:
+        return {"state": "stale", "newest": newest, "max_age_days": max_age}
+    return {"state": "ok", "newest": newest, "max_age_days": max_age}
+
+
+def facts_line(now=None):
+    """One session-start line asking for worker facts to be researched, or "" when they are fresh."""
+    status = facts_status(now)
+    if status["state"] == "ok":
+        return ""
+    if status["state"] == "missing":
+        what = "worker facts are missing (no prices or benchmark standing recorded yet)"
+    else:
+        what = "worker facts are stale (newest from %s)" % (status["newest"] or "an unstated date")
+    return ("sisi: %s: ask a fast, cheap worker to research current prices and "
+            "software-engineering benchmark standing for the workers found here (`sisi workers`) "
+            "and record each with its source: `sisi workers fact WORKER --price N --source S` "
+            "and `sisi workers fact WORKER --score N --source S`. Until then routing has no "
+            "price or prior to go on." % what)
+
+
+def estimate_cost(tokens, price_entry):
+    """Estimated cost from a known per-million-token price, or None. The caller labels it estimated."""
+    if not isinstance(tokens, (int, float)) or not isinstance(price_entry, dict):
+        return None
+    per_million = price_entry.get("cost_per_million_tokens", price_entry.get("cost"))
+    if not isinstance(per_million, (int, float)):
+        return None
+    return float(tokens) / 1000000.0 * float(per_million)
+
+
+def routable_candidates(candidates, records):
+    """(candidates, cold_start, excluded) for routing. Only a worker with a judged record, a
+    known price or a benchmark prior is a candidate; discovered catalogue models with none of
+    those are listed by `sisi workers` but never routed to. When nobody qualifies (a cold
+    start), every candidate is returned and cold_start says so: the pick is a trial to judge,
+    not a recommendation from evidence."""
+    stats = routing.candidate_stats(candidates, records)
+    keep = []
+    for c in candidates:
+        judged = sum(cell["n"] for cell in stats.get(c["worker"], {}).get("by_cell", {}).values())
+        if judged or c.get("price_source") or c.get("prior_score") is not None:
+            keep.append(c)
+    if not keep:
+        return list(candidates), True, 0
+    return keep, False, len(candidates) - len(keep)
+
+
+_HOST_TOOL = {"claude-code": "claude", "cursor": "cursor-agent"}
+
+
+def host_tool():
+    """The driver name of the tool hosting this session, or None when it is unknown."""
+    host = (store.tool() or "").strip().lower()
+    if not host:
+        return None
+    host = _HOST_TOOL.get(host, host)
+    return host if host in DRIVER_BY_NAME else None
+
+
+def mechanism_for(cand, host=None):
+    """How to start the chosen worker: the host's own subagents first, its cross-provider
+    delegation when the config says it has one (workers.host_cross_provider), else sisi itself."""
+    host = host_tool() if host is None else host
+    if host and cand.get("tool") == host:
+        return "use the host's own subagent mechanism (the worker belongs to the host tool)"
+    if host and workers_cfg().get("host_cross_provider"):
+        return "use the host's cross-provider delegation"
+    return "use `sisi delegate` (the host has no delegation of its own for this worker)"
+
+
+def _pct(ok, n):
+    return ("%d%%" % round(100.0 * ok / n)) if n else "-"
+
+
+def digest_lines(records=None, days=None, now=None):
+    """The judged record as three tables: by task type and difficulty (attempts, accepted,
+    checked well, later wrong, median minutes; thin rows marked), what fixed each rejection,
+    and how good the difficulty guesses were. Accepted on a light check shows as such."""
+    records = read_records() if records is None else records
+    now = time.time() if now is None else now
+    if days is None:
+        try:
+            days = float(workers_cfg().get("digest_days", DIGEST_DAYS))
+        except (TypeError, ValueError):
+            days = DIGEST_DAYS
+    late = {r.get("id") for r in records if r.get("kind") == "amend"}
+    attempts = [r for r in records if r.get("kind") == "attempt"
+                and isinstance(r.get("ts"), (int, float)) and r["ts"] >= now - days * 86400]
+
+    def good(a):
+        return a.get("outcome") == "accepted" and a.get("id") not in late
+
+    lines = ["Judged record (last %g days, %d delegations; rows under %d attempts are too thin to act on):"
+             % (days, len(attempts), routing.MIN_ATTEMPTS)]
+    if not attempts:
+        lines.append("  No judged delegations yet. Judge each result with `sisi delegate judge`; "
+                     "until then routing goes on price and benchmark prior alone.")
+        return lines
+    cells = {}
+    for a in attempts:
+        cells.setdefault((a.get("type"), a.get("difficulty"), a.get("worker")), []).append(a)
+    rows = []
+    for (typ, diff, worker), group in cells.items():
+        ok = [a for a in group if good(a)]
+        strong = [a for a in ok if a.get("check") in STRONG_CHECKS]
+        minutes = [a["minutes"] for a in group if isinstance(a.get("minutes"), (int, float))]
+        rows.append({"type": typ, "diff": diff, "worker": worker, "n": len(group), "ok": len(ok),
+                     "strong": len(strong), "late": sum(1 for a in group if a.get("id") in late),
+                     "mins": statistics.median(minutes) if minutes else None})
+    rows.sort(key=lambda r: -r["n"])
+    dropped = max(0, len(rows) - MAX_DIGEST_ROWS)
+    rows = rows[:MAX_DIGEST_ROWS]
+    rows.sort(key=lambda r: (str(r["type"]), r["diff"] or 0, -(r["ok"] / r["n"] if r["n"] else 0), -r["n"]))
+    lines += ["", "Workers by task", "",
+              "Accepted counts results that passed the check and were not reported wrong later. "
+              "Checked well is the share of those verified by tests, a read, or a second reviewer; "
+              "the rest were accepted on a lighter check.", "",
+              "| Type | Diff | Worker | Attempts | Accepted | Checked well | Later wrong | Median min |",
+              "|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        thin = " (thin)" if r["n"] < routing.MIN_ATTEMPTS else ""
+        mins = ("%g" % r["mins"]) if r["mins"] is not None else "-"
+        lines.append("| %s | %s | %s | %d%s | %s | %s | %d | %s |"
+                     % (r["type"], r["diff"], r["worker"], r["n"], thin,
+                        _pct(r["ok"], r["n"]), _pct(r["strong"], r["ok"]), r["late"], mins))
+    if dropped:
+        lines.append("%d rows with the fewest attempts are not shown." % dropped)
+    children = {}
+    for a in attempts:
+        if a.get("retry_of"):
+            children.setdefault(a["retry_of"], []).append(a)
+
+    def later(a):
+        for b in children.get(a.get("id"), []):
+            yield b
+            yield from later(b)
+
+    fixes = {}
+    for a in attempts:
+        if a.get("outcome") != "rejected":
+            continue
+        entry = fixes.setdefault(a.get("worker"), {"brief": 0, "stronger": 0, "open": 0})
+        fixed_by = [b.get("worker") for b in later(a) if good(b)]
+        if a.get("worker") in fixed_by:
+            entry["brief"] += 1
+        elif fixed_by:
+            entry["stronger"] += 1
+        else:
+            entry["open"] += 1
+    if fixes:
+        lines += ["", "What fixed each rejection", "",
+                  "A better brief points at the brief. A stronger worker points at that worker's "
+                  "limit. Not fixed points at a task that was harder or vaguer than it looked.", "",
+                  "| Worker | Rejected | Better brief | Stronger worker | Not fixed |",
+                  "|---|---|---|---|---|"]
+        for worker in sorted(fixes, key=str):
+            f = fixes[worker]
+            lines.append("| %s | %d | %d | %d | %d |"
+                         % (worker, f["brief"] + f["stronger"] + f["open"], f["brief"], f["stronger"], f["open"]))
+
+    def chain_size(a):
+        return 1 + sum(chain_size(b) for b in children.get(a.get("id"), []))
+
+    roots = {}
+    for a in attempts:
+        if not a.get("retry_of"):
+            roots.setdefault(a.get("difficulty"), []).append(a)
+    lines += ["", "Difficulty guesses", "",
+              "If tasks guessed at 1 often need more than one attempt, guess higher or start one tier up.", "",
+              "| Guess | Tasks | Done first try | Mean attempts |", "|---|---|---|---|"]
+    for diff in sorted(roots, key=lambda d: d or 0):
+        group = roots[diff]
+        first = sum(1 for a in group if good(a))
+        lines.append("| %s | %d | %s | %.1f |"
+                     % (diff, len(group), _pct(first, len(group)),
+                        statistics.mean(chain_size(a) for a in group)))
+    return lines
+
+
+def delegations_for_project(project, start_ts, end_ts, records=None):
+    """Delegations for one project between two times, for the scorecard: the judged attempts in
+    the window, worker minutes against wall time, and how many pairs overlapped (the parallelism
+    measure). An attempt's interval is its recorded start/end when known, else its judgement
+    time minus its recorded minutes."""
+    records = read_records() if records is None else records
+    rows, intervals = [], []
+    for r in records:
+        if r.get("kind") != "attempt" or r.get("project") != project:
+            continue
+        ts = r.get("ts")
+        if not isinstance(ts, (int, float)) or not (start_ts <= ts <= end_ts):
+            continue
+        rows.append(r)
+        end = _parse_time(r.get("ended")) or float(ts)
+        start = _parse_time(r.get("started"))
+        if start is None:
+            minutes = r.get("minutes")
+            start = end - float(minutes) * 60 if isinstance(minutes, (int, float)) else end
+        intervals.append((start, end))
+    pairs = 0
+    for i in range(len(intervals)):
+        for j in range(i + 1, len(intervals)):
+            if intervals[i][0] < intervals[j][1] and intervals[j][0] < intervals[i][1]:
+                pairs += 1
+    worker_minutes = sum(e - s for s, e in intervals) / 60.0
+    wall_minutes = ((max(e for _s, e in intervals) - min(s for s, _e in intervals)) / 60.0) if intervals else 0.0
+    return {"project": project, "delegations": rows, "count": len(rows),
+            "worker_minutes": worker_minutes, "wall_minutes": wall_minutes,
+            "overlapping_pairs": pairs}
 
 
 # ---------------------------------------------------------------- running
@@ -672,10 +994,12 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
         timeout = DEFAULT_RUN_TIMEOUT_S
     tried = []
     cand = explicit
+    prefs = load_prefs()
     while True:
         if cand is None:
             result = routing.choose(candidates, read_records(), read_availability(), kind, difficulty,
-                                    review_of=review_of, now=time.time(), exclude=tried)
+                                    review_of=review_of, now=time.time(), exclude=tried,
+                                    avoid=prefs["avoid"], prefer=prefs["prefer"])
             cand = result["choice"]
             if cand is None:
                 notes.append("sisi: no usable worker remains for kind %s at difficulty %s" % (kind, difficulty))
@@ -696,6 +1020,7 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
             continue
         cmd = build_command(driver, cand, prompt, cwd, difficulty)
         env = dict(os.environ, SISI_WORKER_RUN="1")
+        started = time.time()
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd, env=env)
             rc, out, err = r.returncode, r.stdout or "", r.stderr or ""
@@ -718,10 +1043,19 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
             cand = None
             continue
         tokens, cost = extract_usage(out + "\n" + err)
+        cost_class = "measured" if cost is not None else "unavailable"
+        if cost is None:
+            estimated = estimate_cost(tokens, _price_for(load_prices(), cand.get("tool"),
+                                                          cand.get("model"), cand["worker"]))
+            if estimated is not None:
+                cost, cost_class = estimated, "estimated"
         rec = {"kind": "run", "id": run_id, "ts": round(time.time()), "type": kind,
                "difficulty": difficulty, "worker": cand["worker"], "model": cand.get("model"),
                "tool": cand.get("tool"), "cwd": cwd, "brief": brief_path,
-               "transcript": transcript, "exit": rc, "tokens": tokens, "cost": cost,
+               "started": round(started), "ended": round(time.time()),
+               "transcript": transcript, "exit": rc, "tokens": tokens,
+               "tokens_class": "measured" if tokens is not None else "unavailable",
+               "cost": cost, "cost_class": cost_class,
                "status": "waiting" if rc == 0 else "failed"}
         append_record(rec)
         if rc == 0:
@@ -777,9 +1111,15 @@ def is_subagent_payload(payload):
     return "/subagents/" in tp or tp.endswith("/subagents")
 
 
+def _with_facts(lines):
+    line = facts_line()
+    return lines + [line] if line else lines
+
+
 def session_lines(model, payload=None):
-    """One or two plain lines at session start about delegating, or nothing for a session another
-    agent started. Uses only cached discovery and the record."""
+    """One or two plain lines at session start about delegating (plus one asking for worker
+    facts when they are missing or stale), or nothing for a session another agent started.
+    Uses only cached discovery and the record."""
     if not model or is_subagent_payload(payload or {}):
         return []
     records = read_records()
@@ -792,8 +1132,8 @@ def session_lines(model, payload=None):
         if waiting == 1:
             suffix = " One delegation is waiting for a judgement: run `sisi workers`, then `sisi delegate judge`."
     if not candidates:
-        return ["sisi: the strength of this session's model (%s) is unknown here: no workers have been "
-                "discovered yet (`sisi workers` finds them), so do the work yourself for now.%s" % (model, suffix)]
+        return _with_facts(["sisi: the strength of this session's model (%s) is unknown here: no workers have been "
+                "discovered yet (`sisi workers` finds them), so do the work yourself for now.%s" % (model, suffix)])
     cand = resolve_worker(model, candidates)
     scores = strength_scores(candidates, records)
     own = scores.get(cand["worker"]) if cand else None
@@ -803,18 +1143,18 @@ def session_lines(model, payload=None):
             own = (float(prior["score"]), "stored prior (%s, %s)" % (prior.get("source") or "no source stated",
                                                                      prior.get("date") or "no date stated"))
     if own is None:
-        return ["sisi: the strength of this session's model (%s) is unknown here (no stored prior and no "
+        return _with_facts(["sisi: the strength of this session's model (%s) is unknown here (no stored prior and no "
                 "measured record yet), so do the work yourself rather than delegating on a guess.%s"
-                % (model, suffix)]
+                % (model, suffix)])
     best_worker, (best_score, _how) = max(scores.items(), key=lambda kv: kv[1][0]) if scores else (None, (own[0], ""))
     if own[0] >= best_score - routing.STRONG_BAND:
-        return ["sisi: this session's model (%s) is among the strongest available here (%s): plan, ask `sisi route` who "
+        return _with_facts(["sisi: this session's model (%s) is among the strongest available here (%s): plan, ask `sisi route` who "
                 "should do each piece, start that worker with this tool's own subagents (use `sisi delegate` "
-                "only if it has none), and judge what comes back.%s" % (model, own[1], suffix)]
-    return ["sisi: this session's model (%s) is not among the strongest available here (%s): do the work "
+                "only if it has none), and judge what comes back.%s" % (model, own[1], suffix)])
+    return _with_facts(["sisi: this session's model (%s) is not among the strongest available here (%s): do the work "
             "yourself rather than delegating. Stronger models are available here, strongest first: %s.%s"
             % (model, own[1], ", ".join(w for w, _s in sorted(scores.items(), key=lambda kv: -kv[1][0])[:3]
-                                         if scores[w][0] > own[0]), suffix)]
+                                         if scores[w][0] > own[0]), suffix)])
 
 
 # ---------------------------------------------------------------- commands
@@ -864,6 +1204,17 @@ def _price_lines(tool_name, models, prices):
 
 
 def cmd_workers(args=()):
+    args = list(args)
+    if args[:1] == ["fact"]:
+        return _cmd_fact(args[1:])
+    if args[:1] in (["avoid"], ["prefer"]):
+        return _cmd_pref(args[0], args[1:])
+    if args[:1] == ["down"]:
+        return _cmd_down(args[1:])
+    if args[:1] == ["up"]:
+        return _cmd_up(args[1:])
+    if args[:1] == ["import"]:
+        return _cmd_import(args[1:])
     imported = ensure_imported()
     disc = discover(force="--refresh" in args)
     records = read_records()
@@ -916,6 +1267,16 @@ def cmd_workers(args=()):
         print("%d delegation%s waiting for a judgement (%s). Judge with `sisi delegate judge ID "
               "--outcome accepted|rejected --check none|diffstat|tests|read|review`."
               % (len(waiting), "" if len(waiting) == 1 else "s", ", ".join(r["id"] for r in waiting)))
+    prefs = load_prefs()
+    for key in ("avoid", "prefer"):
+        for entry in prefs[key]:
+            print("%s: %s%s" % (key.capitalize(), entry["pattern"],
+                                (" (%s)" % entry["why"]) if entry.get("why") else ""))
+    line = facts_line()
+    if line:
+        print(line)
+    for ln in digest_lines(records):
+        print(ln)
     return 0
 
 
@@ -940,9 +1301,12 @@ def cmd_route(args=()):
         print("usage: sisi route --kind K --difficulty 1|2|3 [--review-of WORKER] [--explain]")
         return 1
     kind, difficulty = setup
-    candidates = build_candidates()
-    result = routing.choose(candidates, read_records(), read_availability(), kind, difficulty,
-                            review_of=_opt(args, "--review-of"), now=time.time())
+    records = read_records()
+    candidates, cold, excluded = routable_candidates(build_candidates(), records)
+    prefs = load_prefs()
+    result = routing.choose(candidates, records, read_availability(), kind, difficulty,
+                            review_of=_opt(args, "--review-of"), now=time.time(),
+                            avoid=prefs["avoid"], prefer=prefs["prefer"])
     if result["choice"] is None:
         print("no usable worker for kind %s at difficulty %d" % (kind, difficulty))
         if "--explain" in args:
@@ -950,9 +1314,21 @@ def cmd_route(args=()):
                 print(line)
         return 1
     print(result["choice"]["worker"])
+    print("mechanism: %s" % mechanism_for(result["choice"]))
     if "--explain" in args:
         for line in routing.explain_choice(result, kind, difficulty):
             print(line)
+        if excluded:
+            print("%d discovered model(s) with no judged record, known price or benchmark prior "
+                  "are not candidates" % excluded)
+        if cold:
+            print("cold start: no worker here has a judged record, a known price or a benchmark "
+                  "prior yet, so this pick is a trial, not a recommendation from evidence. "
+                  "Judge its result (`sisi delegate judge`) and record worker facts "
+                  "(`sisi workers fact`) so the next choice has something to go on.")
+            line = facts_line()
+            if line:
+                print(line)
     return 0
 
 
@@ -962,6 +1338,25 @@ def cmd_delegate(args=()):
         return _cmd_judge(args[1:])
     if args[:1] == ["amend"]:
         return _cmd_amend(args[1:])
+    if args[:1] == ["recent"]:
+        return _cmd_recent(args[1:])
+    if args[:1] == ["brief"]:
+        sys.stdout.write(brief_contract.template())
+        return 0
+    if args[:1] == ["check"]:
+        return _cmd_brief_check(args[1:])
+    if args[:1] == ["guide"]:
+        try:
+            with open(paths.canon("orchestration.md"), encoding="utf-8") as f:
+                sys.stdout.write(f.read())
+            return 0
+        except OSError as e:
+            print("sisi delegate: cannot read the orchestration playbook: %s" % e, file=sys.stderr)
+            return 1
+    if args[:1] == ["down"]:
+        return _cmd_down(args[1:])
+    if args[:1] == ["up"]:
+        return _cmd_up(args[1:])
     setup = _route_setup(args)
     brief = _opt(args, "--brief")
     if setup is None or not brief:
@@ -973,6 +1368,12 @@ def cmd_delegate(args=()):
             prompt = f.read()
     except OSError as e:
         print("sisi delegate: cannot read the brief %s: %s" % (brief, e), file=sys.stderr)
+        return 1
+    missing = brief_contract.missing_required(prompt)
+    if missing:
+        print("sisi delegate: refusing to run this brief; it lacks %s. "
+              "`sisi delegate brief` prints the template; `sisi delegate check FILE` lists every missing part."
+              % ", ".join(missing), file=sys.stderr)
         return 1
     cwd = _opt(args, "--cwd") or os.getcwd()
     if not os.path.isdir(cwd):
@@ -986,6 +1387,8 @@ def cmd_delegate(args=()):
         if explicit is None:
             print("sisi delegate: no such worker found here: %s (see `sisi workers`)" % worker, file=sys.stderr)
             return 1
+    else:
+        candidates, _cold, _excluded = routable_candidates(candidates, read_records())
     rec, final, notes = run_delegation(candidates, kind, difficulty, prompt, cwd,
                                        explicit=explicit, review_of=_opt(args, "--review-of"),
                                        brief_path=os.path.abspath(brief))
@@ -1002,35 +1405,121 @@ def cmd_delegate(args=()):
     return 0 if rec.get("exit") == 0 else 1
 
 
+def _number_opt(args, name):
+    value = _opt(args, name)
+    if value is None:
+        return None, True
+    try:
+        return float(value), True
+    except ValueError:
+        return None, False
+
+
+def _judge_extras(args, base):
+    """Shared optional fields for both judge forms. Returns an error string or None."""
+    minutes, ok = _number_opt(args, "--minutes")
+    if not ok:
+        return "--minutes wants a number"
+    if minutes is not None:
+        base["minutes"] = minutes
+    tokens = _opt(args, "--tokens")
+    if tokens is not None:
+        try:
+            base["tokens"] = int(float(tokens))
+        except ValueError:
+            return "--tokens wants a number"
+    cost, ok = _number_opt(args, "--cost")
+    if not ok:
+        return "--cost wants a number"
+    if cost is not None:
+        base["cost"], base["cost_class"] = cost, "measured"
+    for opt, key in (("--started", "started"), ("--ended", "ended")):
+        value = _opt(args, opt)
+        if value is not None:
+            parsed = _parse_time(value)
+            if parsed is None:
+                return "%s wants an epoch number or an ISO date like 2026-12-01T09:00" % opt
+            base[key] = round(parsed)
+    project = _opt(args, "--project")
+    if project:
+        base["project"] = project
+    session = _opt(args, "--session") or os.environ.get("SISI_SESSION_ID")
+    if session:
+        base["session"] = session
+    retry_of = _opt(args, "--retry-of")
+    if retry_of:
+        base["retry_of"] = retry_of
+    note = _opt(args, "--note")
+    if note is not None:
+        base["note"] = note
+    return None
+
+
 def _cmd_judge(args):
-    if not args:
-        print("usage: sisi delegate judge ID --outcome accepted|rejected --check CHECK [--minutes N] [--retry-of ID] [--note TEXT]")
-        return 1
-    run_id, outcome, check = args[0], _opt(args, "--outcome"), _opt(args, "--check")
+    """The only way a result enters the ledger. Two forms: judge a `sisi delegate` run by its
+    id, or judge work run any other way (the host's own subagents, a shell-launched worker)
+    by naming the worker, kind and difficulty directly."""
+    usage = ("usage: sisi delegate judge ID --outcome accepted|rejected --check CHECK [--minutes N]\n"
+             "       sisi delegate judge --worker W --type K --difficulty 1|2|3 --outcome accepted|rejected "
+             "--check CHECK [--minutes N] [--tokens N] [--cost N] [--retry-of ID] [--project P] "
+             "[--session S] [--started T] [--ended T] [--note TEXT]")
+    outcome, check = _opt(args, "--outcome"), _opt(args, "--check")
     if outcome not in OUTCOMES or check not in CHECKS:
-        print("usage: sisi delegate judge ID --outcome accepted|rejected --check none|diffstat|tests|read|review [--minutes N]")
+        print(usage)
         return 1
     records = read_records()
-    run = next((r for r in records if r.get("kind") == "run" and r.get("id") == run_id), None)
-    if run is None:
-        print("sisi delegate: no delegation run with id %s" % run_id, file=sys.stderr)
+    run_id = args[0] if args and not args[0].startswith("--") else None
+    if run_id is not None:
+        run = next((r for r in records if r.get("kind") == "run" and r.get("id") == run_id), None)
+        if run is None:
+            print("sisi delegate: no delegation run with id %s" % run_id, file=sys.stderr)
+            return 1
+        if any(r.get("kind") == "attempt" and r.get("run_id") == run_id for r in records):
+            print("sisi delegate: run %s was already judged" % run_id, file=sys.stderr)
+            return 1
+        rec = {"kind": "attempt", "id": uuid.uuid4().hex[:6], "run_id": run_id, "ts": round(time.time()),
+               "project": os.path.basename(str(run.get("cwd") or "").rstrip("/")) or None,
+               "type": run.get("type"), "difficulty": run.get("difficulty"), "worker": run.get("worker"),
+               "model": run.get("model"), "tool": run.get("tool"), "outcome": outcome, "check": check,
+               "minutes": None, "tokens": run.get("tokens"), "tokens_class": run.get("tokens_class"),
+               "cost": run.get("cost"), "cost_class": run.get("cost_class"),
+               "started": run.get("started"), "ended": run.get("ended"),
+               "retry_of": run.get("retry_of"), "note": None}
+    else:
+        worker = _opt(args, "--worker")
+        kind = _opt(args, "--type") or _opt(args, "--kind")
+        difficulty = _opt(args, "--difficulty")
+        try:
+            difficulty = int(difficulty) if difficulty is not None else None
+        except ValueError:
+            difficulty = None
+        if not worker or not kind or difficulty not in (1, 2, 3):
+            print(usage)
+            return 1
+        rec = {"kind": "attempt", "id": uuid.uuid4().hex[:6], "run_id": None, "ts": round(time.time()),
+               "project": os.path.basename(os.getcwd().rstrip("/")) or None,
+               "type": kind, "difficulty": difficulty, "worker": worker.strip().lower(),
+               "model": _opt(args, "--model"), "tool": _opt(args, "--tool"),
+               "outcome": outcome, "check": check, "minutes": None, "tokens": None,
+               "cost": None, "cost_class": "unavailable", "retry_of": None, "note": None}
+    error = _judge_extras(args, rec)
+    if error:
+        print("sisi delegate: %s" % error, file=sys.stderr)
         return 1
-    if any(r.get("kind") == "attempt" and r.get("run_id") == run_id for r in records):
-        print("sisi delegate: run %s was already judged" % run_id, file=sys.stderr)
+    if rec.get("retry_of") and rec["retry_of"] not in {r.get("id") for r in records if r.get("kind") == "attempt"}:
+        print("sisi delegate: no judged delegation with id %s (see `sisi delegate recent`)" % rec["retry_of"],
+              file=sys.stderr)
         return 1
-    minutes = _opt(args, "--minutes")
-    try:
-        minutes = float(minutes) if minutes is not None else None
-    except ValueError:
-        print("sisi delegate: --minutes wants a number", file=sys.stderr)
-        return 1
-    rec = {"kind": "attempt", "id": uuid.uuid4().hex[:6], "run_id": run_id, "ts": round(time.time()),
-           "project": os.path.basename(str(run.get("cwd") or "").rstrip("/")) or None,
-           "type": run.get("type"), "difficulty": run.get("difficulty"), "worker": run.get("worker"),
-           "model": run.get("model"), "tool": run.get("tool"), "outcome": outcome, "check": check,
-           "minutes": minutes, "tokens": run.get("tokens"), "cost": run.get("cost"),
-           "retry_of": _opt(args, "--retry-of") or run.get("retry_of"), "note": _opt(args, "--note")}
+    if rec.get("cost") is None and rec.get("tokens") is not None:
+        estimated = estimate_cost(rec["tokens"], _price_for(load_prices(), rec.get("tool"),
+                                                            rec.get("model"), rec.get("worker")))
+        if estimated is not None:
+            rec["cost"], rec["cost_class"] = estimated, "estimated"
+    if rec.get("tokens") is not None and not rec.get("tokens_class"):
+        rec["tokens_class"] = "measured"
     append_record(rec)
+    # A worker that returned a result, good or bad, is reachable. A rejection judges the work;
+    # it never marks the worker unavailable.
     clear_down(rec["worker"])
     print(rec["id"])
     return 0
@@ -1050,4 +1539,174 @@ def _cmd_amend(args):
         return 1
     append_record({"kind": "amend", "id": attempt["id"], "ts": round(time.time()), "note": _opt(args, "--note")})
     print("%s marked as later wrong" % attempt["id"])
+    return 0
+
+
+def _cmd_recent(args):
+    count = _opt(args, "-n") or _opt(args, "--count") or _opt(args, "--limit")
+    try:
+        count = int(count) if count is not None else 10
+    except ValueError:
+        print("usage: sisi delegate recent [-n N] [--project P]")
+        return 1
+    records = read_records()
+    late = {r.get("id") for r in records if r.get("kind") == "amend"}
+    attempts = [r for r in records if r.get("kind") == "attempt"]
+    project = _opt(args, "--project")
+    if project:
+        attempts = [r for r in attempts if r.get("project") == project]
+    for r in attempts[-count:] if count > 0 else attempts:
+        try:
+            day = time.strftime("%Y-%m-%d", time.localtime(float(r.get("ts") or 0)))
+        except (TypeError, ValueError, OSError):
+            day = "unknown date"
+        outcome = "later wrong" if r.get("id") in late else (r.get("outcome") or "?")
+        checked = r.get("check") or "?"
+        suffix = " (checked well)" if checked in STRONG_CHECKS else " (light check)"
+        note = ("  %s" % r["note"]) if r.get("note") else ""
+        print("%s  %s  %s  %s/%s  %s  %s, check %s%s%s"
+              % (r.get("id"), day, r.get("project"), r.get("type"), r.get("difficulty"),
+                 r.get("worker"), outcome, checked, suffix, note))
+    return 0
+
+
+def _cmd_brief_check(args):
+    if not args:
+        print("usage: sisi delegate check FILE")
+        return 1
+    try:
+        with open(args[0], encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        print("sisi delegate: cannot read %s: %s" % (args[0], e), file=sys.stderr)
+        return 1
+    missing = brief_contract.missing_parts(text)
+    if not missing:
+        print("brief ok: all %d parts present" % len(brief_contract.PARTS))
+        return 0
+    print("brief lacks:")
+    for title in missing:
+        print("  - %s" % title)
+    print("`sisi delegate brief` prints the template.")
+    return 1
+
+
+def _cmd_down(args):
+    if not args:
+        print("usage: sisi workers down WORKER --reason limit|auth|missing|error [--until DATE] [--note TEXT]")
+        return 1
+    worker = str(args[0]).strip().lower().rstrip("/")
+    reason = _opt(args, "--reason")
+    if reason not in REASONS:
+        print("usage: sisi workers down WORKER --reason limit|auth|missing|error [--until DATE] [--note TEXT]")
+        return 1
+    until = _opt(args, "--until")
+    until_ts = _parse_time(until) if until is not None else None
+    if until is not None and until_ts is None:
+        print("sisi: --until wants a date like 2026-12-01 or 2026-12-01T09:00", file=sys.stderr)
+        return 1
+    note = _opt(args, "--note")
+    record_down([worker], reason, note, until_ts=until_ts)
+    append_record({"kind": "down", "worker": worker, "ts": round(time.time()),
+                   "reason": reason, "note": note, "until": until})
+    entry = read_availability()[worker]
+    print("%s down (%s), next try %s" % (worker, reason, _when(entry.get("retry_at"))))
+    return 0
+
+
+def _cmd_up(args):
+    if not args:
+        print("usage: sisi workers up WORKER")
+        return 1
+    worker = str(args[0]).strip().lower().rstrip("/")
+    before = read_availability()
+    clear_down(worker)
+    after = read_availability()
+    back = sorted(set(before) - set(after))
+    for key in back:
+        append_record({"kind": "up", "worker": key, "ts": round(time.time())})
+    print("available again: %s" % ", ".join(back) if back else "%s was not marked down" % worker)
+    return 0
+
+
+def _cmd_import(args):
+    if not args:
+        print("usage: sisi workers import FILE")
+        return 1
+    if not os.path.isfile(args[0]):
+        print("sisi: no such ledger file: %s" % args[0], file=sys.stderr)
+        return 1
+    before, after, added = import_ledger(args[0])
+    print("imported %d rows from %s (before: %d, after: %d); the original file is unchanged"
+          % (added, args[0], before, after))
+    return 0
+
+
+def _cmd_fact(args):
+    usage = ("usage: sisi workers fact WORKER --price N [--plan flat|per-use] [--maker M] --source S [--date YYYY-MM-DD]\n"
+             "       sisi workers fact WORKER --score 0..100 --source S [--date YYYY-MM-DD]")
+    if not args:
+        print(usage)
+        return 1
+    worker = args[0]
+    source = _opt(args, "--source")
+    date = _opt(args, "--date") or time.strftime("%Y-%m-%d", time.localtime())
+    price, price_ok = _number_opt(args, "--price")
+    score, score_ok = _number_opt(args, "--score")
+    if not price_ok or not score_ok or (price is None and score is None):
+        print(usage)
+        return 1
+    if not source:
+        print("sisi: a fact needs its --source (where the figure came from); nothing recorded", file=sys.stderr)
+        return 1
+    if price is not None:
+        plan = _opt(args, "--plan")
+        if plan is not None and plan not in ("flat", "per-use"):
+            print("sisi: --plan wants flat or per-use", file=sys.stderr)
+            return 1
+        prices = load_prices()
+        models = prices.get("models") if isinstance(prices.get("models"), dict) else {}
+        entry = dict(models.get(worker) or {})
+        entry.update({"cost_per_million_tokens": price, "source": source, "date": date})
+        if plan:
+            entry["plan"] = plan
+        maker = _opt(args, "--maker")
+        if maker:
+            entry["maker"] = maker
+        models[worker] = entry
+        prices["models"] = models
+        write_json(prices_path(), prices)
+        print("recorded price for %s: %g per million tokens (from %s, %s)" % (worker, price, source, date))
+    if score is not None:
+        if not (0 <= score <= 100):
+            print("sisi: --score wants a number from 0 to 100", file=sys.stderr)
+            return 1
+        data = read_json(strength_path())
+        models = data.get("models") if isinstance(data.get("models"), dict) else {}
+        entry = dict(models.get(worker) or {})
+        entry.update({"score": score, "source": source, "date": date})
+        maker = _opt(args, "--maker")
+        if maker:
+            entry["maker"] = maker
+        models[worker] = entry
+        data["models"] = models
+        write_json(strength_path(), data)
+        print("recorded benchmark standing for %s: %g (from %s, %s)" % (worker, score, source, date))
+    return 0
+
+
+def _cmd_pref(kind, args):
+    prefs = load_prefs()
+    if not args:
+        for entry in prefs[kind]:
+            print("%s: %s%s" % (kind, entry["pattern"], (" (%s)" % entry["why"]) if entry.get("why") else ""))
+        if not prefs[kind]:
+            print("no %s patterns recorded" % kind)
+        return 0
+    pattern = args[0]
+    why = _opt(args, "--why")
+    prefs[kind] = [e for e in prefs[kind] if e.get("pattern") != pattern]
+    prefs[kind].append({"pattern": pattern, "why": why})
+    write_json(prefs_path(), prefs)
+    print("%s %s recorded%s" % (kind, pattern, (" (%s)" % why) if why else ""))
     return 0
