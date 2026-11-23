@@ -75,9 +75,17 @@ class FloorTests(SisiCase):
 LABELS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "risk_labels.json")
 
 
+HELDOUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "risk_labels_heldout.json")
+
+
 def _labels():
     with open(LABELS, encoding="utf-8") as f:
         return json.load(f)
+
+
+def _heldout():
+    with open(HELDOUT, encoding="utf-8") as f:
+        return [{"path": r["path"], "floor": r["floor"], "why": r["reason"]} for r in json.load(f)]
 
 
 class LabelledSetTests(SisiCase):
@@ -116,6 +124,61 @@ class LabelledSetTests(SisiCase):
                 if order[got] < order[r["floor"]]:
                     under.append("%s: %s < %s" % (r["path"], got, r["floor"]))
         self.assertEqual(under, [], "\n".join(under))
+
+    def test_second_labelled_set_gets_its_labelled_floor(self):
+        """R-5.3-1, R-5.3-2: the second set, written blind by a different worker, also scores
+        exactly. It is NO LONGER HELD OUT: the table was fixed against its 16 disagreements
+        (class by class, with new cases added to the first set), so its score says nothing about
+        generalisation. A fresh blind set must be commissioned to measure that. Seen failing
+        first: 73 of 89 right before the fixes."""
+        order = {name: i for i, name in enumerate(risk.PROFILES)}
+        rows = _heldout()
+        self.assertGreaterEqual(len(rows), 80)
+        wrong = []
+        for r in rows:
+            got, _ = risk.assess([r["path"]])
+            if got != r["floor"]:
+                wrong.append("%s: labelled %s, got %s (%s)" % (r["path"], r["floor"], got, r["why"]))
+        self.assertEqual(wrong, [], "\n".join(wrong))
+        for r in rows:  # R-5.3-8, R-5.3-9: never under-rate data or critical
+            if r["floor"] in ("data", "critical"):
+                self.assertGreaterEqual(order[risk.assess([r["path"]])[0]], order[r["floor"]], r["path"])
+
+    def test_source_code_is_never_trivial(self):
+        """R-5.3-2, R-5.3-4: file kind comes from the extension first. A file with a
+        source-code extension is never `trivial`, whatever its name or directory:
+        documentation-like and asset-like names make a file trivial only when it is not code.
+        Cases are generated from the code extensions the table lists, crossed with names and
+        directories. Seen failing first: AuthorList.tsx, docs/conf.py, locales/index.ts and
+        every LICENSE*/AUTHORS*/NOTICE*/docs/ code file came out trivial."""
+        import re
+        exts = set()
+        for pat in risk.default_table()["patterns"]:
+            if pat.get("stage") == "code":
+                for g in pat["glob"] if isinstance(pat["glob"], list) else [pat["glob"]]:
+                    for alt in risk._expand_braces(g):
+                        exts.add(alt.rsplit(".", 1)[1])
+        self.assertGreaterEqual(len(exts), 20, "the table must list the code extensions")
+        dirs = ["", "docs/", "doc/", "documentation/", "src/docs/", "assets/", "images/", "static/",
+                "public/img/", "fonts/", "locales/", "i18n/", "translations/", "styles/", "web/src/components/Authors/"]
+        names = ["index", "README", "LICENSE", "AUTHORS", "NOTICE", "CHANGELOG", "AuthorList",
+                 "contributors", "copying", "readme_helper", "logo", "theme"]
+        bad = []
+        for e in sorted(exts):
+            for d in dirs:
+                for n in names:
+                    path = "%s%s.%s" % (d, n, e)
+                    got, _ = risk.assess([path])
+                    if got == "trivial":
+                        bad.append(path)
+        self.assertEqual(bad, [], "source files rated trivial: %s" % bad[:10])
+
+    def test_whole_words_not_prefixes(self):
+        """R-5.3-2: parsley is not parsing, a secretary is not a secret."""
+        for path in ("src/recipes/parsley.py", "src/secretary/office_hours.py", "lib/secretariat/minutes.rb"):
+            self.assertEqual(risk.assess([path])[0], "isolated", path)
+        for path in ("src/parser.py", "src/parsing/x.go", "src/secrets/store.py"):
+            self.assertGreaterEqual(risk.PROFILES.index(risk.assess([path])[0]), 2, path)
 
     def test_named_false_positives(self):
         """R-5.3-2: the known false positives are not escalated."""

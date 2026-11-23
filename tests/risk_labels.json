@@ -76,8 +76,9 @@
  },
  {
   "path": "app/models/user.py",
-  "floor": "isolated",
-  "why": "ordinary model"
+  "floor": "data",
+  "why": "ORM model: defines stored data",
+  "relabelled": "lead ruling 11: ORM models define stored data"
  },
  {
   "path": "app/models/concerns/authenticatable.py",
@@ -341,8 +342,9 @@
  },
  {
   "path": "tsconfig.json",
-  "floor": "isolated",
-  "why": "build configuration of one project"
+  "floor": "integration",
+  "why": "build configuration changes how every module is built",
+  "relabelled": "lead ruling 8-10: build configuration is integration across ecosystems"
  },
  {
   "path": ".eslintrc.json",
@@ -446,8 +448,9 @@
  },
  {
   "path": "apps/web/webpack.config.js",
-  "floor": "isolated",
-  "why": "build configuration of one app"
+  "floor": "integration",
+  "why": "build configuration",
+  "relabelled": "lead ruling 8-10: build configuration is integration"
  },
  {
   "path": "vendor/lib/foo.go",
@@ -526,8 +529,9 @@
  },
  {
   "path": "Makefile",
-  "floor": "isolated",
-  "why": "build script"
+  "floor": "integration",
+  "why": "build configuration changes how every module is built",
+  "relabelled": "lead ruling 8-10: build configuration is integration across ecosystems"
  },
  {
   "path": ".goreleaser.yaml",
@@ -611,8 +615,9 @@
  },
  {
   "path": "CMakeLists.txt",
-  "floor": "isolated",
-  "why": "build script (text extension, not documentation)"
+  "floor": "integration",
+  "why": "build configuration changes how every module is built",
+  "relabelled": "lead ruling 8-10: build configuration is integration across ecosystems"
  },
  {
   "path": "include/mylib/api.h",
@@ -666,8 +671,9 @@
  },
  {
   "path": "spec/models/user_spec.rb",
-  "floor": "isolated",
-  "why": "test of ordinary code"
+  "floor": "logic",
+  "why": "test of data code (an ORM model)",
+  "relabelled": "lead ruling 11: models are data, so their test is at least logic"
  },
  {
   "path": "Package.swift",
@@ -801,13 +807,15 @@
  },
  {
   "path": ".githooks/pre-commit",
-  "floor": "integration",
-  "why": "runs automatically on every commit"
+  "floor": "critical",
+  "why": "git hook runs automatically on every commit",
+  "relabelled": "lead ruling 13: things that run automatically on a machine are critical"
  },
  {
   "path": ".husky/pre-commit",
-  "floor": "integration",
-  "why": "runs automatically on every commit"
+  "floor": "critical",
+  "why": "git hook runs automatically on every commit",
+  "relabelled": "lead ruling 13: things that run automatically on a machine are critical"
  },
  {
   "path": ".github/ISSUE_TEMPLATE/bug.md",
@@ -883,5 +891,370 @@
   "path": "src/billing/README.md",
   "floor": "trivial",
   "why": "documentation inside a critical directory"
+ },
+ {
+  "path": "src/recipes/parsley.py",
+  "floor": "isolated",
+  "why": "parsley is a herb, not parsing"
+ },
+ {
+  "path": "web/src/components/ParsnipRecipe.vue",
+  "floor": "isolated",
+  "why": "parsnip is a vegetable"
+ },
+ {
+  "path": "web/src/components/Parsimony/Notice.tsx",
+  "floor": "isolated",
+  "why": "parsimony is not parsing"
+ },
+ {
+  "path": "src/secretary/office_hours.py",
+  "floor": "isolated",
+  "why": "secretary is a job title, not a secret"
+ },
+ {
+  "path": "lib/secretariat/minutes.rb",
+  "floor": "isolated",
+  "why": "secretariat is not a secret"
+ },
+ {
+  "path": "docs/conf.py",
+  "floor": "isolated",
+  "why": "a Python file in docs is code that runs"
+ },
+ {
+  "path": "docs/examples/server.go",
+  "floor": "isolated",
+  "why": "example program is code"
+ },
+ {
+  "path": "src/main/kotlin/com/acme/ui/NoticeBanner.kt",
+  "floor": "isolated",
+  "why": "code whose name begins with notice"
+ },
+ {
+  "path": "src/components/ContributorsList.tsx",
+  "floor": "isolated",
+  "why": "component whose name begins with contributors"
+ },
+ {
+  "path": "site/i18n/loader.js",
+  "floor": "isolated",
+  "why": "code in a translations directory"
+ },
+ {
+  "path": "web/src/locales/index.ts",
+  "floor": "isolated",
+  "why": "code in a locales directory"
+ },
+ {
+  "path": "lib/CopyingHelper.rb",
+  "floor": "isolated",
+  "why": "code whose name begins with copying"
+ },
+ {
+  "path": "public/assets/js/app.js",
+  "floor": "isolated",
+  "why": "script in an assets directory"
+ },
+ {
+  "path": "lib/acme/csv_tokenizer.rb",
+  "floor": "logic",
+  "why": "tokenizer: broad input space"
+ },
+ {
+  "path": "Sources/Acme/JSONDecoder.swift",
+  "floor": "logic",
+  "why": "decoder"
+ },
+ {
+  "path": "src/Acme/Grammar/Rules.cs",
+  "floor": "logic",
+  "why": "grammar"
+ },
+ {
+  "path": "app/Services/CronExpression.php",
+  "floor": "logic",
+  "why": "cron expression evaluation"
+ },
+ {
+  "path": "lib/acme/interval_tree.ex",
+  "floor": "logic",
+  "why": "interval arithmetic"
+ },
+ {
+  "path": "src/solver/simplex.py",
+  "floor": "logic",
+  "why": "numeric solver"
+ },
+ {
+  "path": "pkg/matcher/glob.go",
+  "floor": "logic",
+  "why": "pattern matcher"
+ },
+ {
+  "path": "Sources/Net/ProtocolFramer.swift",
+  "floor": "logic",
+  "why": "protocol framing"
+ },
+ {
+  "path": "src/main/scala/acme/ExprEvaluator.scala",
+  "floor": "logic",
+  "why": "expression evaluator"
+ },
+ {
+  "path": "lib/acme/diff_merger.js",
+  "floor": "logic",
+  "why": "merge algorithm"
+ },
+ {
+  "path": "src/codec/base64.c",
+  "floor": "logic",
+  "why": "codec"
+ },
+ {
+  "path": "webpack.config.js",
+  "floor": "integration",
+  "why": "build configuration"
+ },
+ {
+  "path": "web/vite.config.ts",
+  "floor": "integration",
+  "why": "build configuration"
+ },
+ {
+  "path": "app/build.gradle.kts",
+  "floor": "integration",
+  "why": "build configuration"
+ },
+ {
+  "path": "BUILD.bazel",
+  "floor": "integration",
+  "why": "build rules"
+ },
+ {
+  "path": "WORKSPACE",
+  "floor": "integration",
+  "why": "build workspace"
+ },
+ {
+  "path": "rollup.config.mjs",
+  "floor": "integration",
+  "why": "build configuration"
+ },
+ {
+  "path": "babel.config.js",
+  "floor": "integration",
+  "why": "transpiler configuration"
+ },
+ {
+  "path": "meson.build",
+  "floor": "integration",
+  "why": "build definition"
+ },
+ {
+  "path": "build.sbt",
+  "floor": "integration",
+  "why": "build definition"
+ },
+ {
+  "path": "justfile",
+  "floor": "integration",
+  "why": "build task runner"
+ },
+ {
+  "path": "gradle/wrapper/gradle-wrapper.properties",
+  "floor": "integration",
+  "why": "pins the build tool"
+ },
+ {
+  "path": "Directory.Build.props",
+  "floor": "integration",
+  "why": "build configuration"
+ },
+ {
+  "path": "renovate.json",
+  "floor": "integration",
+  "why": "dependency update policy"
+ },
+ {
+  "path": "app/Models/User.php",
+  "floor": "data",
+  "why": "ORM model"
+ },
+ {
+  "path": "src/entities/user.entity.ts",
+  "floor": "data",
+  "why": "ORM entity"
+ },
+ {
+  "path": "internal/repository/orders.go",
+  "floor": "data",
+  "why": "repository touches stored data"
+ },
+ {
+  "path": "app/Repositories/OrderRepository.php",
+  "floor": "data",
+  "why": "repository"
+ },
+ {
+  "path": "src/main/java/com/acme/entity/Invoice.java",
+  "floor": "data",
+  "why": "JPA entity"
+ },
+ {
+  "path": "Sources/App/Models/Todo.swift",
+  "floor": "data",
+  "why": "Fluent model"
+ },
+ {
+  "path": "src/models.py",
+  "floor": "data",
+  "why": "Django models"
+ },
+ {
+  "path": "src/persistence/jpa/Mapping.java",
+  "floor": "data",
+  "why": "persistence layer"
+ },
+ {
+  "path": "web/src/viewmodels/CartViewModel.ts",
+  "floor": "isolated",
+  "why": "front-end view model"
+ },
+ {
+  "path": "web/src/components/ViewModel/Dialog.tsx",
+  "floor": "isolated",
+  "why": "front-end view model"
+ },
+ {
+  "path": "app/src/main/java/com/acme/ui/model/ScreenState.kt",
+  "floor": "isolated",
+  "why": "UI state model"
+ },
+ {
+  "path": "Sources/App/ViewModels/TodoViewModel.swift",
+  "floor": "isolated",
+  "why": "view model"
+ },
+ {
+  "path": "ml/models/resnet.py",
+  "floor": "isolated",
+  "why": "machine-learning model"
+ },
+ {
+  "path": "training/model.py",
+  "floor": "isolated",
+  "why": "machine-learning model"
+ },
+ {
+  "path": "ai/models/classifier.py",
+  "floor": "isolated",
+  "why": "machine-learning model"
+ },
+ {
+  "path": "src/train_model.py",
+  "floor": "isolated",
+  "why": "machine-learning training script"
+ },
+ {
+  "path": "web/src/store/cart.ts",
+  "floor": "isolated",
+  "why": "front-end state store"
+ },
+ {
+  "path": "web/src/stores/useCartStore.ts",
+  "floor": "isolated",
+  "why": "front-end state store"
+ },
+ {
+  "path": ".bashrc",
+  "floor": "critical",
+  "why": "runs in every shell"
+ },
+ {
+  "path": "dotfiles/zsh/.zshrc",
+  "floor": "critical",
+  "why": "runs in every shell"
+ },
+ {
+  "path": "etc/systemd/system/sync.service",
+  "floor": "critical",
+  "why": "systemd unit"
+ },
+ {
+  "path": "Library/LaunchAgents/com.acme.agent.plist",
+  "floor": "critical",
+  "why": "launch agent"
+ },
+ {
+  "path": "config/autostart/sync.desktop",
+  "floor": "critical",
+  "why": "autostart entry"
+ },
+ {
+  "path": "etc/cron.d/rotate",
+  "floor": "critical",
+  "why": "cron job"
+ },
+ {
+  "path": "config/fish/conf.d/paths.fish",
+  "floor": "critical",
+  "why": "runs in every fish session"
+ },
+ {
+  "path": "hooks/pre-push",
+  "floor": "critical",
+  "why": "git hook"
+ },
+ {
+  "path": "config/profile.d/java.sh",
+  "floor": "critical",
+  "why": "runs at every login"
+ },
+ {
+  "path": "lib/acme/version.rb",
+  "floor": "release",
+  "why": "version marker"
+ },
+ {
+  "path": "src/acme/_version.py",
+  "floor": "release",
+  "why": "version marker"
+ },
+ {
+  "path": "Sources/Acme/Version.swift",
+  "floor": "release",
+  "why": "version marker"
+ },
+ {
+  "path": "include/acme/version.h",
+  "floor": "release",
+  "why": "version marker"
+ },
+ {
+  "path": ".bumpversion.cfg",
+  "floor": "release",
+  "why": "release tooling state"
+ },
+ {
+  "path": "release-please-config.json",
+  "floor": "release",
+  "why": "release tooling"
+ },
+ {
+  "path": ".changeset/config.json",
+  "floor": "release",
+  "why": "release tooling"
+ },
+ {
+  "path": "src/main/java/com/acme/Version.java",
+  "floor": "release",
+  "why": "version marker"
+ },
+ {
+  "path": "version.txt",
+  "floor": "release",
+  "why": "version marker"
  }
 ]

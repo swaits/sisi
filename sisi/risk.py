@@ -5,6 +5,10 @@ profile plus the reasons. Tables come from canon/risk.json, a user-store adjustm
 file, and a project override at .sisi/risk.json; later tables only add patterns.
 
 How ONE path is classified (`classify_path`), in this order:
+  0. Code stage (R-5.3-2, R-5.3-4): a file with a source-code extension (the "code" pattern)
+     is never `trivial`. Kind patterns marked "unless_code" (documentation, assets, styling,
+     content, text) do not apply to code files, so `docs/conf.py` and `AuthorList.tsx` fall
+     through to the name stage and are at least isolated.
   1. Kind stage (patterns with "stage": "kind"; the first match wins and is final).
      What the file IS comes before what it is called: documentation, assets, styling,
      fixtures, tests, generated output, lockfiles and manifests, vendored code. So
@@ -16,7 +20,10 @@ How ONE path is classified (`classify_path`), in this order:
      itself critical, but it is not trivial. A test of anything else stays isolated.
   2. Name stage (patterns with "stage": "name"): globs on the path, and tokens on the
      directory names and file stem split on punctuation and camelCase (`AuthorCard` is
-     "author", "card", never "auth"; `sparse` is not "pars*"). The highest matching
+     "author", "card", never "auth"). Tokens match whole words; a trailing `*` is a prefix
+     and is used only where no unrelated word starts that way (never for `pars`: parsley).
+     A pattern may carry an "except" (glob/token) that cancels it, e.g. a front-end
+     "view model" or a machine-learning "model" is not an ORM model. The highest matching
      profile wins. A source file that matches nothing is isolated.
   3. Override patterns (no "stage": project and user-store adjustments) only raise.
 How a CHANGE is classified (`assess`): the highest floor among its paths; a change that
@@ -135,6 +142,8 @@ def _token_match(path, wanted, scope):
 
 
 def _pattern_hits(path, pat):
+    if isinstance(pat.get("except"), dict) and _pattern_hits(path, pat["except"]):
+        return False  # a pattern's own exclusion (e.g. a front-end "view model" is not stored data)
     if pat.get("glob") and any(_glob_match(path, g) for g in _as_list(pat["glob"])):
         return True
     if pat.get("token") and _token_match(path, _as_list(pat["token"]), pat.get("scope") or "any"):
@@ -157,7 +166,10 @@ def classify_path(path, patterns=None):
     pats = list(patterns if patterns is not None else _patterns_from(default_table()))
     p = str(path).replace(os.sep, "/")
     kind, profile, reason = None, None, None
+    is_code = any(pat.get("stage") == "code" and _pattern_hits(p, pat) for pat in pats)
     for pat in pats:
+        if pat.get("unless_code") and is_code:
+            continue  # a code file is not documentation, an asset or styling whatever it is called
         if pat.get("stage") == "kind" and _pattern_hits(p, pat):
             kind, profile, reason = pat.get("kind") or "kind", pat["profile"], pat.get("reason") or pat["profile"]
             if pat.get("elevate"):
@@ -167,8 +179,10 @@ def classify_path(path, patterns=None):
             break
     if kind is None:
         profile, reason = _name_stage(p, pats)
+    if is_code and profile == "trivial":
+        profile, reason = "isolated", "source code is never trivial"
     for pat in pats:  # overrides (no stage) only raise
-        if pat.get("stage") not in ("kind", "name") and (pat.get("glob") or pat.get("token")) \
+        if pat.get("stage") not in ("kind", "name", "code") and (pat.get("glob") or pat.get("token")) \
                 and _pattern_hits(p, pat) and _ORDER[pat["profile"]] > _ORDER[profile]:
             profile, reason = pat["profile"], pat.get("reason") or pat["profile"]
     return profile, kind, reason
