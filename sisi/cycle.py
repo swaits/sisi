@@ -339,6 +339,11 @@ def brief_text():
     base = L.store_base(rows)
     flagged = {r["id"] for r in L.flagged(rows)}
     todo = _rank([r for r in proposed(rows) if r["id"] not in flagged] + L.flagged(rows))
+    if not todo:
+        backlog = sum(1 for r in rows if r.get("status") == "backlog")
+        waiting = sum(1 for r in rows if r.get("status") == "pending-approval")
+        return ("Learning cycle brief: no learning a cycle can act on (%d on the backlog for sisi itself, %d waiting "
+                "for the owner). Nothing to write.\n" % (backlog, waiting))
     text = "Learning cycle brief.\n" + format_text(base)
     blocks, left = [], 0
     for r in todo[:BRIEF_MAX_LEARNINGS]:
@@ -347,7 +352,7 @@ def brief_text():
                 r["id"], r.get("recurrences_after_promotion", 0))
         else:
             blk = _learning_block(r)
-        if len(text) + sum(len(b) + 1 for b in blocks) + len(blk) + 120 > BRIEF_MAX_CHARS and r["id"] not in flagged:
+        if len(text) + sum(len(b) + 1 for b in blocks) + len(blk) + 120 > BRIEF_MAX_CHARS:
             left += 1
             continue
         blocks.append(blk)

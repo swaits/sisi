@@ -796,6 +796,10 @@ def _rule_change_waits(action):
         ok, msg = documents.check_budgets(render_with({rid: parse_rule_file(action["rule_text"], rid)}))
         if not ok:
             raise OverlayError(msg)
+    waiting = cycle._waiting()[1].get(rid)
+    if waiting:
+        raise OverlayError("rule %s already has a change waiting for the owner (%s); a second one waits until that "
+                           "is decided" % (rid, waiting))
     pid = cycle.park_rule_change(action, ["%s %s: changing or disabling an existing rule needs the owner" % (action["action"], rid)])
     print("%s %s waits for the owner: nothing changed. The owner decides in a terminal: `sisi approve %s --yes`"
           % (action["action"], rid, pid))

@@ -918,3 +918,34 @@ class DueCounter(Base):
         with open(p, "w") as f:
             json.dump(rec, f)
         self.assertIn("cycle is due (6 proposed", cycle.due_notice())
+
+
+class Odds(Base):
+    """R-11.5-11, R-11.1-14 (items 5 and 8): the edges."""
+
+    def test_the_overlay_command_cannot_stack_a_second_change_on_a_rule_that_has_one_waiting(self):
+        _contract(self)
+        text = "## Deliver {#deliver-fast}\n\nShip it.\n\nWhy: speed.\n"
+        with open(os.path.join(self.tmp, "r.md"), "w") as f:
+            f.write(text)
+        r = self.sisi("overlay", "replace-rule", "deliver-fast", os.path.join(self.tmp, "r.md"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.sisi("overlay", "replace-rule", "deliver-fast", os.path.join(self.tmp, "r.md"))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("already has a change waiting", r.stderr)
+        self.assertEqual(len(self.pending()), 1)
+
+    def test_an_empty_brief_says_so_in_one_line_and_flagged_learnings_never_break_the_limit(self):
+        _contract(self)
+        out = self.sisi("cycle").stdout
+        self.assertEqual(len(out.splitlines()), 1)
+        self.assertIn("Nothing to write", out)
+        for n in range(8):
+            self.another(n)
+        rows = self.rows()
+        for r in rows:
+            r["flagged_not_working"] = True
+        L.save_learnings(rows, "t", touched=rows, via="test")
+        text = self.sisi("cycle").stdout
+        self.assertLessEqual(len(text), 6000)
+        self.assertEqual(text.count("FLAGGED NOT WORKING"), 8)
