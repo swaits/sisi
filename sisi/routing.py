@@ -244,12 +244,14 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
     pool.sort(key=key)
     choice = pool[0] if pool else None
     explored = None
-    if choice is not None and difficulty == 1 and not _pattern_match(choice, prefer):
+    if (choice is not None and difficulty == 1 and not _pattern_match(choice, prefer)
+            and _cell(stats, choice["worker"], kind, difficulty)["n"] >= MIN_ATTEMPTS):
         total = sum(_cell(stats, c["worker"], kind, difficulty)["n"] for c in candidates)
-        if total >= EXPLORE_EVERY and total % EXPLORE_EVERY == EXPLORE_EVERY - 1:
+        if total >= EXPLORE_EVERY - 1 and total % EXPLORE_EVERY == EXPLORE_EVERY - 1:
             thinner = [c for c in pool
-                       if _cell(stats, c["worker"], kind, difficulty)["n"] < MIN_ATTEMPTS
-                       and price_of(c) < price_of(choice)]
+                       if c is not choice
+                       and _cell(stats, c["worker"], kind, difficulty)["n"] < MIN_ATTEMPTS
+                       and price_of(c) <= price_of(choice)]
             if thinner:
                 thinner.sort(key=key)
                 explored, choice = choice, thinner[0]
@@ -311,7 +313,12 @@ def explain_choice(result, kind, difficulty):
             lines.append("this is an exploration pick: %s was the usual choice, passed over once so a cheaper "
                          "thin-record worker gathers evidence" % result["explored"])
         if result.get("author_maker"):
-            lines.append("it is from a different maker than the author (%s)" % result["author_maker"])
+            choice_maker = choice.get("maker") or maker_of(choice.get("model") or choice["worker"])
+            if choice_maker != result["author_maker"]:
+                lines.append("it is from a different maker than the author (%s)" % result["author_maker"])
+            else:
+                lines.append("no worker from a different maker than the author (%s) is available, "
+                             "so the review stays with the same maker" % result["author_maker"])
     groups, order = {}, []
     for worker, reason in result["passed_over"]:
         if reason not in groups:

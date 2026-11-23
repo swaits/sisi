@@ -252,6 +252,34 @@ class DigestTests(OrchCase):
         self.assertEqual(got2["count"], 0)
 
 
+class ExplorationTests(unittest.TestCase):
+    def test_one_low_stakes_task_in_ten_tries_the_cheaper_thin_worker(self):
+        """About one difficulty-1 task in ten explores a cheaper thin-record worker."""
+        from sisi import routing
+        cands = [
+            {"worker": "tool/alpha-1", "tool": "tool", "model": "alpha-1", "maker": "alpha",
+             "plan": "per-use", "cost": 5.0, "allowance_pct_left": None, "usable": True,
+             "aliases": ["tool/alpha-1", "alpha-1"]},
+            {"worker": "tool/beta-1", "tool": "tool", "model": "beta-1", "maker": "beta",
+             "plan": "per-use", "cost": 5.0, "allowance_pct_left": None, "usable": True,
+             "aliases": ["tool/beta-1", "beta-1"]},
+        ]
+        # Same price: alpha (proven, stronger prior) is the usual pick. Every tenth judged
+        # attempt for the kind and difficulty, the thin-record beta gets the task instead.
+        cands[0]["prior_score"] = 90.0
+        cands[1]["prior_score"] = 10.0
+        records = [{"kind": "attempt", "id": "e%d" % i, "type": "read", "difficulty": 1,
+                    "worker": "tool/alpha-1", "outcome": "accepted", "check": "tests"}
+                   for i in range(9)]
+        before = routing.choose(cands, records[:-1], {}, "read", 1, now=1000.0)
+        self.assertEqual(before["choice"]["worker"], "tool/alpha-1")
+        tenth = routing.choose(cands, records, {}, "read", 1, now=1000.0)
+        self.assertEqual(tenth["choice"]["worker"], "tool/beta-1")
+        self.assertEqual(tenth["explored"], "tool/alpha-1")
+        again = routing.choose(cands, records, {}, "read", 1, now=1000.0)
+        self.assertEqual(again["choice"]["worker"], "tool/beta-1", "deterministic for one record")
+
+
 class GenericTests(unittest.TestCase):
     def test_no_model_names_or_prices_in_product_files(self):
         """The product ships no model id, model-family name or price."""
