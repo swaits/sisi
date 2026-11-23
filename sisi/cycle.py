@@ -256,8 +256,14 @@ def validate_doc(doc, rows):
         if rec.get("proposed", {}).get("mechanism") == "tool":
             raise CycleError("learning %s is a tool change to sisi itself; it goes to the backlog "
                              "and the contribution export, not a cycle mechanism" % rec["id"])
-        if kind == "command-check" and not (a.get("cmd") or "").strip():
-            raise CycleError("command-check for %s needs a cmd" % rec["id"])
+        if kind == "command-check":
+            if not (a.get("cmd") or "").strip():
+                raise CycleError("command-check for %s needs a cmd" % rec["id"])
+            if not _consequential(a, rec):  # replay now, so a failed replay refuses before anything applies
+                a["_replay"] = replay_validate(rec, a)
+                if a["_replay"][0] == "failed":
+                    raise CycleError("replay validation failed for %s: %s; nothing is applied"
+                                     % (rec["id"], a["_replay"][1]))
         if kind == "contract-requirement" and not (a.get("require_kind") and a.get("when")):
             raise CycleError("contract-requirement for %s needs when and require_kind" % rec["id"])
         if kind == "rule-text":
@@ -298,9 +304,9 @@ def _apply_one(a, rec, rows):
     kind = a.get("mechanism_kind")
     ref, result, detail = None, "unvalidated", "no replay for this mechanism kind"
     if kind == "command-check":
-        result, detail = replay_validate(rec, a)
+        result, detail = a.get("_replay") or replay_validate(rec, a)
         if result == "failed":
-            raise CycleError("replay validation failed for %s: %s; nothing further is applied" % (lid, detail))
+            raise CycleError("replay validation failed for %s: %s" % (lid, detail))
         d = _overlay_json("enforced.json", "checks")
         d.setdefault("checks", []).append(
             {"type": "command", "lesson": lid, "cmd": a["cmd"],

@@ -33,8 +33,8 @@ def trace_lines(kind, entry_id):
 def check_budgets(rendered=None):
     """(ok, message) for the rendered rulebook against the overlay budgets."""
     rendered = overlay.render() if rendered is None else rendered
-    s = overlay.size(rendered)
-    if s["lines"] > overlay.MAX_LINES or s["chars"] > overlay.MAX_CHARS:
+    lines, chars = overlay.size(rendered)
+    if lines > overlay.MAX_LINES or chars > overlay.MAX_CHARS:
         return False, ("rulebook over budget: %d lines (max %d), %d chars (max %d)"
-                       % (s["lines"], overlay.MAX_LINES, s["chars"], overlay.MAX_CHARS))
-    return True, "%d lines, %d chars, inside budget" % (s["lines"], s["chars"])
+                       % (lines, overlay.MAX_LINES, chars, overlay.MAX_CHARS))
+    return True, "%d lines, %d chars, inside budget" % (lines, chars)
