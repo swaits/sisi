@@ -86,6 +86,8 @@ class PublishableTree(unittest.TestCase):
                 if "noreply" in addr.lower() or domain.lower() in ("example.com", "example.org", "example.net", "b.co"):
                     continue
                 # decorators and npm scopes such as @scope/pkg.js are not addresses: they have no local part
+                if re.fullmatch(r"\d+x\.(png|jpe?g|gif|webp|avif)", domain.lower()):
+                    continue  # an image density suffix such as hero@2x.png is a file name, not an address
                 bad.append("%s: %s" % (rel, addr))
         self.assertEqual(bad, [], "email addresses in files that would be published")
 
