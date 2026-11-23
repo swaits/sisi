@@ -528,6 +528,16 @@ class FlowTests(GateBase):
         self.assertEqual(a, "block")
         self.assertIn("bad", msg)
 
+    def test_the_send_back_shows_the_failing_test_not_only_the_end_of_the_output(self):
+        """R-5.6-1, R-5.6-4: the failure printed 300 lines above the end of the output is in the gate's message."""
+        cmd = ("echo 'FAIL: test_needle (mod.T.test_needle)'; echo 'AssertionError: needle missing'; "
+               "for i in $(seq 1 300); do echo \"summary $i\"; done; exit 1")
+        self.write_contract(contract([check("t", cmd)]) | {"risk": {"profile": "isolated"}})
+        a, msg = self.call()
+        self.assertEqual(a, "block")
+        self.assertIn("FAIL: test_needle (mod.T.test_needle)", msg)
+        self.assertIn("AssertionError: needle missing", msg)
+
     def test_a_check_over_the_budget_is_reported_not_passed(self):
         """R-15-5: a check that cannot finish in time is not-run, never passed."""
         with open(os.path.join(self.tmp, "cfg"), "w"):

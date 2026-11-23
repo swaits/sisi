@@ -412,7 +412,7 @@ def latest_results(c, rows):
             ever_failed.add(cid)
         latest[cid] = {"item": r["item"], "id": cid, "status": st, "reason": r.get("reason"),
                        "duration_s": r.get("duration_s", 0.0), "mandatory": r.get("mandatory", True),
-                       "tier": r.get("tier", "fast"), "ts": r.get("ts")}
+                       "tier": r.get("tier", "fast"), "ts": r.get("ts"), "evidence": r.get("evidence") or ""}
     for x in (c.get("checks") or []) + (c.get("invariants") or []):
         if isinstance(x, dict) and x.get("id") and x["id"] not in latest:
             latest[x["id"]] = {"item": "check", "id": x["id"], "status": "not-run",

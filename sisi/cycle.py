@@ -183,8 +183,8 @@ def enforced_results(c, project, deadline=None, default_timeout=60):
             to = float(e.get("timeout_s") or default_timeout)
             if deadline is not None:
                 to = min(to, deadline - time.time())
-            st, dur, tail = V.run_cmd(e["cmd"], project, to, e.get("expect") or {"exit": 0})
-            out.append(dict(base, status=st, duration_s=round(dur, 3), tail=tail,
+            st, dur, tail, ev = V.run_cmd(e["cmd"], project, to, e.get("expect") or {"exit": 0})
+            out.append(dict(base, status=st, duration_s=round(dur, 3), tail=tail, evidence=ev,
                             claim="enforced learning %s: %s" % (lid, e["cmd"])))
     return out
 

@@ -90,7 +90,8 @@ def release(project):
 
 
 def save_state(project, contract_id, fp, results, deep_ids):
-    items = [{"id": r["id"], "status": r["status"], "tail": (r.get("tail") or "")[-1500:]}
+    items = [{"id": r["id"], "status": r["status"], "tail": (r.get("tail") or "")[-1500:],
+              "evidence": r.get("evidence") or ""}
              for r in results if r.get("tier") == "deep"]
     st = {"contract": contract_id, "fp": fp, "epoch": time.time(), "ids": sorted(deep_ids),
           "ok": all(i["status"] in ("passed", "skipped", "not-applicable") for i in items), "items": items}
