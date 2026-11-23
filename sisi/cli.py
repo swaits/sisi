@@ -78,6 +78,8 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
   sisi workers [--refresh]           the agent tools and models found here, what is usable now and why not, allowance and price where known, delegations waiting for a judgement, and the judged record as three tables
   sisi workers fact W --price N|--score N --source S  record a price (per million tokens) or benchmark standing (0-100), with its source and date
   sisi workers avoid|prefer PATTERN --why TEXT  your own routing constraints, honoured by `sisi route`
+  sisi workers only PROVIDER PATTERN... --why TEXT | --remove  make only the matching models of that provider routable
+  sisi workers note PATTERN "TEXT" --why SOURCE | --remove  a standing fact about workers matching PATTERN, shown with route results
   sisi workers down W --reason limit|auth|missing|error [--until DATE] | up W  mark a worker unavailable / available again
   sisi workers import FILE           merge another ledger file into the delegation ledger (row counts printed; safe to repeat)
   sisi route --kind K --difficulty N [--review-of W] [--explain]
@@ -388,13 +390,13 @@ def main(argv):
         return verifiers.done_main(args)
     if cmd == "workers":
         from . import workers
-        return workers.cmd_workers(args)
+        return workers.with_commit(workers.cmd_workers, args, "workers")
     if cmd == "route":
         from . import workers
         return workers.cmd_route(args)
     if cmd == "delegate":
         from . import workers
-        return workers.cmd_delegate(args)
+        return workers.with_commit(workers.cmd_delegate, args, "delegate")
     if cmd == "eval":
         from . import evaluate
         return evaluate.cmd_eval(args)

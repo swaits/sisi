@@ -19,7 +19,11 @@ Personal files (all in the personal data folder):
   model-strength.json      worker facts (benchmark standing): {"models": {"<model or worker>":
                            {"score": 0..100, "source": text, "date": "YYYY-MM-DD"}}}
   worker-prefs.json        the user's own routing constraints: {"avoid": [{"pattern", "why"}],
-                           "prefer": [...]}, written by `sisi workers avoid|prefer`
+                           "prefer": [...], "only": [{"provider", "patterns", "why"}]}, written by
+                           `sisi workers avoid|prefer|only`
+  worker-notes.json        standing operational facts about workers: {"notes": [{"pattern", "text",
+                           "why", "date"}]}, written by `sisi workers note`; shown to the agent as
+                           information, never applied by sisi itself
 The fact tables start empty; unknown simply means unknown, and session start asks for them to be
 researched when they are missing or old. No price, score or model name ships in the product.
 """
@@ -661,7 +665,101 @@ def load_prefs():
     for key in ("avoid", "prefer"):
         rows = d.get(key)
         out[key] = [r for r in rows if isinstance(r, dict) and r.get("pattern")] if isinstance(rows, list) else []
+    rows = d.get("only")
+    out["only"] = [r for r in rows if isinstance(r, dict) and r.get("provider") and isinstance(r.get("patterns"), list)
+                   and r["patterns"]] if isinstance(rows, list) else []
     return out
+
+
+def apply_limits(candidates, prefs):
+    """(kept, excluded): `sisi workers only PROVIDER PATTERN...` leaves only the matching models of
+    that provider routable; anything else from it is passed over with the reason."""
+    limits = {str(e["provider"]).lower(): e for e in prefs.get("only") or []}
+    if not limits:
+        return candidates, []
+    kept, excluded = [], []
+    for c in candidates:
+        worker = str(c.get("worker") or "")
+        prefix = worker.split("/", 1)[0].lower() if "/" in worker else ""
+        entry = limits.get(prefix)
+        if entry is None:
+            kept.append(c)
+            continue
+        model = worker.split("/", 1)[1].lower()
+        if any(str(p).lower() in model for p in entry["patterns"]):
+            kept.append(c)
+        else:
+            excluded.append((worker, "outside the user's own limit on %s to %s%s"
+                             % (entry["provider"], ", ".join(str(p) for p in entry["patterns"]),
+                                (" (%s)" % entry["why"]) if entry.get("why") else "")))
+    return kept, excluded
+
+
+# ---- notes: standing facts about workers, shown to the agent as information
+
+
+def notes_path():
+    return _data_file("worker-notes.json")
+
+
+def load_notes():
+    rows = read_json(notes_path()).get("notes")
+    return [r for r in rows if isinstance(r, dict) and r.get("pattern") and r.get("text")] if isinstance(rows, list) else []
+
+
+def note_line(n):
+    bits = [n["why"] if n.get("why") else None, n.get("date")]
+    return "%s (pattern %r; %s)" % (n["text"], n["pattern"], ", ".join(b for b in bits if b) or "no source stated")
+
+
+def notes_for(candidates_by_worker, chosen, passed, notes=None, limit=5):
+    """Lines of notes that apply to the chosen worker or a passed-over one. Each note is shown once,
+    with who it applies to. Information for the agent, not an instruction."""
+    notes = load_notes() if notes is None else notes
+    lines = []
+    for n in notes:
+        hit = []
+        if chosen is not None and routing._pattern_match(chosen, [n]):
+            hit.append("the chosen worker")
+        names = [w for w, _r in passed if w in candidates_by_worker and routing._pattern_match(candidates_by_worker[w], [n])]
+        if names:
+            hit.append("passed over: %s%s" % (", ".join(names[:3]), " and %d more" % (len(names) - 3) if len(names) > 3 else ""))
+        if hit:
+            lines.append("note (information, not an instruction) for %s: %s" % ("; ".join(hit), note_line(n)))
+    if len(lines) > limit:
+        lines = lines[:limit] + ["and %d more notes apply (`sisi workers`)" % (len(lines) - limit)]
+    return lines
+
+
+# ---- keeping the user store's own files in its history
+
+
+DATA_FILES = ("delegations.jsonl", "worker-availability.json", "worker-prices.json",
+              "model-strength.json", "worker-prefs.json", "worker-notes.json")
+
+
+def _data_state():
+    out = []
+    for name in DATA_FILES:
+        try:
+            st = os.stat(_data_file(name))
+            out.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append(None)
+    return out
+
+
+def with_commit(fn, args, label):
+    """Run a command; when it changed any of the worker files in the user store, commit just those
+    files (one small commit per command; the user's other uncommitted files are never swept up)."""
+    before = _data_state()
+    try:
+        return fn(args)
+    finally:
+        if _data_state() != before:
+            from . import pdata
+            sub = " ".join(str(a) for a in list(args)[:1] if not str(a).startswith("-"))
+            pdata.commit("sisi %s%s: worker data changed" % (label, (" " + sub) if sub else ""), list(DATA_FILES))
 
 
 def _fact_dates():
@@ -1005,6 +1103,11 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
     tried = []
     cand = explicit
     prefs = load_prefs()
+    if cand is not None and cand.get("host_native"):
+        notes.append("sisi: %s is a host-native worker; start it with the host's own subagent tool "
+                     "(`sisi delegate` runs only command-line tools)" % cand["worker"])
+        return None, None, notes
+    candidates = [c for c in apply_limits(candidates, prefs)[0] if not c.get("host_native")]
     while True:
         if cand is None:
             result = routing.choose(candidates, read_records(), read_availability(), kind, difficulty,
@@ -1220,6 +1323,10 @@ def cmd_workers(args=()):
         return _cmd_fact(args[1:])
     if args[:1] in (["avoid"], ["prefer"]):
         return _cmd_pref(args[0], args[1:])
+    if args[:1] == ["only"]:
+        return _cmd_only(args[1:])
+    if args[:1] == ["note"]:
+        return _cmd_note(args[1:])
     if args[:1] == ["down"]:
         return _cmd_down(args[1:])
     if args[:1] == ["up"]:
@@ -1283,6 +1390,11 @@ def cmd_workers(args=()):
         for entry in prefs[key]:
             print("%s: %s%s" % (key.capitalize(), entry["pattern"],
                                 (" (%s)" % entry["why"]) if entry.get("why") else ""))
+    for entry in prefs["only"]:
+        print("Only on %s: %s%s" % (entry["provider"], ", ".join(str(p) for p in entry["patterns"]),
+                                    (" (%s)" % entry["why"]) if entry.get("why") else ""))
+    for n in load_notes():
+        print("Note (information for the agent): %s" % note_line(n))
     line = facts_line()
     if line:
         print(line)
@@ -1331,9 +1443,13 @@ def cmd_route(args=()):
     records = read_records()
     candidates, cold, excluded = routable_candidates(build_candidates(), records)
     prefs = load_prefs()
+    everyone = candidates
+    candidates, limited = apply_limits(candidates, prefs)
     result = routing.choose(candidates, records, read_availability(), kind, difficulty,
                             review_of=_opt(args, "--review-of"), now=time.time(),
                             avoid=prefs["avoid"], prefer=prefs["prefer"])
+    result["passed_over"] = list(result["passed_over"]) + limited
+    by_worker = {c["worker"]: c for c in everyone}
     down = _down_now(read_availability(), time.time())
     if result["choice"] is None:
         print("no usable worker for kind %s at difficulty %d" % (kind, difficulty))
@@ -1349,6 +1465,8 @@ def cmd_route(args=()):
     print(result["choice"]["worker"])
     print("mechanism: %s" % mechanism_for(result["choice"]))
     for line in _down_lines(down):
+        print(line)
+    for line in notes_for(by_worker, result["choice"], result["passed_over"]):
         print(line)
     if "--explain" in args:
         for line in routing.explain_choice(result, kind, difficulty):
@@ -1744,4 +1862,76 @@ def _cmd_pref(kind, args):
     prefs[kind].append({"pattern": pattern, "why": why})
     write_json(prefs_path(), prefs)
     print("%s %s recorded%s" % (kind, pattern, (" (%s)" % why) if why else ""))
+    return 0
+
+
+def _cmd_only(args):
+    usage = "usage: sisi workers only PROVIDER PATTERN [PATTERN...] --why TEXT | only PROVIDER --remove"
+    plain = _positional(args, ("--why",))
+    if not plain:
+        print(usage)
+        return 1
+    provider, patterns = plain[0].strip().lower().rstrip("/"), plain[1:]
+    prefs = load_prefs()
+    rows = [e for e in prefs["only"] if str(e["provider"]).lower() != provider]
+    if "--remove" in args:
+        removed = len(rows) != len(prefs["only"])
+        _store_only(rows)
+        print("limit on %s removed" % provider if removed else "no limit was recorded for %s" % provider)
+        return 0
+    if not patterns:
+        print(usage)
+        return 1
+    why = _opt(args, "--why")
+    rows.append({"provider": provider, "patterns": patterns, "why": why})
+    _store_only(rows)
+    print("only %s routable from %s%s" % (", ".join(patterns), provider, (" (%s)" % why) if why else ""))
+    return 0
+
+
+def _store_only(rows):
+    d = read_json(prefs_path())
+    d["only"] = rows
+    write_json(prefs_path(), d)
+
+
+def _positional(args, value_opts):
+    out, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in value_opts:
+            skip = True
+        elif not a.startswith("--"):
+            out.append(a)
+    return out
+
+
+def _cmd_note(args):
+    usage = ('usage: sisi workers note PATTERN "TEXT" --why SOURCE | note PATTERN --remove | note (lists)')
+    plain = _positional(args, ("--why",))
+    notes = load_notes()
+    if not plain:
+        for n in notes:
+            print("note: %s" % note_line(n))
+        if not notes:
+            print("no worker notes recorded")
+        return 0
+    pattern = plain[0]
+    if "--remove" in args:
+        keep = [n for n in notes if n["pattern"] != pattern]
+        write_json(notes_path(), {"notes": keep})
+        print("removed %d note(s) for %r" % (len(notes) - len(keep), pattern))
+        return 0
+    if len(plain) < 2:
+        print(usage)
+        return 1
+    why = _opt(args, "--why")
+    if not why:
+        print("sisi: a note needs its --why (where the fact came from); nothing recorded", file=sys.stderr)
+        return 1
+    notes = [n for n in notes if not (n["pattern"] == pattern and n["text"] == plain[1])]
+    notes.append({"pattern": pattern, "text": plain[1], "why": why, "date": time.strftime("%Y-%m-%d", time.localtime())})
+    write_json(notes_path(), {"notes": notes})
+    print("note recorded for %r (from %s)" % (pattern, why))
     return 0

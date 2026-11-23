@@ -107,6 +107,47 @@ class DownProvidersTests(RouteCase):
         self.assertIn("main agent does this task itself", r.stdout)
 
 
+class NotesAndLimitsTests(RouteCase):
+    def test_notes_show_for_chosen_and_passed_over_workers(self):
+        """R-7.2-1, R-17-5: a note appears in plain route output for the chosen worker and for a
+        passed-over worker it applies to, framed as information; --remove deletes it."""
+        self.seed_real_shape()
+        self.sisi("workers", "note", "wk-fast", "reasoning effort defaults to maximum; set it lower",
+                  "--why", "owner, 2026-11", env=self.env())
+        self.sisi("workers", "note", "beta", "ask before using a flag that turns off approvals",
+                  "--why", "owner", env=self.env())
+        r = self.sisi("route", "--kind", "impl", "--difficulty", "2", env=self.env())
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertTrue(r.stdout.splitlines()[0].startswith("wk-"), r.stdout)
+        notes = [l for l in r.stdout.splitlines() if l.startswith("note")]
+        text = "\n".join(notes)
+        self.assertIn("set it lower", text)
+        self.assertIn("information, not an instruction", text)
+        self.assertIn("passed over", text)
+        self.assertIn("approvals", text)
+        listing = self.sisi("workers", env=self.env())
+        self.assertIn("set it lower", listing.stdout)
+        self.sisi("workers", "note", "wk-fast", "--remove", env=self.env())
+        after = self.sisi("route", "--kind", "impl", "--difficulty", "2", env=self.env())
+        self.assertNotIn("set it lower", after.stdout)
+
+    def test_only_limits_a_provider_to_named_models(self):
+        """R-7.2-1, R-7.3-3: a newly discovered, cheap model on a limited provider is not routed."""
+        self.seed([("muse/beta-1", 9, 9)], difficulty=1)
+        self.sisi("workers", "fact", "muse/beta-2", "--price", "0.01", "--source", "fixture", env=self.env())
+        free = self.sisi("route", "--kind", "impl", "--difficulty", "1", env=self.env())
+        self.assertEqual(free.stdout.splitlines()[0], "muse/beta-2", free.stdout)
+        r = self.sisi("workers", "only", "muse", "beta-1", "--why", "fixture limit", env=self.env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        got = self.sisi("route", "--kind", "impl", "--difficulty", "1", "--explain", env=self.env())
+        self.assertEqual(got.stdout.splitlines()[0], "muse/beta-1", got.stdout)
+        self.assertIn("fixture limit", got.stdout)
+        self.assertIn("Only on muse", self.sisi("workers", env=self.env()).stdout)
+        self.sisi("workers", "only", "muse", "--remove", env=self.env())
+        back = self.sisi("route", "--kind", "impl", "--difficulty", "1", env=self.env())
+        self.assertEqual(back.stdout.splitlines()[0], "muse/beta-2")
+
+
 class SessionStartTests(RouteCase):
     def tick(self, sid, model="mystery-9", source="startup"):
         return self.sisi("tick", stdin=json.dumps({"session_id": sid, "cwd": self.proj, "source": source,
