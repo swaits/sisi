@@ -137,14 +137,14 @@ def _row_epoch(r):
 
 
 def policy_version(project, c):
-    """Hash of the policies in force: the effective rulebook, the floors and risk tables,
+    """Hash of the policies in force: the effective rulebook, the risk tables,
     the enforced checks, and the gate/verify config."""
     h = hashlib.sha256()
     rulebook = paths.generated()
     if not os.path.exists(rulebook):
         rulebook = paths.canon("core.md")
     # named by role, never by path: the same policies hash the same in any clone or project
-    for role, p in (("rulebook", rulebook), ("floors", paths.canon("floors.json")),
+    for role, p in (("rulebook", rulebook),
                     ("risk table", paths.canon("risk.json")),
                     ("project risk table", os.path.join(project, ".sisi", "risk.json"))):
         try:

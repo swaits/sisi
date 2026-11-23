@@ -2,9 +2,7 @@
   "gate": {
     "enabled": true,
     "budget_s": 120,
-    "max_blocks": 3,
-    "growth_lines": 40,
-    "growth_files": 3
+    "max_blocks": 3
   },
   "verify": {
     "default_timeout_s": 60,

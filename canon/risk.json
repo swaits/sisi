@@ -1,13 +1,13 @@
 {
   "profiles": ["trivial", "isolated", "logic", "integration", "data", "critical", "release"],
   "requirements": {
-    "trivial": {"contract": false, "checks": "the diff; a targeted check when one exists", "requirement_model": false, "risk_note": false, "independent_evidence": false, "retro": "only on an anomaly (two send-backs, or a human correction)"},
-    "isolated": {"contract": true, "checks": "at least one that is not vacuous", "requirement_model": false, "risk_note": false, "independent_evidence": false, "retro": "yes"},
-    "logic": {"contract": true, "checks": "as isolated, each with covers", "requirement_model": false, "risk_note": false, "independent_evidence": false, "retro": "yes"},
-    "integration": {"contract": true, "checks": "as logic, plus invariants", "requirement_model": true, "risk_note": true, "independent_evidence": false, "retro": "yes"},
-    "data": {"contract": true, "checks": "as integration", "requirement_model": true, "risk_note": true, "independent_evidence": true, "retro": "yes"},
-    "critical": {"contract": true, "checks": "as integration", "requirement_model": true, "risk_note": true, "independent_evidence": true, "retro": "yes"},
-    "release": {"contract": true, "checks": "every check (--all)", "requirement_model": true, "risk_note": true, "independent_evidence": true, "retro": "yes"}
+    "trivial": {"contract": false, "checks": "the diff; a targeted check when one exists", "requirement_model": false, "risk_note": false, "independent_evidence": false, "retro": "only on an anomaly (two send-backs, or a human correction)", "min_checks": 0, "covers": false, "invariants": false, "approach": false, "all_checks": false, "retro_when": "anomaly"},
+    "isolated": {"contract": true, "checks": "at least one that is not vacuous", "requirement_model": false, "risk_note": false, "independent_evidence": false, "retro": "yes", "min_checks": 1, "covers": false, "invariants": false, "approach": false, "all_checks": false, "retro_when": "close"},
+    "logic": {"contract": true, "checks": "as isolated, each with covers", "requirement_model": false, "risk_note": false, "independent_evidence": false, "retro": "yes", "min_checks": 1, "covers": true, "invariants": false, "approach": false, "all_checks": false, "retro_when": "close"},
+    "integration": {"contract": true, "checks": "as logic, plus invariants", "requirement_model": true, "risk_note": true, "independent_evidence": false, "retro": "yes", "min_checks": 1, "covers": true, "invariants": true, "approach": true, "all_checks": false, "retro_when": "close"},
+    "data": {"contract": true, "checks": "as integration", "requirement_model": true, "risk_note": true, "independent_evidence": true, "retro": "yes", "min_checks": 1, "covers": true, "invariants": true, "approach": true, "all_checks": false, "retro_when": "close"},
+    "critical": {"contract": true, "checks": "as integration", "requirement_model": true, "risk_note": true, "independent_evidence": true, "retro": "yes", "min_checks": 1, "covers": true, "invariants": true, "approach": true, "all_checks": false, "retro_when": "close"},
+    "release": {"contract": true, "checks": "every check (--all)", "requirement_model": true, "risk_note": true, "independent_evidence": true, "retro": "yes", "min_checks": 1, "covers": true, "invariants": true, "approach": true, "all_checks": true, "retro_when": "close"}
   },
   "patterns": [
     {"stage": "code", "glob": "**/*.{py,pyi,pyw,js,mjs,cjs,jsx,ts,tsx,mts,cts,vue,svelte,astro,java,kt,kts,scala,groovy,clj,cljs,go,rs,c,h,cc,cpp,cxx,hpp,hh,hxx,m,mm,cs,fs,vb,swift,dart,rb,php,pl,pm,lua,r,jl,ex,exs,erl,hs,ml,mli,nim,zig,sh,bash,zsh,fish,ps1,bat,cmd,sol,sv,vhd,tcl,awk,asm,sql}", "profile": "isolated", "reason": "source code: never trivial, whatever its name or directory"},
