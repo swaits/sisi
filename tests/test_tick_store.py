@@ -81,23 +81,14 @@ class StoreTests(SisiCase):
         with open(os.path.join(self.data, name)) as f:  # what the person taught sisi is personal data
             return [json.loads(l) for l in f]
 
-    def test_note_propose_learn_append_with_context(self):
-        for cmd, fn in (("note", "notes.jsonl"), ("propose", "proposals.jsonl"), ("learn", "learn.jsonl")):
-            extra = ["--scope", "everywhere"] if cmd == "learn" else []
-            self.assertEqual(self.sisi(cmd, *(extra + ["first", "entry"]), env={"SISI_TOOL": "codex", "SISI_SESSION_ID": "s9"}).returncode, 0)
-            self.sisi(cmd, *(extra + ["second"]))
-            recs = self.read(fn)
-            self.assertEqual([r["text"] for r in recs], ["first entry", "second"])
-            self.assertEqual(recs[0]["cwd"], self.proj)
-            self.assertEqual((recs[0]["tool"], recs[0]["session"]), ("codex", "s9"))
-            self.assertIn("ts", recs[0])
-        # learn never reaches the other files
-        self.assertEqual(len(self.read("notes.jsonl")), 2)
-        self.assertEqual(len(self.read("proposals.jsonl")), 2)
-
-    def test_empty_text_rejected(self):
-        self.assertEqual(self.sisi("note").returncode, 1)
-        self.assertFalse(os.path.exists(os.path.join(self.data, "notes.jsonl")))
+    def test_learn_appends_with_context(self):
+        self.assertEqual(self.sisi("learn", "--scope", "everywhere", "first", "entry", env={"SISI_TOOL": "codex", "SISI_SESSION_ID": "s9"}).returncode, 0)
+        self.sisi("learn", "--scope", "everywhere", "second")
+        recs = self.read("learn.jsonl")
+        self.assertEqual([r["text"] for r in recs], ["first entry", "second"])
+        self.assertEqual(recs[0]["cwd"], self.proj)
+        self.assertEqual((recs[0]["tool"], recs[0]["session"]), ("codex", "s9"))
+        self.assertIn("ts", recs[0])
 
     def test_oracle_prints_file(self):
         r = self.sisi("oracle")
@@ -107,10 +98,10 @@ class StoreTests(SisiCase):
         import threading
         def w(i):
             for j in range(50):
-                store.append("notes", {"i": i, "j": j, "pad": "x" * 200})
+                store.append("learn", {"i": i, "j": j, "pad": "x" * 200})
         ts = [threading.Thread(target=w, args=(i,)) for i in range(6)]
         [t.start() for t in ts]; [t.join() for t in ts]
-        self.assertEqual(len(self.read("notes.jsonl")), 300)
+        self.assertEqual(len(self.read("learn.jsonl")), 300)
 
     def test_status(self):
         self.write_contract(contract([check("a", "true", rung=2), check("b", "true", rung=3), human("h")]))
@@ -128,7 +119,7 @@ class StoreTests(SisiCase):
 class HelpTests(SisiCase):
     def test_help_and_unknown(self):
         out = self.sisi("help").stdout
-        for w in ("verify", "gate", "tick", "install", "audit", "learn", "verifiers"):
+        for w in ("verify", "gate", "tick", "install", "learn", "verifiers"):
             self.assertIn(w, out)
         self.assertNotEqual(self.sisi("bogus").returncode, 0)
 
@@ -145,13 +136,6 @@ class HelpTests(SisiCase):
             r = self.sisi(a)
             self.assertEqual((r.returncode, r.stdout.strip()), (0, want), a)
 
-    def test_audit_runs_on_fake_home(self):
-        os.makedirs(os.path.join(self.home, ".claude"))
-        with open(os.path.join(self.home, ".claude", "CLAUDE.md"), "w") as f:
-            f.write("a\nb\n")
-        out = self.sisi("audit").stdout
-        self.assertIn("claude-code", out)
-        self.assertIn("global instructions", out)
 
 
 if __name__ == "__main__":

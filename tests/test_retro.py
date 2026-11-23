@@ -673,12 +673,11 @@ class CliHookTests(SisiCase):
             self.assertEqual(cli._learn_cli("harvest", []), 70)  # import of the module fails
         self.assertEqual(self.sisi("help").returncode, 0)
 
-    def test_help_points_to_retro_and_note_propose_still_work(self):
+    def test_help_points_to_retro(self):
         out = self.sisi("help").stdout
         self.assertIn("sisi retro", out)
-        self.assertIn("prefer retro", out)
-        self.assertEqual(self.sisi("note", "still works").returncode, 0)
-        self.assertEqual(self.sisi("propose", "still works").returncode, 0)
+        self.assertEqual(self.sisi("note", "still works").returncode, 64)
+        self.assertEqual(self.sisi("propose", "still works").returncode, 64)
 
 
 if __name__ == "__main__":

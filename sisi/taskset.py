@@ -117,18 +117,17 @@ def read_ledger(home=None):
 
 def worker_class(worker):
     w = (worker or "").lower()
-    for c in ("haiku", "sonnet", "opus"):
-        if w == c or w.startswith(c + "-"):
-            return c
-    return None
+    if not w:
+        return None
+    return w.split("/")[0].split(":")[0] or None
 
 
 def sub_class(models, meta):
     found = set()
     for m in list(models) + [str((meta or {}).get("model") or "")]:
-        for c in ("haiku", "sonnet", "opus"):
-            if c in m.lower():
-                found.add(c)
+        c = worker_class(m)
+        if c:
+            found.add(c)
     return found
 
 

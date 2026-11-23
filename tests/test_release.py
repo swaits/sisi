@@ -225,48 +225,29 @@ class TestInstallUsesStable(ReleaseCase):
         self.assertNotIn("run `sisi install`", r.stdout)
 
     def test_doctor_reports_live_copy_and_source_ahead(self):
-        self.sisi("dev", "on", self.src)
         self.rel()
-        r = self.sisi("doctor")
-        self.assertIn("release " + release.current_name(), r.stdout)
-        self.assertIn("in step", r.stdout)
-        open(os.path.join(self.src, "docs", "more.md"), "w").write("x")
-        r = self.sisi("doctor")
-        self.assertIn("ahead (1 file differ)", r.stdout)
+        with mock.patch.object(paths, "REPO", self.src):
+            r = self.sisi("doctor")
+            self.assertIn("release " + release.current_name(), r.stdout)
+            self.assertIn("in step", r.stdout)
+            open(os.path.join(self.src, "docs", "more.md"), "w").write("x")
+            r = self.sisi("doctor")
+            self.assertIn("ahead (1 file differ)", r.stdout)
 
 
-class TestDev(ReleaseCase):
-    def test_on_off_status(self):
-        self.assertIn("off", self.sisi("dev", "status").stdout)
-        r = self.sisi("dev", "on", self.src)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(paths.personal_config()["developer"]["source"], self.src)
-        self.assertEqual(store_cfg()["developer"]["source"], self.src)
-        self.assertIn(self.src, self.sisi("dev", "status").stdout)
-        self.assertEqual(self.sisi("dev", "off").returncode, 0)
-        self.assertNotIn("developer", paths.personal_config())
-        self.assertIn("off", self.sisi("dev", "status").stdout)
+class TestSource(ReleaseCase):
+    def test_source_is_the_launcher_folder(self):
+        self.assertEqual(release.source(), REPO)
+        self.assertEqual(release.source(self.src), self.src)
+        with self.assertRaises(release.ReleaseError):
+            release.source(self.proj)
 
-    def test_on_rejects_non_source_and_keeps_other_config(self):
-        r = self.sisi("dev", "on", self.proj)
-        self.assertEqual(r.returncode, 1)
-        os.makedirs(self.data, exist_ok=True)
-        json.dump({"gate": {"budget_s": 5}, "developer": {"personal_terms": ["zed"]}}, open(os.path.join(self.data, "config.json"), "w"))
-        self.sisi("dev", "on", self.src)
-        self.sisi("dev", "off")
-        cfg = paths.personal_config()
-        self.assertEqual(cfg["gate"], {"budget_s": 5})
-        self.assertEqual(cfg["developer"], {"personal_terms": ["zed"]})
-
-    def test_release_finds_source_from_release_copy(self):
-        self.sisi("dev", "on", self.src)
-        self.assertEqual(self.sisi("release").returncode, 0)
+    def test_release_from_stable_copy_is_refused(self):
+        self.assertEqual(self.sisi("release", self.src).returncode, 0)
         with mock.patch.object(paths, "REPO", self.current()):  # now running as the stable copy
-            self.assertEqual(release.source(), self.src)
-            self.assertEqual(self.sisi("release").returncode, 0)
-            self.sisi("dev", "off")
             with self.assertRaises(release.ReleaseError):
                 release.source()
+            self.assertEqual(self.sisi("release").returncode, 1)
 
 
 def store_cfg():
@@ -277,10 +258,9 @@ def store_cfg():
 class TestPromote(ReleaseCase):
     def setUp(self):
         super().setUp()
-        self.sisi("dev", "on", self.src)
         self.assertEqual(self.rel().returncode, 0)
-        # run as the stable copy, so the source is found through developer mode and never the real repository
-        p = mock.patch.object(paths, "REPO", self.current())
+        # run from the clone: the launcher folder is the source, never the real repository
+        p = mock.patch.object(paths, "REPO", self.src)
         p.start()
         self.addCleanup(p.stop)
         self.assertEqual(release.source(), self.src)
@@ -297,7 +277,7 @@ class TestPromote(ReleaseCase):
 
     def test_dry_run_lists_scrubbed_and_writes_nothing(self):
         self.put("done/my-recipe.md", "see /home/alice/Code/x and bob@example.com, alice said Acme rules\n")
-        json.dump({"developer": {"source": self.src, "personal_terms": ["Acme"]}}, open(os.path.join(self.data, "config.json"), "w"))
+        json.dump({"developer": {"personal_terms": ["Acme"]}}, open(os.path.join(self.data, "config.json"), "w"))
         r = self.promote("my-recipe")
         self.assertEqual(r.returncode, 0, r.stderr)
         for t in ("/home/alice", "bob@example.com", "alice", "Acme", "dry run"):

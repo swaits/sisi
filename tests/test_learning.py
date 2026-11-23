@@ -154,7 +154,7 @@ class ImmediateEffectTests(LearningCase):
             self.assertIn("pars", l["triggers"])  # stems: parser/parsing/parse all meet at 'pars'
             self.assertTrue(l["applied_at"])
 
-    def test_tool_lessons_backlog_order_and_dev_mode_tick_line(self):
+    def test_tool_lessons_backlog_order(self):
         a = self.mk(change_kind="tool", change="Make the gate count session edits separately per session")
         b = self.mk(change_kind="tool", change="Make sisi verify name the slowest check first")
         c = self.mk(change_kind="tool", change="Cache transcript scans between gate decisions")
@@ -163,12 +163,6 @@ class ImmediateEffectTests(LearningCase):
         ids = [int(l.split()[0][1:]) for l in out if l.startswith("#")]
         self.assertEqual(ids, [b, c, a])  # most seen first; the tie goes to the older lesson
         self.assertEqual(self.lesson(b)["effect"], "backlog")
-        paths.set_personal_config(("developer", "source"), self.proj, "test")
-        tick = self.sisi("tick", stdin=json.dumps({"session_id": "dev1", "cwd": self.proj, "source": "startup"})).stdout
-        self.assertIn("top sisi backlog #%d" % b, tick)
-        other = os.path.join(self.tmp, "elsewhere"); os.makedirs(other)
-        tick2 = self.sisi("tick", stdin=json.dumps({"session_id": "dev2", "cwd": other, "source": "startup"})).stdout
-        self.assertNotIn("backlog", tick2)
 
 
 class DeliveryTests(LearningCase):
@@ -1219,9 +1213,9 @@ class CycleGapTests(LearningCase):
         if r2.returncode != 0:
             self.assertNotIn("add `shortens`", r2.stdout)
 
-    def test_gap15_char_budget_rewrap_and_canon_cost(self):
-        self.sisi("build-canon")
-        self.assertIn("characters (budget %d)" % overlay.MAX_CHARS, self.sisi("canon", "cost").stdout)
+    def test_gap15_char_budget_rewrap_and_doctor_size(self):
+        overlay.build_canon()
+        self.assertIn("characters (budget %d)" % overlay.MAX_CHARS, self.sisi("doctor").stdout)
         pre, base = overlay.base_rules()
         title = next(r["title"] for r in base if r["id"] == "know-done")
         body = ("Before non-trivial work write a contract listing the checks that decide success "
