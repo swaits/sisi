@@ -694,17 +694,17 @@
   },
   {
     "id": "R-5.4-4",
-    "status": "missing",
-    "how": "nothing",
-    "evidence": "",
-    "gap": "No check records which changed behaviour or failure mode it addresses."
+    "status": "partial",
+    "how": "A check may carry `covers`, the failure it would catch; the unit record keeps it",
+    "evidence": "sisi/contract.py",
+    "gap": "Optional until a risk profile requires it; nothing yet checks that the stated failure is the one the change could cause."
   },
   {
     "id": "R-5.4-5",
-    "status": "missing",
-    "how": "nothing",
-    "evidence": "",
-    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+    "status": "partial",
+    "how": "A check's `when_changed` globs name the paths that make it relevant; selection uses them",
+    "evidence": "sisi/verify.py",
+    "gap": "Path patterns only: no dependency graph or call analysis."
   },
   {
     "id": "R-5.4-6",
@@ -715,10 +715,10 @@
   },
   {
     "id": "R-5.4-7",
-    "status": "missing",
-    "how": "nothing",
-    "evidence": "",
-    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+    "status": "partial",
+    "how": "Every result stores its duration; verify prints the slowest checks and the time saved by selection and reuse",
+    "evidence": "sisi/verify.py",
+    "gap": "No estimate before a check has run once; resource cost other than time is not recorded."
   },
   {
     "id": "R-5.4-8",
@@ -729,17 +729,16 @@
   },
   {
     "id": "R-5.4-9",
-    "status": "missing",
-    "how": "nothing",
-    "evidence": "",
-    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+    "status": "met",
+    "how": "A check whose command and inputs (the watched files, or the whole tree) match its last pass is skipped as reused, with the time of that pass",
+    "evidence": "sisi/verify.py"
   },
   {
     "id": "R-5.4-10",
-    "status": "missing",
-    "how": "nothing",
-    "evidence": "",
-    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+    "status": "partial",
+    "how": "A check kept back by selection records why (not affected by this change); `--all` runs everything",
+    "evidence": "sisi/verify.py",
+    "gap": "A mandatory check with no stated reason is still allowed to block; nothing asks for a justification when the contract is written."
   },
   {
     "id": "R-5.5-1",
@@ -750,24 +749,22 @@
   },
   {
     "id": "R-5.6-1",
-    "status": "partial",
-    "how": "verify records each run result and the gate reports failures and UNVERIFIED releases",
-    "evidence": "sisi/verify.py:108",
-    "gap": "Statuses omit skipped, not applicable and not run, budget exhaustion is reported as timeout, and awaiting-human counts as success."
+    "status": "met",
+    "how": "Every verification result of the unit is stored in its archived record, with the standing result per check",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-5.6-2",
-    "status": "partial",
-    "how": "verify records each run result and the gate reports failures and UNVERIFIED releases",
-    "evidence": "sisi/verify.py:108",
-    "gap": "Statuses omit skipped, not applicable and not run, budget exhaustion is reported as timeout, and awaiting-human counts as success."
+    "status": "met",
+    "how": "Five statuses (passed, failed, skipped, not-applicable, not-run), the last three with a reason; timeouts and human checks are not-run",
+    "evidence": "sisi/verify.py"
   },
   {
     "id": "R-5.6-3",
     "status": "partial",
-    "how": "verify records each run result and the gate reports failures and UNVERIFIED releases",
-    "evidence": "sisi/verify.py:108",
-    "gap": "Statuses omit skipped, not applicable and not run, budget exhaustion is reported as timeout, and awaiting-human counts as success."
+    "how": "Nothing that did not run is reported as passed: skips and reuse are their own status, vacuous checks are refused, a mandatory check that never ran cannot close the unit as delivered",
+    "evidence": "sisi/verify.py",
+    "gap": "A partial proof's scope is not checked against the property claimed."
   },
   {
     "id": "R-6.1-1",
@@ -779,30 +776,29 @@
   {
     "id": "R-6.1-2",
     "status": "partial",
-    "how": "delivery.py records request-to-allowed-stop seconds, send-backs and check seconds, summarised as median and p90",
-    "evidence": "sisi/delivery.py",
-    "gap": "Time to first useful result is never recorded, and the completion time is time to a gate-accepted stop rather than to user acceptance."
+    "how": "The unit record holds time to first useful result and time to validated completion, each with its class",
+    "evidence": "sisi/unit.py",
+    "gap": "First useful result is the first green run (inferred) or the first allowed stop; it is not a judgement that the increment is useful."
   },
   {
     "id": "R-6.1-3",
-    "status": "missing",
-    "how": "nothing",
-    "evidence": "",
-    "gap": "Time to first useful result is never timestamped; only request-to-allowed-stop is recorded."
+    "status": "partial",
+    "how": "First allowed stop after the request, or the first green verification, whichever the hooks recorded",
+    "evidence": "sisi/unit.py",
+    "gap": "A proxy for a working increment."
   },
   {
     "id": "R-6.1-4",
-    "status": "partial",
-    "how": "delivery.py records request-to-allowed-stop seconds, send-backs and check seconds, summarised as median and p90",
-    "evidence": "sisi/delivery.py",
-    "gap": "Time to first useful result is never recorded, and the completion time is time to a gate-accepted stop rather than to user acceptance."
+    "status": "met",
+    "how": "Close time minus start time, and a unit closes as delivered only when required verification has passed",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-6.1-5",
     "status": "partial",
-    "how": "delivery.py records request-to-allowed-stop seconds, send-backs and check seconds, summarised as median and p90",
-    "evidence": "sisi/delivery.py",
-    "gap": "Time to first useful result is never recorded, and the completion time is time to a gate-accepted stop rather than to user acceptance."
+    "how": "Time in checks, in recorded waits (pauses) and in delegations are measured per unit",
+    "evidence": "sisi/unit.py",
+    "gap": "Queue and integration time are not measured."
   },
   {
     "id": "R-6.2-1",
@@ -869,17 +865,17 @@
   },
   {
     "id": "R-6.4-2",
-    "status": "missing",
-    "how": "nothing",
-    "evidence": "",
-    "gap": "Nothing reads the diff, dependency graph or history to select relevant checks."
+    "status": "partial",
+    "how": "Checks declare the paths they depend on; the changed paths since the unit started select which run",
+    "evidence": "sisi/verify.py",
+    "gap": "Declared path patterns, not a dependency graph."
   },
   {
     "id": "R-6.4-3",
-    "status": "missing",
-    "how": "nothing",
-    "evidence": "",
-    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+    "status": "partial",
+    "how": "A skip records its reason; checks are mandatory by default and may be marked optional",
+    "evidence": "sisi/verify.py",
+    "gap": "The reason an expensive suite is expensive is not recorded."
   },
   {
     "id": "R-6.4-4",
@@ -1198,143 +1194,132 @@
   },
   {
     "id": "R-10.2-2",
-    "status": "partial",
-    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
-    "evidence": "sisi/contract.py:57",
-    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+    "status": "met",
+    "how": "The record holds the unit id and its parent request or workstream",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-10.2-3",
-    "status": "partial",
-    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
-    "evidence": "sisi/contract.py:57",
-    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+    "status": "met",
+    "how": "The record holds the goal in the human's words and the scope in and out",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-10.2-4",
-    "status": "missing",
-    "how": "nothing",
-    "evidence": "",
-    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+    "status": "met",
+    "how": "The record holds the requirements with their kind and decision",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-10.2-5",
-    "status": "partial",
-    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
-    "evidence": "sisi/contract.py:57",
-    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+    "status": "met",
+    "how": "The record holds the checks and invariants",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-10.2-6",
-    "status": "partial",
-    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
-    "evidence": "sisi/contract.py:57",
-    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+    "status": "met",
+    "how": "The record holds the risk floor computed from the changed paths beside the declared profile, and the policy version in force",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-10.2-7",
     "status": "partial",
-    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
-    "evidence": "sisi/contract.py:57",
-    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+    "how": "The record holds the plan and the delegations from the ledger",
+    "evidence": "sisi/unit.py",
+    "gap": "Dependencies between units are not recorded."
   },
   {
     "id": "R-10.2-8",
-    "status": "missing",
-    "how": "nothing",
-    "evidence": "",
-    "gap": "No field, record, check or command in sisi implements this; at most canon prose gestures at it."
+    "status": "partial",
+    "how": "The record holds the models seen in the host transcript and any budget the contract states",
+    "evidence": "sisi/unit.py",
+    "gap": "Budgets exist only if the contract sets them; model choice is not recorded when the host exposes no transcript."
   },
   {
     "id": "R-10.2-9",
-    "status": "partial",
-    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
-    "evidence": "sisi/contract.py:57",
-    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+    "status": "met",
+    "how": "Start and end times and the telemetry, every value classed",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-10.2-10",
     "status": "partial",
-    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
-    "evidence": "sisi/contract.py:57",
-    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+    "how": "Changed files and lines from git, and the start and closing commits",
+    "evidence": "sisi/unit.py",
+    "gap": "The implementation summary is written only when the contract carries one."
   },
   {
     "id": "R-10.2-11",
     "status": "met",
-    "how": "verify.record appends every check action and result with contract id, rung, status and duration to the results store",
-    "evidence": "tests/test_verify.py:25",
-    "gap": ""
+    "how": "Every verification action and result is in the record",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-10.2-12",
-    "status": "missing",
-    "how": "nothing",
-    "evidence": "",
-    "gap": "Deferred checks, limitations and unresolved risks have no field and are never gated."
+    "status": "met",
+    "how": "Deferred checks, limitations and open risks are fields of the record; a unit with deferred or never-run mandatory checks closes as delivered-with-deferred",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-10.2-13",
-    "status": "partial",
-    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
-    "evidence": "sisi/contract.py:57",
-    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+    "status": "met",
+    "how": "One of delivered, delivered-with-deferred, deviation, unverified, abandoned",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-10.2-14",
-    "status": "missing",
-    "how": "nothing",
-    "evidence": "",
-    "gap": "No per-unit scorecard is produced or stored."
+    "status": "met",
+    "how": "The eight-dimension scorecard is stored in the record",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-10.2-15",
-    "status": "partial",
-    "how": "The contract holds an id, goal, checks, invariants, assumptions and questions, and verify appends results by contract id",
-    "evidence": "sisi/contract.py:57",
-    "gap": "Most required fields are missing and the pieces live in four unlinked stores: no parent request, risk profile, agents, budgets, times, changed artifacts, deferred checks, delivery status or scorecard in one durable record."
+    "status": "met",
+    "how": "The retro findings recorded for the unit and the learnings it created are stored in the record",
+    "evidence": "sisi/unit.py"
   },
   {
     "id": "R-10.3-1",
     "status": "partial",
-    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
-    "evidence": "sisi/gate.py:52",
-    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+    "how": "`sisi unit close` archives the unit as delivered only when required verification has passed; a failing unit closes only as deviation, unverified or abandoned",
+    "evidence": "sisi/unit.py",
+    "gap": "Acceptance by an authorised party is not asked, and the end-of-turn flow does not yet require a unit to be closed."
   },
   {
     "id": "R-10.3-2",
     "status": "partial",
-    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
-    "evidence": "sisi/gate.py:52",
-    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+    "how": "`sisi unit close` archives the unit as delivered only when required verification has passed; a failing unit closes only as deviation, unverified or abandoned",
+    "evidence": "sisi/unit.py",
+    "gap": "Acceptance by an authorised party is not asked, and the end-of-turn flow does not yet require a unit to be closed."
   },
   {
     "id": "R-10.3-3",
     "status": "partial",
-    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
-    "evidence": "sisi/gate.py:52",
-    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+    "how": "`sisi unit close` archives the unit as delivered only when required verification has passed; a failing unit closes only as deviation, unverified or abandoned",
+    "evidence": "sisi/unit.py",
+    "gap": "Acceptance by an authorised party is not asked, and the end-of-turn flow does not yet require a unit to be closed."
   },
   {
     "id": "R-10.3-4",
     "status": "partial",
-    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
-    "evidence": "sisi/gate.py:52",
-    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+    "how": "`sisi unit close` archives the unit as delivered only when required verification has passed; a failing unit closes only as deviation, unverified or abandoned",
+    "evidence": "sisi/unit.py",
+    "gap": "Acceptance by an authorised party is not asked, and the end-of-turn flow does not yet require a unit to be closed."
   },
   {
     "id": "R-10.3-5",
     "status": "partial",
-    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
-    "evidence": "sisi/gate.py:52",
-    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+    "how": "`sisi unit close` archives the unit as delivered only when required verification has passed; a failing unit closes only as deviation, unverified or abandoned",
+    "evidence": "sisi/unit.py",
+    "gap": "Acceptance by an authorised party is not asked, and the end-of-turn flow does not yet require a unit to be closed."
   },
   {
     "id": "R-10.3-6",
     "status": "partial",
-    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
-    "evidence": "sisi/gate.py:52",
-    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+    "how": "`sisi unit close` archives the unit as delivered only when required verification has passed; a failing unit closes only as deviation, unverified or abandoned",
+    "evidence": "sisi/unit.py",
+    "gap": "Acceptance by an authorised party is not asked, and the end-of-turn flow does not yet require a unit to be closed."
   },
   {
     "id": "R-10.3-7",
@@ -1346,9 +1331,9 @@
   {
     "id": "R-10.3-8",
     "status": "partial",
-    "how": "The gate blocks a stop until contract checks pass and a retro is recorded, and labels escapes UNVERIFIED",
-    "evidence": "sisi/gate.py:52",
-    "gap": "Acceptance by an authorised party, disclosure of limitations and deferred checks are never asked, and awaiting-human checks count as passing."
+    "how": "`sisi unit close` archives the unit as delivered only when required verification has passed; a failing unit closes only as deviation, unverified or abandoned",
+    "evidence": "sisi/unit.py",
+    "gap": "Acceptance by an authorised party is not asked, and the end-of-turn flow does not yet require a unit to be closed."
   },
   {
     "id": "R-11.1-1",
@@ -1815,9 +1800,9 @@
   {
     "id": "R-13.1-1",
     "status": "partial",
-    "how": "scoreboard.py and improve report corrections, questions, contract share, send-backs and delivery time",
-    "evidence": "sisi/scoreboard.py",
-    "gap": "No per-work-unit scorecard exists and none of intent, correctness, cost, human attention or lifecycle quality is measured per unit or aggregated by policy version."
+    "how": "Each closed unit has a scorecard of the eight dimensions; `sisi status` shows recent units and trends by project, risk profile, model and policy version, with median and 95th percentile and no single score",
+    "evidence": "sisi/scorecard.py",
+    "gap": "No trend by task class or by agent."
   },
   {
     "id": "R-13.2-1",
@@ -1940,17 +1925,15 @@
   },
   {
     "id": "R-13.4-1",
-    "status": "partial",
-    "how": "sisi improve prints an explicit Not measured line for intent fulfilment instead of inventing a number",
-    "evidence": "sisi/cycle.py:1780",
-    "gap": "Scores carry no measured, inferred, estimated or unavailable label per dimension, and missing telemetry is not turned into an observability task."
+    "status": "met",
+    "how": "Every scorecard value is classed measured, inferred, estimated or unavailable",
+    "evidence": "sisi/scorecard.py"
   },
   {
     "id": "R-13.4-2",
-    "status": "partial",
-    "how": "sisi improve prints an explicit Not measured line for intent fulfilment instead of inventing a number",
-    "evidence": "sisi/cycle.py:1780",
-    "gap": "Scores carry no measured, inferred, estimated or unavailable label per dimension, and missing telemetry is not turned into an observability task."
+    "status": "met",
+    "how": "Missing data is unavailable with no value, never zero; cost is estimated only from a recorded price; trends leave unavailable values out",
+    "evidence": "sisi/scorecard.py"
   },
   {
     "id": "R-13.4-3",
