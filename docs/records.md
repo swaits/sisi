@@ -24,12 +24,13 @@ never stops the close.
 
 Delivery status is one of `delivered`, `delivered-with-deferred`, `deviation` (a check was
 waived), `unverified` (the gate released the unit after its send-backs) and `abandoned`. A unit
-with a failing check cannot close as delivered. A mandatory check that never ran to a pass, or
+with a failing check cannot close as delivered. A mandatory check that never ran to a pass, is `not-applicable` and has never passed, or
 whose `when_changed` glob matches no file, makes the unit `delivered-with-deferred`, never
 plainly `delivered`. `sisi contract waive` records a deviation; it turns nothing green.
 
 A pause records what the unit waits for. While nothing in the tree changes the gate asks
-nothing; a change ends the wait. Waiting time is telemetry.
+nothing; a change ends the wait, and so does running `sisi verify`. Waiting time is telemetry.
+A contract must declare `risk.profile`; see [docs/design.md](design.md).
 
 ## The end-of-turn gate
 
@@ -61,8 +62,7 @@ settled stop.
 One send-back lists everything missing, each with the command or field that supplies it, within 25 lines.
 When the checks pass and everything required is present, a unit with recorded retro findings is closed and
 the turn ends; otherwise the gate says once, for that state of the tree, the two ways on: `sisi retro`
-(which records the findings and so closes the unit) or `sisi unit pause "<what it waits for>"`. A pause
-ends when the tree changes; `sisi contract init` refuses while a unit is open or paused; `sisi status`
+(which records the findings and so closes the unit) or `sisi unit pause "<what it waits for>"`. A pause ends when the tree changes or `sisi verify` runs; `sisi contract init` refuses while a unit is open or paused; `sisi status`
 lists open and paused units with their age. Send-backs are bounded (`gate.max_blocks`); when they run out
 the gate lets the turn end, the unit's delivery status is `unverified`, the record says why, and the
 agent is told to say so in its report. A subagent's stop never blocks and never asks for a retro; what it
@@ -97,7 +97,8 @@ category and model, question dialogs, human messages and inferred corrections co
 host's transcript when it has one with usage; cost is estimated only when every model used has a
 recorded price. Changed files and lines come from git; delegations from the ledger.
 
-The scorecard has the eight dimensions of SPEC 13.1. `sisi status` prints recent units with
+The scorecard has the eight dimensions of SPEC 13.1. Slow checks run in the background and block only a `release` change. Failed checks keep their
+failure evidence with the result. `sisi status` prints the last five units with
 their scorecards and then trends by project, risk profile, model and policy version, with the
 median and 95th percentile and "too few" under five units. It prints no single score.
 `sisi status --learning` prints the learning report.
@@ -108,3 +109,9 @@ Session-state files older than `scratch.session_max_age_days` (30) are removed o
 session start and every `scratch.prune_every`th (20) after it, with no scheduler. A run is
 bounded by `prune_max_delete` files and `prune_budget_s` seconds and the next start continues. A
 session is kept while it is the current one or its transcript has been written to within the age.
+
+## What this does not do
+
+Token and cost figures need a host transcript with usage; without one they stay unavailable.
+The risk floor is a minimum from paths alone, not a verdict on the change. Approval
+authenticity rests on a terminal check, not on proving who typed a relayed decision.
