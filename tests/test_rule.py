@@ -12,7 +12,7 @@ class RuleTableTests(SisiCase):
         for rule in rules:
             self.assertIn(rule["id"], r.stdout)
             self.assertIn(rule["title"], r.stdout)
-        self.assertIn("not enforced", r.stdout)  # at least one rule is honestly only an intention
+        self.assertIn("measured only", r.stdout)  # a rule is honestly reported as only measured, not enforced
 
     def test_every_base_rule_has_an_enforcement_entry(self):
         from sisi import rulecmd
@@ -23,20 +23,20 @@ class RuleTableTests(SisiCase):
 
     def test_enforcement_wording_names_real_mechanisms(self):
         from sisi import rulecmd
-        self.assertIn("end-of-turn", rulecmd.enforcement_for("know-done"))
-        self.assertIn("retro", rulecmd.enforcement_for("retro-every-time").lower())
-        ask = rulecmd.enforcement_for("decide-dont-ask").lower()
+        self.assertIn("end-of-turn", rulecmd.enforcement_for("define-done"))
+        self.assertIn("retro", rulecmd.enforcement_for("close-with-retro").lower())
+        ask = rulecmd.enforcement_for("own-the-outcome").lower()
         self.assertTrue("dialog" in ask or "asking" in ask, ask)
 
 
 class RuleDetailTests(SisiCase):
     def test_rule_by_number_and_by_id(self):
-        by_num = self.sisi("rule", "6")
-        by_id = self.sisi("rule", "decide-dont-ask")
+        by_num = self.sisi("rule", "1")
+        by_id = self.sisi("rule", "own-the-outcome")
         self.assertEqual(by_num.returncode, 0, by_num.stderr)
         self.assertEqual(by_id.returncode, 0, by_id.stderr)
         for out in (by_num.stdout, by_id.stdout):
-            self.assertIn("Decide, do not ask", out)
+            self.assertIn("Own the outcome", out)
             self.assertIn("Why:", out)
             self.assertIn("AskUserQuestion", out)
             self.assertIn("base", out.lower())
@@ -48,9 +48,9 @@ class RuleDetailTests(SisiCase):
     def test_overlay_replacement_is_named_as_overlay(self):
         d = os.path.join(self.data, "overlay", "rules")
         os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, "deliver-quickly.md"), "w") as f:
+        with open(os.path.join(d, "deliver-fast.md"), "w") as f:
             f.write("## Deliver quickly\n\nReplacement body written by the owner.\n\nWhy: a test.\n")
-        r = self.sisi("rule", "deliver-quickly")
+        r = self.sisi("rule", "deliver-fast")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("Replacement body", r.stdout)
         self.assertIn("overlay", r.stdout.lower())

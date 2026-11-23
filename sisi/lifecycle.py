@@ -491,7 +491,10 @@ def post_update():
         for n in run():
             print(n)
         for r in overlay.scan_retests():
-            print("kept your version of %s %s; its base changed in this update, queued in retest.jsonl" % (r["kind"], r["id"]))
+            if str(r.get("action", "")).startswith("stale"):
+                print("rule %s: %s (queued in retest.jsonl)" % (r["id"], r["action"]))
+            else:
+                print("kept your version of %s %s; its base changed in this update, queued in retest.jsonl" % (r["kind"], r["id"]))
         b = overlay.build_canon()
         print("rulebook rebuilt: %d lines%s" % (b["lines"], " - OVER THE %d-LINE BUDGET; shorten or replace a rule" % overlay.MAX_LINES if b["over_budget"] else ""))
     except pdata.DataError as e:

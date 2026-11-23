@@ -69,9 +69,17 @@ def _say(enforced=(), measured=(), judgement=()):
 # One function per rule, so its wording can be tightened on its own when the end-of-turn gate
 # rebuild (gate.py, contract.py, risk.json) merges. They describe what exists on this branch.
 
+def _dialog_names():
+    try:
+        from . import gate
+        return ", ".join(sorted({t for v in gate.QUESTION_DIALOG_TOOLS.values() for t in v}))
+    except Exception:
+        return "the question dialog"
+
+
 def _own_the_outcome():
-    return _say(enforced=["ending a reply on a question instead of the question dialog is sent back (gate)"
-                          if _has("gate", "ends_with_question", "QUESTION_DIALOG_TOOLS") and _gate_wired() else None],
+    return _say(enforced=["ending a reply on a question instead of the question dialog (%s) is sent back by the end-of-turn gate"
+                          % _dialog_names() if _has("gate", "ends_with_question", "QUESTION_DIALOG_TOOLS") and _gate_wired() else None],
                 judgement=["reading the request as the outcome, the requirement list, assume or ask, amendments"])
 
 
