@@ -596,6 +596,13 @@ def model_words():
     return _WORDS[0]
 
 
+def route_opts():
+    """Routing options from the config: `route.supersede_guessed` (default true) lets a class read from the id with
+    confidence, not yet recorded by the lead agent, take part in the rule that the newest version of a class wins."""
+    v = route_cfg().get("supersede_guessed")
+    return {"supersede_guessed": v if isinstance(v, bool) else True}
+
+
 def route_floors():
     """{difficulty: percent of the best usable standing needed} from `route.standing_floor`."""
     return routing.standing_floors(route_cfg().get("standing_floor"))
@@ -1203,7 +1210,8 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
             prefs = effective_prefs(kind, difficulty, cwd)
             result = routing.choose(candidates, read_records(), read_availability(), kind, difficulty,
                                     review_of=review_of, now=time.time(), exclude=tried,
-                                    avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors())
+                                    avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors(),
+                                    opts=route_opts())
             cand = result["choice"]
             if cand is None:
                 notes.append("sisi: no usable worker remains for kind %s at difficulty %s" % (kind, difficulty))
@@ -1572,6 +1580,16 @@ def _route_setup(args):
     return kind, difficulty
 
 
+def class_line(result):
+    """The one line asking the lead agent to determine a class sisi cannot read from the id, or None."""
+    names = (result.get("class_ask") or {}).get("classify") or []
+    if not names:
+        return None
+    return ("sisi: the class of %s%s cannot be read from its id: decide it and record it with "
+            "`sisi workers fact %s --class NAME --source S` (until then it is never compared with a newer or older version)"
+            % (names[0], (" and %d more" % (len(names) - 1)) if len(names) > 1 else "", names[0]))
+
+
 def cmd_route(args=()):
     setup = _route_setup(args)
     if setup is None:
@@ -1585,7 +1603,8 @@ def cmd_route(args=()):
     candidates, limited = apply_limits(candidates, prefs)
     result = routing.choose(candidates, records, read_availability(), kind, difficulty,
                             review_of=_opt(args, "--review-of"), now=time.time(),
-                            avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors())
+                            avoid=prefs["avoid"], prefer=prefs["prefer"], floors=route_floors(),
+                                    opts=route_opts())
     result["passed_over"] = list(result["passed_over"]) + limited
     by_worker = {c["worker"]: c for c in everyone}
     down = _down_now(read_availability(), time.time())
@@ -1611,6 +1630,9 @@ def cmd_route(args=()):
     for line in notes_for(by_worker, result["choice"], result["passed_over"] if explain else [],
                           limit=5 if explain else max(1, 5 - head)):
         print(line)
+    ask = class_line(result)
+    if ask:
+        print(ask)
     if explain:
         for line in routing.explain_choice(result, kind, difficulty):
             print(line)

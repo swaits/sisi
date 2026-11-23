@@ -1,8 +1,18 @@
 """Model lines in the worker commands: the class a lead agent records beats the parser, and `sisi workers`
 shows maker, class and recency for each routable worker. Fixtures are invented ids shaped like real ones.
 Requirement ids: R-7.2-1, R-7.2-3."""
-import json, os, unittest
+import json, os, stat, unittest
 from support import *
+
+FAKE_MUSE = """#!/bin/sh
+case "$1" in
+  exec)
+    if [ "$2" = "--list-models" ]; then for m in $MUSE_MODELS; do echo "$m"; done; exit 0; fi
+    echo done ;;
+  *) echo help ;;
+esac
+exit 0
+"""
 
 
 class ModelCase(SisiCase):
@@ -23,8 +33,20 @@ class ModelCase(SisiCase):
         p = os.path.join(self.data, "delegations.jsonl")
         return open(p).read().splitlines() if os.path.exists(p) else []
 
-    def env(self):
-        return dict(PATH="")
+    def env(self, models=None):
+        """No tool at all, or a fake `muse` tool that lists `models`."""
+        if models is None:
+            return dict(PATH="")
+        bindir = os.path.join(self.tmp, "bin")
+        os.makedirs(bindir, exist_ok=True)
+        path = os.path.join(bindir, "muse")
+        open(path, "w").write(FAKE_MUSE)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+        return dict(PATH=bindir, MUSE_MODELS=" ".join(models))
+
+    def route(self, difficulty=1, *extra, models=("abc-5.3", "abc-5.4")):
+        r = self.sisi("route", "--kind", "impl", "--difficulty", str(difficulty), *extra, env=self.env(models))
+        return r
 
     def listing(self):
         r = self.sisi("workers", env=self.env())
@@ -68,6 +90,57 @@ class FactTests(ModelCase):
         import subprocess
         out = subprocess.run(["git", "status", "--porcelain"], cwd=self.data, capture_output=True, text=True).stdout
         self.assertNotIn("worker-models.json", out)
+
+
+class RouteSupersessionTests(ModelCase):
+    def setUp(self):
+        super().setUp()
+        self.priced = False
+
+    def route(self, difficulty=1, *extra, models=("abc-5.3", "abc-5.4")):
+        if not self.priced:   # a model is routable once it has a record, a price or a standing
+            self.priced = True
+            for w, price in (("muse/abc-5.3", "0.5"), ("muse/abc-5.4", "1")):   # the older is the cheaper
+                self.sisi("workers", "fact", w, "--price", price, "--source", "fixture", env=self.env(models))
+        return super().route(difficulty, *extra, models=models)
+
+    def test_route_uses_the_newest_version_though_the_older_has_the_record(self):
+        """R-7.2-1: the newest usable version of a class is always taken; --explain says what it replaced."""
+        self.seed([("muse/abc-5.3", 30, 30)], difficulty=1)
+        r = self.route(1, "--explain")
+        self.assertEqual(r.stdout.splitlines()[0], "muse/abc-5.4", r.stdout)
+        self.assertIn("superseded by muse/abc-5.4", r.stdout)
+
+    def test_the_older_version_is_back_while_the_newer_is_marked_down(self):
+        self.seed([("muse/abc-5.3", 30, 30)], difficulty=1)
+        self.route(1)
+        self.sisi("workers", "down", "muse/abc-5.4", "--reason", "limit", "--until", "2099-01-02", env=self.env(("abc-5.3", "abc-5.4")))
+        self.assertEqual(self.route(1).stdout.splitlines()[0], "muse/abc-5.3")
+        self.sisi("workers", "up", "muse/abc-5.4", env=self.env(("abc-5.3", "abc-5.4")))
+        self.assertEqual(self.route(1).stdout.splitlines()[0], "muse/abc-5.4")
+
+    def test_only_recorded_classes_when_the_config_says_so(self):
+        self.seed([("muse/abc-5.3", 30, 30)], difficulty=1)
+        os.makedirs(self.data, exist_ok=True)
+        json.dump({"route": {"supersede_guessed": False}}, open(os.path.join(self.data, "config.json"), "w"))
+        self.assertEqual(self.route(1).stdout.splitlines()[0], "muse/abc-5.3")
+        for w in ("muse/abc-5.3", "muse/abc-5.4"):
+            self.sisi("workers", "fact", w, "--class", "standard", "--source", "lead", env=self.env(("abc-5.3", "abc-5.4")))
+        self.assertEqual(self.route(1).stdout.splitlines()[0], "muse/abc-5.4")
+
+    def test_the_lead_agent_is_asked_once_for_a_class_that_cannot_be_read_and_then_not(self):
+        """A class read with confidence raises no question; an unreadable one does, in one line, until recorded."""
+        models = ("abc-6.2-sol", "abc-6.3-luna")
+        self.seed([("muse/abc-6.2-sol", 12, 12), ("muse/abc-6.3-luna", 12, 12)], difficulty=1)
+        r = self.route(1, models=models)
+        asks = [l for l in r.stdout.splitlines() if "cannot be read from its id" in l]
+        self.assertEqual(len(asks), 1, r.stdout)
+        self.assertLessEqual(len(r.stdout.splitlines()), 7, r.stdout)
+        for w, c in (("muse/abc-6.2-sol", "sol"), ("muse/abc-6.3-luna", "luna")):
+            self.sisi("workers", "fact", w, "--class", c, "--maker", "abc", "--source", "lead", env=self.env(models))
+        self.assertNotIn("cannot be read", self.route(1, models=models).stdout)
+        self.seed([("muse/abc-5.3", 12, 12), ("muse/abc-5.4", 12, 12)], difficulty=1)
+        self.assertNotIn("cannot be read", self.route(1).stdout)
 
 
 if __name__ == "__main__":

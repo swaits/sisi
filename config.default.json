@@ -17,7 +17,8 @@
       "2": 60,
       "3": 85
     },
-    "price_blend_input_parts": 3
+    "price_blend_input_parts": 3,
+    "supersede_guessed": true
   },
   "unit": {
     "stale_hours": 12

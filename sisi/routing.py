@@ -44,7 +44,12 @@ The rule, in order:
   6. About one low-stakes task in ten (difficulty 1, every tenth judged attempt for that kind and
      difficulty) goes to a cheaper worker with a thin record instead, so cheaper options keep
      gathering evidence. The slot is a function of the record, so the choice stays deterministic.
-  7. Load balancing: within the same price tier and price, the worker that has taken the least work
+  7. The newest usable version of a maker's class always wins over its older versions (see
+     `superseded_by`): no better record and no cheaper plan on the older version brings it back.
+     The older one competes again only while the newer one is unusable. The class is read from the
+     id and overridden by what the lead agent recorded (sisi/modelid.py); a model whose class is
+     unknown is never compared.
+  8. Load balancing: within the same price tier and price, the worker that has taken the least work
      relative to its remaining allowance goes first (recorded uses divided by allowance left, an
      unknown allowance counting as half). Ties break on the worker id.
 
@@ -53,6 +58,8 @@ benchmark standing (see workers.routable_candidates); on a cold start none quali
 usable worker is offered, with the explanation saying so.
 """
 import re
+
+from . import modelid
 
 MIN_ATTEMPTS = 8          # below this, a worker's record for a kind and difficulty is thin
 MIN_ACCEPTED_RATE = 0.6   # "good enough" among workers with at least MIN_ATTEMPTS attempts
@@ -313,32 +320,71 @@ def _standing_of(c):
 # ---------------------------------------------------------------- the pool, then the choice
 
 
-def _prepare(candidates, records, availability, now, exclude, avoid, review_of):
-    """The workers that may be recommended at all: (eligible, passed, stats, author_maker)."""
+def _unusable(c, availability, now):
+    """Why a candidate cannot be used right now (plain words), or None."""
+    if "contributor" in str(c.get("model") or c["worker"]).lower():
+        return "its id contains 'contributor', a tier that trains on prompts"
+    down = _down_entry(c, availability, now)
+    if down is not None:
+        return "unavailable (%s) until its retry time" % (down.get("reason") or "down")
+    if not c.get("usable", True):
+        return c.get("reason") or "not usable now"
+    if c.get("plan") == "flat" and c.get("allowance_pct_left") == 0:
+        return "its flat-rate allowance is spent"
+    return None
+
+
+def _lineage(c):
+    l = c.get("lineage")
+    return l if isinstance(l, dict) else None
+
+
+def _comparable(c, opts):
+    """The model's lineage when its class takes part in comparisons of versions: a class that could not be read
+    is never compared, and (with `supersede_guessed` off) neither is one that was only read from the id."""
+    l = _lineage(c)
+    if l and l.get("key") and (l.get("source") == "fact" or (opts or {}).get("supersede_guessed", True)):
+        return l
+    return None
+
+
+def superseded_by(pool, opts=None):
+    """{worker: the newest worker of its maker and class that replaces it}, over the usable `pool`. Workers
+    that share a maker, a line and a class are versions of one model whichever provider carries them; the
+    older version is replaced by the newest one whatever its record or price. Pure."""
+    groups = {}
+    for c in pool:
+        l = _comparable(c, opts)
+        if l:
+            groups.setdefault(tuple(l["key"]), []).append(c)
+    out = {}
+    for group in groups.values():
+        for c in group:
+            newer = [d for d in group if modelid.compare(_lineage(d), _lineage(c)) > 0]
+            if newer:
+                out[c["worker"]] = min(newer, key=lambda d: (modelid.recency_key(_lineage(d)), d["worker"]))["worker"]
+    return out
+
+
+def _prepare(candidates, records, availability, now, exclude, avoid, review_of, opts=None):
+    """The workers that may be recommended at all: (eligible, passed, stats, author_maker, superseded)."""
     exclude = {str(x) for x in exclude}
     stats = candidate_stats(candidates, records)
     passed = []
     eligible = []
+    tried = []   # usable workers already tried in this delegation: still the newest version, so older ones stay out
 
     for c in candidates:
         w = c["worker"]
+        why = _unusable(c, availability, now)
         if w in exclude:
             passed.append((w, "already tried in this delegation"))
-            continue
-        if "contributor" in str(c.get("model") or w).lower():
-            passed.append((w, "its id contains 'contributor', a tier that trains on prompts"))
-            continue
-        down = _down_entry(c, availability, now)
-        if down is not None:
-            passed.append((w, "unavailable (%s) until its retry time" % (down.get("reason") or "down")))
-            continue
-        if not c.get("usable", True):
-            passed.append((w, c.get("reason") or "not usable now"))
-            continue
-        if c.get("plan") == "flat" and c.get("allowance_pct_left") == 0:
-            passed.append((w, "its flat-rate allowance is spent"))
-            continue
-        eligible.append(c)
+            if why is None:
+                tried.append(c)
+        elif why is not None:
+            passed.append((w, why))
+        else:
+            eligible.append(c)
 
     avoided = [(c, _pattern_match(c, avoid)) for c in eligible]
     kept = [c for c, m in avoided if m is None]
@@ -349,6 +395,7 @@ def _prepare(candidates, records, availability, now, exclude, avoid, review_of):
                 passed.append((c["worker"], "avoided by the user's own pattern %r%s"
                                % (pat, (" (%s)" % why) if why else "")))
         eligible = kept
+        tried = [c for c in tried if _pattern_match(c, avoid) is None]
 
     author_maker = ""
     if review_of:
@@ -366,7 +413,15 @@ def _prepare(candidates, records, availability, now, exclude, avoid, review_of):
                 else:
                     rest.append(c)
             eligible = rest
-    return eligible, passed, stats, author_maker
+            tried = [c for c in tried if (c.get("maker") or maker_of(c.get("model") or c["worker"])) != author_maker]
+
+    superseded = superseded_by(eligible + tried, opts)
+    if superseded:
+        for c in eligible:
+            if c["worker"] in superseded:
+                passed.append((c["worker"], "superseded by %s (a newer version of the same class)" % superseded[c["worker"]]))
+        eligible = [c for c in eligible if c["worker"] not in superseded]
+    return eligible, passed, stats, author_maker, superseded
 
 
 def _assess_all(eligible, stats, kind, difficulty, floors):
@@ -440,12 +495,13 @@ def _select(eligible, assessments, difficulty):
 
 
 def choose(candidates, records, availability, kind, difficulty, review_of=None, now=0.0, exclude=(),
-           avoid=None, prefer=None, floors=None):
+           avoid=None, prefer=None, floors=None, opts=None):
     """Pick one candidate, or none. Returns {"choice", "passed_over", "stats", "author_maker", ...}.
     `passed_over` is [(worker, plain reason)] covering every candidate not chosen. `avoid` and
     `prefer` are the user's own [{"pattern", "why"}] constraints; `floors` the standing floors."""
     now = float(now or 0)
-    eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of)
+    eligible, passed, stats, author_maker, superseded = _prepare(candidates, records, availability, now, exclude,
+                                                                 avoid, review_of, opts)
     assessments, best = _assess_all(eligible, stats, kind, difficulty, floors)
     key, rate, load_ratio = _make_key(stats, kind, difficulty, prefer)
 
@@ -511,7 +567,22 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
             "load_ratios": {c["worker"]: load_ratio(c) for c in candidates},
             "assessments": assessments, "basis": basis, "capable_count": capable_n, "judged_first": judged_first,
             "best_standing": best, "passed_detail": detail, "floors": floors,
+            "superseded": superseded, "class_ask": class_ask(eligible),
             "kind": kind, "difficulty": difficulty}
+
+
+def class_ask(eligible):
+    """What the lead agent should be asked to record, because it is about to matter: {"classify": [workers]}.
+    A worker whose class could not be read from its id, when another usable worker has the same maker (the two
+    may be versions of one class). A class read from the id with confidence is not asked about; a recorded one
+    never is."""
+    makers = {}
+    for c in eligible:
+        l = _lineage(c)
+        if l:
+            makers.setdefault(l.get("maker"), []).append(c["worker"])
+    return {"classify": sorted(c["worker"] for c in eligible if _lineage(c)
+                               and _lineage(c).get("source") == "unknown" and len(makers.get(_lineage(c).get("maker"), [])) > 1)}
 
 
 def _why_not(a, difficulty, basis, cheaper):
@@ -553,7 +624,7 @@ def _why_not(a, difficulty, basis, cheaper):
 
 
 def retry_choice(candidates, records, availability, kind, difficulty, rejected, rejections,
-                 now=0.0, exclude=(), avoid=None, prefer=None, floors=None, review_of=None):
+                 now=0.0, exclude=(), avoid=None, prefer=None, floors=None, review_of=None, opts=None):
     """Who gets a task again after `rejected` (a worker id) was rejected `rejections` times in this chain.
     The first retry goes back to the same worker while it is still usable and has no poor record.
     After that: the cheapest capable worker whose evidence is strictly better than the rejected one's, or, when there is none,
@@ -561,7 +632,8 @@ def retry_choice(candidates, records, availability, kind, difficulty, rejected, 
     else is usable). Returns {"choice", "step", "assessments", ...}; step is "same", "better",
     "strongest" or "only", and choice is None when nobody is usable. Pure; the caller supplies facts."""
     now = float(now or 0)
-    eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of)
+    eligible, passed, stats, author_maker, _superseded = _prepare(candidates, records, availability, now, exclude,
+                                                                  avoid, review_of, opts)
     assessments, best = _assess_all(eligible, stats, kind, difficulty, floors)
     key, _rate, _load = _make_key(stats, kind, difficulty, prefer)
     out = {"choice": None, "step": None, "passed_over": passed, "stats": stats, "author_maker": author_maker,
