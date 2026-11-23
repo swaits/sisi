@@ -65,6 +65,8 @@ def cmd_learn(argv):
                        os.getcwd(), L.unit_id(), change=statement, mechanism="knowledge",
                        scope=scope, expect="the agent acts on this statement",
                        owner_statement=True, entered_via="learn", origin=origin)
-    print("recorded owner statement %s (%s; printed by `sisi oracle`; withdraw a mistake with "
-          "`sisi learn --withdraw %s --reason ...`)" % (rec["id"], origin, rec["id"]))
+    print("recorded owner statement %s (%s)" % (rec["id"], origin))
+    print("  stored: %s" % rec["observation"]["evidence"])
+    print("  scope:  %s; it takes effect at once and `sisi oracle` prints it" % rec["proposed"]["scope"])
+    print("  to take it back: sisi learn --withdraw %s --reason \"<why it was recorded by mistake>\"" % rec["id"])
     return 0

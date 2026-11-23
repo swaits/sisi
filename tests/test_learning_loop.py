@@ -936,6 +936,21 @@ class Store(Base):
         self.assertIn("prefer short plain reports", r.stdout)
         self.assertEqual(len(L.owner_statements()), 1)
 
+    def test_learn_says_what_it_stored_and_how_to_take_it_back(self):
+        """R-12-1: the receipt shows the stored text (secrets scrubbed), id, scope and a withdraw command that works."""
+        out = self.sisi("learn", "--scope", "project", "prefer short plain reports, password=hunter2hunter2").stdout
+        row = self.rows()[0]
+        self.assertIn(row["id"], out)
+        self.assertIn("scope:  project", out)
+        self.assertIn(row["observation"]["evidence"], out)
+        self.assertNotIn("hunter2", out)
+        cmd = [l for l in out.splitlines() if "sisi learn --withdraw" in l][0].split("sisi learn ", 1)[1]
+        self.assertIn("--withdraw %s " % row["id"], cmd)
+        import shlex
+        r = self.sisi("learn", *shlex.split(cmd.replace("<why it was recorded by mistake>", "test")))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(L.owner_statements(), [])
+
     def test_learn_records_whether_the_owner_typed_it(self):
         """A statement quoted from a human-typed message of the session transcript is `typed by the
         owner`; a relayed one, or none to check, is `relayed by an agent`. Never blocked."""
