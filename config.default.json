@@ -17,7 +17,15 @@
       "2": 60,
       "3": 85
     },
-    "price_blend_input_parts": 3
+    "price_blend_input_parts": 3,
+    "explore_free_one_in": 3
+  },
+  "discovery": {
+    "path_refresh_s": 21600,
+    "path_every_starts": 25,
+    "drop_after_listings": 3,
+    "catalogue_over": 8,
+    "smoke_timeout_s": 120
   },
   "unit": {
     "stale_hours": 12

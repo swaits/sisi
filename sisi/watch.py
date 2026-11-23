@@ -329,6 +329,11 @@ def run(payload, args=(), host=None):
         except Exception as e:
             store.log_error("watch", e)
         try:
+            from . import discovery
+            discovery.after_tool(payload)  # the host's capability listing and delegation tool: what it can reach
+        except Exception as e:
+            store.log_error("watch-discovery", e)
+        try:
             from . import unitguard
             unitguard.after(payload)
         except Exception as e:

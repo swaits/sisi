@@ -111,6 +111,14 @@ def main(args=()):
         except Exception as e:
             store.log_error("tick-new-workers", e)
         try:
+            from . import discovery, workers as _W2
+            if not _W2.is_subagent_payload(payload):
+                note = discovery.session_start()  # new executables on PATH, once per set (the first run only stores them)
+                if note:
+                    sys.stdout.write(note + "\n")
+        except Exception as e:
+            store.log_error("tick-discovery", e)
+        try:
             from . import cycle
             # cycle.due_notice carries both the due-cycle line and the pending-decision line (learning.pending_notice).
             note = cycle.due_notice(session=sid if isinstance(sid, str) else None)

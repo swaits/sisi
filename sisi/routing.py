@@ -60,6 +60,7 @@ CONTRADICTION_REJECTIONS = 2  # a thin record with this many rejections below th
 UNKNOWN_ALLOWANCE = 50.0  # allowance weight when a tool reports none
 STRONG_BAND = 10.0        # standing points from the best still counts as among the strongest
 EXPLORE_EVERY = 10        # about one low-stakes task in ten tries a cheaper thin-record worker
+EXPLORE_FREE_EVERY = 3    # an unproven worker that costs nothing extra gets one routine task in three
 DEFAULT_STANDING_FLOOR = {1: 0.0, 2: 60.0, 3: 85.0}  # percent of the best usable standing needed
 DEFAULT_PRICE_BLEND = 3.0  # parts of input price to one part of output price in a blended price
 
@@ -114,14 +115,19 @@ def _floor_pct(floors, difficulty):
 
 def _pattern_match(c, patterns):
     """The (pattern, why) a candidate matches, or None. A pattern matches as a substring of the
-    worker, model or tool name, case aside."""
+    worker, model or tool name, case aside; a pattern ending in `/` is a provider and matches only
+    the workers whose id starts with it (`a-b/` never reaches `a-b-c/x` or a model named `a-b`)."""
     hay = " ".join(str(x or "").lower() for x in (c.get("worker"), c.get("model"), c.get("tool")))
+    worker = str(c.get("worker") or "").lower()
     for entry in patterns or []:
         if isinstance(entry, dict):
             pat, why = str(entry.get("pattern") or ""), str(entry.get("why") or "")
         else:
             pat, why = str(entry), ""
-        if pat and pat.lower() in hay:
+        if pat.endswith("/"):  # `provider/` names one provider exactly: the start of the worker id, never a part of another name
+            if worker.startswith(pat.lower()):
+                return pat, why
+        elif pat and pat.lower() in hay:
             return pat, why
     return None
 
@@ -143,12 +149,22 @@ def _availability_keys(c):
     return keys
 
 
+def provider_of(worker):
+    """The part of a worker id before the first slash, lower case, or None."""
+    w = str(worker or "")
+    return w.split("/", 1)[0].lower() if "/" in w else None
+
+
 def _down_entry(c, availability, now):
     keys = _availability_keys(c)
+    prov = provider_of(c.get("worker"))
     for k, e in (availability or {}).items():
-        if not isinstance(e, dict):
+        if not isinstance(e, dict) or not float(e.get("retry_at") or 0) > now:
             continue
-        if str(k).lower() in keys and float(e.get("retry_at") or 0) > now:
+        if e.get("scope") == "provider":  # a mark made for one provider reaches that provider's workers only
+            if str(k).lower() == prov:
+                return e
+        elif str(k).lower() in keys:
             return e
     return None
 
@@ -190,7 +206,7 @@ def _cell(stats, worker, kind, difficulty):
 
 # ---------------------------------------------------------------- capability evidence
 
-_TIER_RANK = {"a": 0, "b-higher": 1, "b-all": 2}   # smaller is closer to the request
+_TIER_RANK = {"a": 0, "b-higher": 1, "vouch": 1.5, "b-all": 2}   # smaller is closer to the request
 _NO_CELL = {"n": 0, "good": 0}
 
 
@@ -230,7 +246,7 @@ def _by_difficulty(stats, worker, kind):
     return own, pooled
 
 
-def assess(stats, worker, kind, difficulty, standing=None, best_standing=None, floors=None):
+def assess(stats, worker, kind, difficulty, standing=None, best_standing=None, floors=None, vouch=0):
     """What the evidence says about one worker for a kind and difficulty. Returns a dict:
       tier       "a", "b-higher", "b-all", "standing", "unknown" or "none"
       capable    whether the evidence says it is capable enough
@@ -240,7 +256,9 @@ def assess(stats, worker, kind, difficulty, standing=None, best_standing=None, f
       level      3 judged proof, 2 benchmark, 1 weak, 0 nothing, -1 bad: never rises with difficulty
       n, good, at   the judged cell behind a, b-higher, b-all and the weak tier (and its difficulty)
       share, needed, floor   for the standing tier: percent of the best, the figure needed, the floor
-    Standing is compared only with the best standing; a rate only with the bar."""
+    Standing is compared only with the best standing; a rate only with the bar.
+    `vouch` is the difficulty up to which the owner vouched for the worker: a judged proof outranks it, a thick bad
+    record or a thin one with repeated rejections cancels it, and it outranks a benchmark (tier "vouch")."""
     d = difficulty
     own, pooled = _by_difficulty(stats, worker, kind)
     out = {"tier": "none", "capable": False, "bad": False, "weak": False, "contradicted": False,
@@ -273,6 +291,9 @@ def assess(stats, worker, kind, difficulty, standing=None, best_standing=None, f
     if proof is not None:
         tier, at, cell = proof
         out.update(tier=tier, capable=True, level=3, at=at, n=cell["n"], good=cell["good"], measure=_rate(cell))
+        return out
+    if vouch and isinstance(d, int) and d <= vouch and not out["contradicted"]:
+        out.update(tier="vouch", capable=True, level=3, at=vouch, measure=0.0)
         return out
     if standing is not None:
         pct = _floor_pct(floors, d)
@@ -313,8 +334,17 @@ def _standing_of(c):
 # ---------------------------------------------------------------- the pool, then the choice
 
 
-def _prepare(candidates, records, availability, now, exclude, avoid, review_of):
-    """The workers that may be recommended at all: (eligible, passed, stats, author_maker)."""
+def vouch_level(c):
+    """The difficulty up to which the owner's word makes this candidate capable (0 for none)."""
+    v = c.get("vouch")
+    lvl = v.get("level") if isinstance(v, dict) else 0
+    return lvl if isinstance(lvl, int) and not isinstance(lvl, bool) and lvl > 0 else 0
+
+
+def _prepare(candidates, records, availability, now, exclude, avoid, review_of, difficulty=None):
+    """The workers that may be recommended at all: (eligible, passed, stats, author_maker). An unproven
+    worker (flagged by workers.build_candidates: new, with fewer than MIN_ATTEMPTS judged attempts) is
+    offered routine work only: above difficulty 1 it is passed over whatever benchmark it has."""
     exclude = {str(x) for x in exclude}
     stats = candidate_stats(candidates, records)
     passed = []
@@ -327,6 +357,9 @@ def _prepare(candidates, records, availability, now, exclude, avoid, review_of):
             continue
         if "contributor" in str(c.get("model") or w).lower():
             passed.append((w, "its id contains 'contributor', a tier that trains on prompts"))
+            continue
+        if c.get("unproven") and isinstance(difficulty, int) and difficulty > max(1, vouch_level(c)):
+            passed.append((w, "unproven: a new worker with no judged record is offered routine work (difficulty 1) only"))
             continue
         down = _down_entry(c, availability, now)
         if down is not None:
@@ -373,7 +406,7 @@ def _assess_all(eligible, stats, kind, difficulty, floors):
     """({worker: assessment}, best standing among the usable workers)."""
     standings = [s for s in (_standing_of(c) for c in eligible) if s is not None]
     best = max(standings) if standings else None
-    return ({c["worker"]: assess(stats, c["worker"], kind, difficulty, _standing_of(c), best, floors)
+    return ({c["worker"]: assess(stats, c["worker"], kind, difficulty, _standing_of(c), best, floors, vouch_level(c))
              for c in eligible}, best)
 
 
@@ -413,7 +446,7 @@ def _prefer_judged(capable, assessments, difficulty):
     those capable by the judged record across all kinds; failing that, everyone capable."""
     if difficulty is None or difficulty < 2:
         return list(capable), False
-    for tiers in (("a", "b-higher"), ("b-all",)):
+    for tiers in (("a", "b-higher", "vouch"), ("b-all",)):
         own = [c for c in capable if assessments[c["worker"]]["tier"] in tiers]
         if own:
             return own, True
@@ -439,13 +472,29 @@ def _select(eligible, assessments, difficulty):
     return pool, ("nothing" if top[0] <= 1 else "strongest")
 
 
+def _free_slot(choice, ranked, candidates, stats, kind, difficulty, basis, prefer, every):
+    """The unproven worker that costs nothing extra (a flat or free plan) to try on this routine task
+    instead of the usual choice, or None. One routine task in `every` (route.explore_free_one_in), a
+    function of the judged record like the paid slot below, so the choice stays deterministic."""
+    if choice is None or difficulty != 1 or basis != "capable" or not every or every < 1:
+        return None
+    if choice.get("unproven") or _pattern_match(choice, prefer):
+        return None
+    free = [c for c in ranked if c is not choice and c.get("unproven") and c.get("plan") == "flat"]
+    total = sum(_cell(stats, c["worker"], kind, difficulty)["n"] for c in candidates)
+    if not free or total % every != every - 1:
+        return None
+    return sorted(free, key=lambda c: (_cell(stats, c["worker"], kind, difficulty)["n"], c["worker"]))[0]
+
+
 def choose(candidates, records, availability, kind, difficulty, review_of=None, now=0.0, exclude=(),
-           avoid=None, prefer=None, floors=None):
+           avoid=None, prefer=None, floors=None, explore_free_every=EXPLORE_FREE_EVERY):
     """Pick one candidate, or none. Returns {"choice", "passed_over", "stats", "author_maker", ...}.
     `passed_over` is [(worker, plain reason)] covering every candidate not chosen. `avoid` and
     `prefer` are the user's own [{"pattern", "why"}] constraints; `floors` the standing floors."""
     now = float(now or 0)
-    eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of)
+    eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of,
+                                                     difficulty)
     assessments, best = _assess_all(eligible, stats, kind, difficulty, floors)
     key, rate, load_ratio = _make_key(stats, kind, difficulty, prefer)
 
@@ -460,7 +509,11 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
         ranked = sorted(pool, key=lambda c: (-(assessments[c["worker"]].get("measure") or 0.0), key(c)))
     choice = ranked[0] if ranked else None
     explored = None
-    if (choice is not None and difficulty == 1 and basis == "capable" and not _pattern_match(choice, prefer)
+    free_slot = _free_slot(choice, ranked, candidates, stats, kind, difficulty, basis, prefer, explore_free_every)
+    if free_slot is not None:
+        explored, choice = choice, free_slot
+        ranked = [choice] + [c for c in ranked if c is not choice]
+    elif (choice is not None and difficulty == 1 and basis == "capable" and not _pattern_match(choice, prefer)
             and _cell(stats, choice["worker"], kind, difficulty)["n"] >= MIN_ATTEMPTS):
         total = sum(_cell(stats, c["worker"], kind, difficulty)["n"] for c in candidates)
         if total >= EXPLORE_EVERY - 1 and total % EXPLORE_EVERY == EXPLORE_EVERY - 1:
@@ -488,7 +541,10 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
                     detail[w] = extra
                 continue
             if explored is not None and c is explored:
-                reason = ("the usual choice, passed over this once so a cheaper thin-record worker "
+                reason = ("the usual choice, passed over this once so an unproven worker that costs nothing extra "
+                          "gathers evidence on routine work (about one task in %d)" % explore_free_every
+                          if free_slot is not None else
+                          "the usual choice, passed over this once so a cheaper thin-record worker "
                           "gathers evidence on low-stakes work (about one task in %d)" % EXPLORE_EVERY)
             elif _pattern_match(choice, prefer) and not _pattern_match(c, prefer):
                 _pat, _why = _pattern_match(choice, prefer)
@@ -507,7 +563,7 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
     judged_first = basis == "capable" and _prefer_judged(pool, assessments, difficulty)[1]
     capable_n = len(pool) if basis == "capable" else 0
     return {"choice": choice, "passed_over": passed, "stats": stats, "author_maker": author_maker,
-            "explored": explored["worker"] if explored else None,
+            "explored": explored["worker"] if explored else None, "explored_free": free_slot is not None,
             "load_ratios": {c["worker"]: load_ratio(c) for c in candidates},
             "assessments": assessments, "basis": basis, "capable_count": capable_n, "judged_first": judged_first,
             "best_standing": best, "passed_detail": detail, "floors": floors,
@@ -527,6 +583,8 @@ def _why_not(a, difficulty, basis, cheaper):
             if a["tier"] == "b-all":
                 return (lead + "its only judged proof is across other kinds, and a worker with a judged record "
                         "for this kind is usable", None)
+            if a["tier"] == "vouch":
+                return (lead + "capable by the owner's word, and a worker with a judged record for this kind is usable", None)
             return (lead + "capable only by benchmark standing or as an exploration; above difficulty 1 a worker "
                     "with a judged record is preferred to a benchmark",
                     ("standing %g" % a["standing"]) if a["standing"] is not None else None)
@@ -561,7 +619,8 @@ def retry_choice(candidates, records, availability, kind, difficulty, rejected, 
     else is usable). Returns {"choice", "step", "assessments", ...}; step is "same", "better",
     "strongest" or "only", and choice is None when nobody is usable. Pure; the caller supplies facts."""
     now = float(now or 0)
-    eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of)
+    eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of,
+                                                     difficulty)
     assessments, best = _assess_all(eligible, stats, kind, difficulty, floors)
     key, _rate, _load = _make_key(stats, kind, difficulty, prefer)
     out = {"choice": None, "step": None, "passed_over": passed, "stats": stats, "author_maker": author_maker,
@@ -635,6 +694,11 @@ def evidence_line(a, kind, difficulty, choice, basis):
         return ("evidence (c), benchmark standing only: %g (%s, %s), the strongest known; it is under the %g "
                 "needed for difficulty %d" % (a["standing"], src, choice.get("standing_date") or "no date stated",
                                               a["needed"], difficulty))
+    if tier == "vouch":
+        v = choice.get("vouch") or {}
+        return ("evidence (the owner's word): vouched for up to difficulty %d%s (%s, %s); it ranks with judged proof "
+                "until its own record is thick" % (a["at"], " (relayed by an agent: counted up to difficulty 2 only)"
+                                                  if v.get("relayed") else "", _short(v.get("why")), v.get("date") or "no date stated"))
     if tier == "unknown":
         return "evidence (d): nothing is known about this worker yet; it is an exploration on low-stakes work"
     if a.get("weak"):
@@ -676,8 +740,9 @@ def explain_choice(result, kind, difficulty):
         if a is not None:
             lines.append(evidence_line(a, kind, difficulty, choice, basis))
         if result.get("explored"):
-            lines.append("this is an exploration pick: %s was the usual choice, passed over once so a cheaper "
-                         "thin-record worker gathers evidence" % result["explored"])
+            lines.append("this is an exploration pick: %s was the usual choice, passed over once so %s gathers evidence"
+                         % (result["explored"], "an unproven worker that costs nothing extra"
+                            if result.get("explored_free") else "a cheaper thin-record worker"))
         if result.get("author_maker"):
             choice_maker = choice.get("maker") or maker_of(choice.get("model") or choice["worker"])
             if choice_maker != result["author_maker"]:
