@@ -264,6 +264,20 @@ def migrate_learnings():
         return []
     bdir = snapshot("learning-migration")
     lessons, occs, impressions = {}, {}, 0
+    db = paths.data_file("retro.db")
+    if not os.path.exists(src) and os.path.exists(db):
+        # an install whose committed dump was never written: read the sqlite store directly
+        con = sqlite3.connect(db, timeout=30)
+        con.row_factory = sqlite3.Row
+        try:
+            for r in con.execute("SELECT * FROM lessons ORDER BY id"):
+                lessons[r["id"]] = dict(r)
+            for r in con.execute("SELECT * FROM occurrences ORDER BY id"):
+                occs.setdefault(r["lesson_id"], []).append(dict(r))
+        except sqlite3.Error:
+            lessons, occs = {}, {}
+        finally:
+            con.close()
     if os.path.exists(src):
         with open(src, encoding="utf-8") as f:
             for line in f:

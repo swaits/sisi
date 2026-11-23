@@ -147,17 +147,36 @@ def get(rows, lid):
 
 # ---- derived text (the tool derives search terms, topics, short lines) ---------
 
-def stems(text):
-    out = set()
-    for w in re.findall(r"[a-z0-9]{3,}", (text or "").lower()):
-        if w in STOP:
-            continue
-        for suf in ("ing", "edly", "ed", "es", "s"):
-            if w.endswith(suf) and len(w) - len(suf) >= 3:
-                w = w[: -len(suf)]
+def _stem(w):
+    """A crude stem so 'parsing', 'parser' and 'parse' meet, as do plurals."""
+    s = w
+    if len(s) > 4 and s.endswith("ies"):
+        s = s[:-3] + "y"
+    else:
+        done = False
+        for suf in ("ingly", "ing", "edly", "ed"):
+            if s.endswith(suf) and len(s) - len(suf) >= 3:
+                base = s[:-len(suf)]
+                if len(base) >= 2 and base[-1] == base[-2] and base[-1] not in "aeious":
+                    base = base[:-1]
+                s, done = base, True
                 break
-        out.add(w)
-    return out
+        if not done:
+            if s.endswith(("ses", "xes", "zes", "ches", "shes")) and len(s) - 2 >= 3:
+                s = s[:-2]
+            else:
+                for suf in ("ers", "er", "s"):
+                    if s.endswith(suf) and len(s) - len(suf) >= 3:
+                        s = s[:-len(suf)]
+                        break
+    if len(s) >= 4 and s.endswith("e"):
+        s = s[:-1]
+    return s
+
+
+def stems(text):
+    return {_stem(w) for w in re.findall(r"[a-z0-9_]+", (text or "").lower())
+            if len(w) > 2 and w not in STOP}
 
 
 def derive_terms(*texts):
@@ -179,10 +198,11 @@ def similar_learnings(rows, text, limit=3):
         hay = set(r.get("terms") or []) | stems(r.get("observation", {}).get("evidence", "")) \
             | stems(r.get("proposed", {}).get("description", ""))
         inter = len(q & hay)
-        if inter >= 3:
-            scored.append((inter / max(1, len(q | hay)), r))
+        if inter >= 1:
+            scored.append((inter / max(1, len(q)), inter, r))
     scored.sort(key=lambda x: -x[0])
-    return [r for s, r in scored if s >= 0.25][:limit]
+    return [r for s, inter, r in scored
+            if s >= 0.3 or (inter >= 1 and s >= 0.25 and len(q) <= 4)][:limit]
 
 
 # ---- scope (earned, never claimed) ---------------------------------------------
@@ -219,8 +239,7 @@ def delivery_text(project, query=""):
     """Learnings in scope, framed as information, never as instructions. No showing is recorded."""
     rows = learnings_in_scope(project)
     if query:
-        match = similar_learnings(rows, query, limit=5)
-        rows = match if match else rows
+        rows = similar_learnings(rows, query, limit=5)  # silence is the default
     rows = [r for r in rows if r.get("status") in
             ("promoted", "monitored", "proposed", "observed", "implemented", "validated")]
     if not rows:

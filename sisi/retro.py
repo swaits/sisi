@@ -29,6 +29,11 @@ def repo_of(cwd):
     return L.project_key(cwd)
 
 
+def notes_for(entry_id):
+    """Field notes per library entry were part of the retired trace regime; none remain."""
+    return None
+
+
 def _git_head(cwd):
     try:
         p = subprocess.run(["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True,

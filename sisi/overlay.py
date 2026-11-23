@@ -280,23 +280,22 @@ def is_stale():
 
 
 def cost():
-    """Always-loaded size: the generated rulebook and the largest session-start lessons block."""
-    from . import retro
+    """Always-loaded size: the generated rulebook. No lesson list is loaded at session start."""
     try:
         lines, chars = size(_read(paths.generated()))
     except OSError:
         lines = chars = None
     return {"rulebook_lines": lines, "rulebook_chars": chars, "rulebook_budget_lines": MAX_LINES,
-            "rulebook_budget_chars": MAX_CHARS,
-            "lessons_block_max_chars": retro.LIMIT, "lessons_block_max_lines": 1 + 8}
+            "rulebook_budget_chars": MAX_CHARS}
 
 
 def cost_line(c=None):
     c = c or cost()
     if c["rulebook_lines"] is None:
-        return "rulebook not generated yet (run `sisi build-canon`); lessons block at most %d characters" % c["lessons_block_max_chars"]
-    return "rulebook %d lines (budget %d), %d characters (budget %d); session-start lessons block at most %d characters, %d lines" % (
-        c["rulebook_lines"], c["rulebook_budget_lines"], c["rulebook_chars"], c.get("rulebook_budget_chars", MAX_CHARS), c["lessons_block_max_chars"], c["lessons_block_max_lines"])
+        return "rulebook not generated yet (run `sisi build-canon`)"
+    return "rulebook %d lines (budget %d), %d characters (budget %d)" % (
+        c["rulebook_lines"], c["rulebook_budget_lines"], c["rulebook_chars"],
+        c.get("rulebook_budget_chars", MAX_CHARS))
 
 
 # ---- library overlay (verifiers, recipes) ---------------------------------------

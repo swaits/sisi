@@ -11,7 +11,24 @@ from . import learning as _L, store
 
 
 def _stem(w):
-    return next(iter(_L.stems(w)), w.lower())
+    return _L._stem(w.lower())
+
+
+def _common_stems():
+    roots = ("test check run file input output work code change add use make fix new first need say show get set user data "
+             "keep take one two way step time thing write read sisi lesson agent human rule recipe verifier "
+             "contract example import function return value error message result line second third before "
+             "after every always never also just even still really about".split())
+    out = set()
+    for w in roots:
+        forms = {w, w + "s", w + "es", w + "ing", w + "ed", w + "er", w + "ers"}
+        if w.endswith("e"):
+            forms |= {w[:-1] + "ing", w[:-1] + "ed"}
+        out |= {_stem(f) for f in forms}
+    return out
+
+
+_COMMON = _common_stems()
 
 
 def _word_cut(text, limit):
@@ -120,7 +137,7 @@ def _best_recipe(query):
     def stems_of(text):
         return {_stem(x) for x in V._words(text.replace("-", " "))}
 
-    generic = set() | {_stem(w) for w in
+    generic = _COMMON | {_stem(w) for w in
                               ("agent agents tool tools interface surface command commands function functions "
                                "program system name names description descriptions user users thing things "
                                "way ways step steps example examples".split())}

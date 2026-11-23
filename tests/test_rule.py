@@ -45,26 +45,6 @@ class RuleDetailTests(SisiCase):
         self.assertEqual(self.sisi("rule", "no-such-rule").returncode, 1)
         self.assertEqual(self.sisi("rule", "99").returncode, 1)
 
-    def test_folded_lessons_are_shown_with_show_command(self):
-        con = retro.connect()
-        try:
-            lid = retro.new_lesson(con, dict(
-                aim="hands-off", change_kind="rule", target=None,
-                moment="the agent buried a naming question at the end of a long report",
-                cause="asking in prose felt quicker than opening the dialog",
-                change="Ask naming questions through the dialog with options",
-                when="naming, question, dialog, options, ask the human, choice",
-                short="Ask through the dialog, with options."), self.proj, None)
-            con.execute("UPDATE lessons SET folded_into='decide-dont-ask', count=3 WHERE id=?", (lid,))
-            con.commit()
-        finally:
-            con.close()
-        r = self.sisi("rule", "decide-dont-ask")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("Ask through the dialog, with options.", r.stdout)
-        self.assertIn("sisi lessons show %d" % lid, r.stdout)
-        self.assertIn("buried a naming question", r.stdout)  # the moment, as the example
-
     def test_overlay_replacement_is_named_as_overlay(self):
         d = os.path.join(self.data, "overlay", "rules")
         os.makedirs(d, exist_ok=True)

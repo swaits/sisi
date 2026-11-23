@@ -6,7 +6,7 @@ phrases requests in different words from the lessons so only the when-terms can 
 """
 import json, os, statistics, time, unittest
 from support import *
-from sisi import retro
+from sisi import learning as L
 
 
 def fields(**kw):
@@ -22,13 +22,11 @@ def fields(**kw):
 
 class PromptCase(SisiCase):
     def mk(self, **kw):
-        con = retro.connect()
-        try:
-            lid = retro.new_lesson(con, fields(**kw), self.proj, None)
-            con.commit()
-            return lid
-        finally:
-            con.close()
+        f = fields(**kw)
+        rec = L.new_record(f["moment"], f["cause"], "correctness", "promote", self.proj, "u-test",
+                           change=f["change"], mechanism="policy", scope="project",
+                           expect="caught before delivery", validate="replay")
+        return rec["id"]
 
     def prompt(self, payload, tool=None):
         args = ["prompt"] + (["--tool", tool] if tool else [])
@@ -45,21 +43,17 @@ class PromptHookTests(PromptCase):
         self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit")
         self.assertIn("release", ctx)
         self.assertIn("sisi done release", ctx)
-        self.assertIn("Check tag, version and changelog agree", ctx)
-        self.assertIn("sisi lessons show %d" % lid, ctx)
+        self.assertIn("check the tag, the manifest version and the changelog", ctx)
+        self.assertIn(lid, ctx)
         from sisi import prompt as P
         self.assertLessEqual(len(ctx), P.MAX_CHARS)
 
-    def test_listing_is_counted(self):
-        lid = self.mk()
+    def test_showing_is_not_recorded_as_evidence(self):
+        """Being shown is not evidence: delivery writes nothing to the learning store."""
+        self.mk()
+        before = L.store_base()
         self.prompt({"prompt": "cut a new release and tag it", "session_id": "s1", "cwd": self.proj})
-        con = retro.connect()
-        try:
-            self.assertGreaterEqual(retro.listed_count(con, lid), 1)
-            places = [r[0] for r in con.execute("SELECT place FROM impressions WHERE lesson_id=?", (lid,))]
-            self.assertIn("prompt", places)
-        finally:
-            con.close()
+        self.assertEqual(L.store_base(), before)
 
     def test_nothing_for_trivial_or_unmatched_messages(self):
         self.mk()
@@ -122,14 +116,19 @@ class LabelledMatchingTests(PromptCase):
 
     def ctx(self, text):
         from sisi import prompt as P
-        return P.build_context(text, session="labelled")
+        old = os.getcwd()
+        os.chdir(self.proj)  # delivery is scoped to the project the hook runs in
+        try:
+            return P.build_context(text, session="labelled")
+        finally:
+            os.chdir(old)
 
     def test_labelled_set(self):
         # A hit: the expected lesson's short line is injected. A false match: either lesson is
         # injected for a request it does not apply to. (A recipe for the request's own kind of work
         # is the feature working, not a false match, so it is measured separately below.)
-        release_short = "Check tag, version and changelog agree"
-        csv_short = "Use a quoting writer"
+        release_short = "check the tag, the manifest version and the changelog"
+        csv_short = "quoting writer so embedded newlines"
         should = [
             ("cut a new release and tag it", release_short),
             ("publish the next version to the package index please", release_short),
