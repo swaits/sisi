@@ -72,6 +72,89 @@ class FloorTests(SisiCase):
         self.assertTrue(risk.requirements_for("release")["contract"])
 
 
+LABELS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "risk_labels.json")
+
+
+def _labels():
+    with open(LABELS, encoding="utf-8") as f:
+        return json.load(f)
+
+
+class LabelledSetTests(SisiCase):
+    """The default table against paths a careful senior engineer has already judged."""
+
+    def test_labelled_set_is_large_and_covers_every_profile(self):
+        """R-5.3-3: the set is big enough to mean something and spans every profile."""
+        rows = _labels()
+        self.assertGreaterEqual(len(rows), 120)
+        self.assertEqual({r["floor"] for r in rows}, set(risk.PROFILES))
+        self.assertEqual(len({r["path"] for r in rows}), len(rows))
+        for r in rows:
+            self.assertTrue(r["why"].strip(), r)
+
+    def test_every_labelled_path_gets_its_labelled_floor(self):
+        """R-5.3-1, R-5.3-2: exact accuracy. Too high wastes a contract and a review on a
+        trivial change (SPEC 5.3); too low leaves a dangerous change unexamined. Seen failing
+        first: the old table got 91 of 177 right (lockfiles critical, React hooks critical,
+        AUTHORS.md critical, release-notes.md release, db/README.md data, sparse.py logic)."""
+        wrong = []
+        for r in _labels():
+            got, _ = risk.assess([r["path"]])
+            if got != r["floor"]:
+                wrong.append("%s: labelled %s, got %s (%s)" % (r["path"], r["floor"], got, r["why"]))
+        self.assertEqual(wrong, [], "\n".join(wrong))
+
+    def test_no_data_or_critical_path_is_ever_under_classified(self):
+        """R-5.3-8, R-5.3-9: data and critical paths must never get a lower floor, even if
+        someone loosens the exact test above. Seen failing first: the old table gave eight of
+        them a lower floor."""
+        order = {name: i for i, name in enumerate(risk.PROFILES)}
+        under = []
+        for r in _labels():
+            if r["floor"] in ("data", "critical"):
+                got, _ = risk.assess([r["path"]])
+                if order[got] < order[r["floor"]]:
+                    under.append("%s: %s < %s" % (r["path"], got, r["floor"]))
+        self.assertEqual(under, [], "\n".join(under))
+
+    def test_named_false_positives(self):
+        """R-5.3-2: the known false positives are not escalated."""
+        expect = {
+            "package-lock.json": "integration", "Cargo.lock": "integration", "poetry.lock": "integration",
+            "flake.lock": "integration", "src/hooks/useCart.ts": "isolated", "AUTHORS.md": "trivial",
+            "src/components/AuthorCard.tsx": "isolated", "docs/release-notes.md": "trivial",
+            "src/db/README.md": "trivial", "src/sparse.py": "isolated", "docs/installation.md": "trivial"}
+        for path, floor in expect.items():
+            with self.subTest(path=path):
+                self.assertEqual(risk.assess([path])[0], floor)
+
+    def test_dependency_change_is_integration_not_trivial_or_critical(self):
+        """R-5.3-7, R-5.3-11: a manifest or lockfile changes code you did not write."""
+        for path in ("package.json", "yarn.lock", "go.mod", "Gemfile.lock", "requirements.txt"):
+            with self.subTest(path=path):
+                self.assertEqual(risk.assess([path])[0], "integration")
+
+    def test_test_of_critical_code_is_logic(self):
+        """R-5.3-9: a test of critical code is not critical, and not trivial."""
+        self.assertEqual(risk.assess(["tests/test_auth.py"])[0], "logic")
+        self.assertEqual(risk.assess(["tests/test_widget.py"])[0], "isolated")
+
+    def test_code_with_its_test_is_not_a_cross_package_change(self):
+        """R-5.3-2: the commonest change, code plus its test, is not an integration."""
+        self.assertEqual(risk.assess(["sisi/risk.py", "tests/test_risk.py"])[0], "isolated")
+        self.assertEqual(risk.assess(["src/a/x.py", "docs/a.md", "src/a/x.test.ts"])[0], "isolated")
+
+    def test_keywords_in_docs_and_lockfiles_do_not_escalate(self):
+        """R-5.3-2: a README that says 'password' is not a credentials change; code that does is."""
+        doc = "diff --git a/README.md b/README.md\n+ reset your password\n"
+        lock = "diff --git a/package-lock.json b/package-lock.json\n+ \"crypto-js\": \"4.2.0\"\n"
+        self.assertEqual(risk.assess(["README.md"], diff_text=doc)[0], "trivial")
+        self.assertEqual(risk.assess(["package-lock.json"], diff_text=lock)[0], "integration")
+        code = "diff --git a/src/a.py b/src/a.py\n+ reset your password\n"
+        self.assertEqual(risk.assess(["src/a.py"], diff_text=code)[0], "critical")
+        self.assertEqual(risk.assess(["src/a.py", "README.md"], diff_text=doc + code)[0], "critical")
+
+
 class RiskCliTests(SisiCase):
     def _repo_with(self, files):
         self.git_init()

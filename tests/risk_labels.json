@@ -1,0 +1,887 @@
+[
+ {
+  "path": "src/calc.py",
+  "floor": "isolated",
+  "why": "ordinary module"
+ },
+ {
+  "path": "src/pkg/utils.py",
+  "floor": "isolated",
+  "why": "ordinary module"
+ },
+ {
+  "path": "src/__init__.py",
+  "floor": "isolated",
+  "why": "ordinary module"
+ },
+ {
+  "path": "tests/test_calc.py",
+  "floor": "isolated",
+  "why": "test of ordinary code"
+ },
+ {
+  "path": "tests/conftest.py",
+  "floor": "isolated",
+  "why": "test support code"
+ },
+ {
+  "path": "tests/test_auth.py",
+  "floor": "logic",
+  "why": "test of critical code: not critical itself, but not trivial"
+ },
+ {
+  "path": "tests/auth/test_login.py",
+  "floor": "logic",
+  "why": "test of critical code"
+ },
+ {
+  "path": "tests/test_migrations.py",
+  "floor": "logic",
+  "why": "test of data code"
+ },
+ {
+  "path": "tests/fixtures/users.json",
+  "floor": "isolated",
+  "why": "test fixture"
+ },
+ {
+  "path": "tests/fixtures/seed.sql",
+  "floor": "isolated",
+  "why": "SQL that is only test data"
+ },
+ {
+  "path": "app/auth/permissions.py",
+  "floor": "critical",
+  "why": "authorization code"
+ },
+ {
+  "path": "app/auth/README.md",
+  "floor": "trivial",
+  "why": "documentation inside a critical directory"
+ },
+ {
+  "path": "app/payments/charge.py",
+  "floor": "critical",
+  "why": "moves money"
+ },
+ {
+  "path": "app/billing/invoice.py",
+  "floor": "critical",
+  "why": "billing moves money"
+ },
+ {
+  "path": "app/crypto/hash.py",
+  "floor": "critical",
+  "why": "cryptography"
+ },
+ {
+  "path": "app/models/user.py",
+  "floor": "isolated",
+  "why": "ordinary model"
+ },
+ {
+  "path": "app/models/concerns/authenticatable.py",
+  "floor": "critical",
+  "why": "authentication behaviour"
+ },
+ {
+  "path": "alembic/versions/3f2a_add_users.py",
+  "floor": "data",
+  "why": "migration history"
+ },
+ {
+  "path": "migrations/0003_add_index.sql",
+  "floor": "data",
+  "why": "schema migration"
+ },
+ {
+  "path": "app/db/session.py",
+  "floor": "data",
+  "why": "persistence layer"
+ },
+ {
+  "path": "src/db/README.md",
+  "floor": "trivial",
+  "why": "documentation inside a data directory"
+ },
+ {
+  "path": "src/sparse.py",
+  "floor": "isolated",
+  "why": "name contains 'pars' but is not parsing"
+ },
+ {
+  "path": "src/sparse_matrix.py",
+  "floor": "isolated",
+  "why": "name contains 'pars' but is not parsing"
+ },
+ {
+  "path": "src/parser.py",
+  "floor": "logic",
+  "why": "parsing has a broad input space"
+ },
+ {
+  "path": "src/tokenizer.py",
+  "floor": "logic",
+  "why": "tokenizing has a broad input space"
+ },
+ {
+  "path": "src/utils/parse_date.py",
+  "floor": "logic",
+  "why": "parsing has a broad input space"
+ },
+ {
+  "path": "src/money/rounding.py",
+  "floor": "logic",
+  "why": "money arithmetic must be exact"
+ },
+ {
+  "path": "src/pricing/discount.py",
+  "floor": "logic",
+  "why": "pricing arithmetic"
+ },
+ {
+  "path": "src/algo/sort.py",
+  "floor": "logic",
+  "why": "algorithmic logic"
+ },
+ {
+  "path": "setup.py",
+  "floor": "integration",
+  "why": "dependency and packaging manifest"
+ },
+ {
+  "path": "pyproject.toml",
+  "floor": "integration",
+  "why": "dependency manifest"
+ },
+ {
+  "path": "requirements.txt",
+  "floor": "integration",
+  "why": "dependency manifest"
+ },
+ {
+  "path": "requirements-dev.txt",
+  "floor": "integration",
+  "why": "dependency manifest"
+ },
+ {
+  "path": "poetry.lock",
+  "floor": "integration",
+  "why": "lockfile: code you did not write changes"
+ },
+ {
+  "path": "uv.lock",
+  "floor": "integration",
+  "why": "lockfile"
+ },
+ {
+  "path": "Pipfile.lock",
+  "floor": "integration",
+  "why": "lockfile"
+ },
+ {
+  "path": "docs/index.rst",
+  "floor": "trivial",
+  "why": "documentation"
+ },
+ {
+  "path": "scripts/install.sh",
+  "floor": "critical",
+  "why": "installer changes the user's machine"
+ },
+ {
+  "path": "install.sh",
+  "floor": "critical",
+  "why": "installer changes the user's machine"
+ },
+ {
+  "path": "docs/installation.md",
+  "floor": "trivial",
+  "why": "documentation about installing"
+ },
+ {
+  "path": "PKGBUILD",
+  "floor": "critical",
+  "why": "package build script"
+ },
+ {
+  "path": "src/components/InstallButton.tsx",
+  "floor": "isolated",
+  "why": "UI component, not an installer"
+ },
+ {
+  "path": "package.json",
+  "floor": "integration",
+  "why": "dependency manifest"
+ },
+ {
+  "path": "package-lock.json",
+  "floor": "integration",
+  "why": "lockfile"
+ },
+ {
+  "path": "yarn.lock",
+  "floor": "integration",
+  "why": "lockfile"
+ },
+ {
+  "path": "pnpm-lock.yaml",
+  "floor": "integration",
+  "why": "lockfile"
+ },
+ {
+  "path": "Cargo.lock",
+  "floor": "integration",
+  "why": "lockfile"
+ },
+ {
+  "path": "flake.lock",
+  "floor": "integration",
+  "why": "lockfile"
+ },
+ {
+  "path": "Gemfile.lock",
+  "floor": "integration",
+  "why": "lockfile"
+ },
+ {
+  "path": "go.sum",
+  "floor": "integration",
+  "why": "lockfile"
+ },
+ {
+  "path": "src/hooks/useCart.ts",
+  "floor": "isolated",
+  "why": "React hook, not a tool hook"
+ },
+ {
+  "path": "src/hooks/useLocalStorage.ts",
+  "floor": "isolated",
+  "why": "React hook over browser storage"
+ },
+ {
+  "path": "src/components/AuthorCard.tsx",
+  "floor": "isolated",
+  "why": "'author' is not 'auth'"
+ },
+ {
+  "path": "src/components/Button.tsx",
+  "floor": "isolated",
+  "why": "ordinary UI component"
+ },
+ {
+  "path": "src/components/Button.test.tsx",
+  "floor": "isolated",
+  "why": "test of ordinary code"
+ },
+ {
+  "path": "src/components/__snapshots__/Button.test.tsx.snap",
+  "floor": "isolated",
+  "why": "snapshot"
+ },
+ {
+  "path": "src/styles/main.css",
+  "floor": "trivial",
+  "why": "styling only"
+ },
+ {
+  "path": "src/styles/theme.scss",
+  "floor": "trivial",
+  "why": "styling only"
+ },
+ {
+  "path": "public/logo.png",
+  "floor": "trivial",
+  "why": "static asset"
+ },
+ {
+  "path": "public/favicon.ico",
+  "floor": "trivial",
+  "why": "static asset"
+ },
+ {
+  "path": "public/index.html",
+  "floor": "isolated",
+  "why": "markup that can carry behaviour"
+ },
+ {
+  "path": "src/pages/api/users.ts",
+  "floor": "integration",
+  "why": "public interface surface"
+ },
+ {
+  "path": "server/routes/auth.ts",
+  "floor": "critical",
+  "why": "authentication routes"
+ },
+ {
+  "path": "server/middleware/jwt.ts",
+  "floor": "critical",
+  "why": "token verification"
+ },
+ {
+  "path": "server/src/queue/lock.ts",
+  "floor": "critical",
+  "why": "concurrency primitive"
+ },
+ {
+  "path": "src/locales/en.json",
+  "floor": "trivial",
+  "why": "translated strings"
+ },
+ {
+  "path": "src/utils/clock.ts",
+  "floor": "isolated",
+  "why": "'clock' is not a lock"
+ },
+ {
+  "path": "src/utils/block.ts",
+  "floor": "isolated",
+  "why": "'block' is not a lock"
+ },
+ {
+  "path": "tsconfig.json",
+  "floor": "isolated",
+  "why": "build configuration of one project"
+ },
+ {
+  "path": ".eslintrc.json",
+  "floor": "isolated",
+  "why": "lint configuration"
+ },
+ {
+  "path": "AUTHORS.md",
+  "floor": "trivial",
+  "why": "documentation"
+ },
+ {
+  "path": "README.md",
+  "floor": "trivial",
+  "why": "documentation"
+ },
+ {
+  "path": "docs/release-notes.md",
+  "floor": "trivial",
+  "why": "documentation about a release"
+ },
+ {
+  "path": "CHANGELOG.md",
+  "floor": "trivial",
+  "why": "documentation"
+ },
+ {
+  "path": "LICENSE",
+  "floor": "trivial",
+  "why": "legal text only"
+ },
+ {
+  "path": "COPYING",
+  "floor": "trivial",
+  "why": "legal text only"
+ },
+ {
+  "path": "SECURITY.md",
+  "floor": "trivial",
+  "why": "documentation"
+ },
+ {
+  "path": ".gitignore",
+  "floor": "trivial",
+  "why": "repository metadata"
+ },
+ {
+  "path": ".editorconfig",
+  "floor": "trivial",
+  "why": "repository metadata"
+ },
+ {
+  "path": ".env.example",
+  "floor": "isolated",
+  "why": "template of settings, no secrets, but documents the config surface"
+ },
+ {
+  "path": ".env",
+  "floor": "critical",
+  "why": "real environment file holds secrets"
+ },
+ {
+  "path": ".env.production",
+  "floor": "critical",
+  "why": "real environment file holds secrets"
+ },
+ {
+  "path": "dist/bundle.js",
+  "floor": "isolated",
+  "why": "build output"
+ },
+ {
+  "path": "src/generated/api-types.ts",
+  "floor": "isolated",
+  "why": "generated code"
+ },
+ {
+  "path": "src/lib/server.min.js",
+  "floor": "isolated",
+  "why": "minified build output"
+ },
+ {
+  "path": "packages/ui/src/Button.tsx",
+  "floor": "isolated",
+  "why": "ordinary UI component in a monorepo"
+ },
+ {
+  "path": "packages/auth/src/index.ts",
+  "floor": "critical",
+  "why": "authentication package"
+ },
+ {
+  "path": "packages/ui/package.json",
+  "floor": "integration",
+  "why": "dependency manifest"
+ },
+ {
+  "path": "apps/web/src/App.tsx",
+  "floor": "isolated",
+  "why": "ordinary UI component in a monorepo"
+ },
+ {
+  "path": "apps/web/webpack.config.js",
+  "floor": "isolated",
+  "why": "build configuration of one app"
+ },
+ {
+  "path": "vendor/lib/foo.go",
+  "floor": "integration",
+  "why": "vendored code you did not write"
+ },
+ {
+  "path": "src/components/ReleaseNotes.tsx",
+  "floor": "isolated",
+  "why": "UI component, not release machinery"
+ },
+ {
+  "path": "src/pages/releases.tsx",
+  "floor": "isolated",
+  "why": "a web page listing releases"
+ },
+ {
+  "path": "config/feature_flags.yml",
+  "floor": "integration",
+  "why": "runtime switches change behaviour across modules"
+ },
+ {
+  "path": "src/flags.json",
+  "floor": "integration",
+  "why": "runtime switches change behaviour across modules"
+ },
+ {
+  "path": "go.mod",
+  "floor": "integration",
+  "why": "dependency manifest"
+ },
+ {
+  "path": "cmd/server/main.go",
+  "floor": "isolated",
+  "why": "ordinary entry point"
+ },
+ {
+  "path": "internal/auth/token.go",
+  "floor": "critical",
+  "why": "token handling"
+ },
+ {
+  "path": "internal/sync/mutex.go",
+  "floor": "critical",
+  "why": "concurrency primitive"
+ },
+ {
+  "path": "internal/storage/s3.go",
+  "floor": "data",
+  "why": "persistence layer"
+ },
+ {
+  "path": "internal/parser/parse.go",
+  "floor": "logic",
+  "why": "parsing"
+ },
+ {
+  "path": "internal/handler/user_handler_test.go",
+  "floor": "isolated",
+  "why": "test of ordinary code"
+ },
+ {
+  "path": "api/v1/user.proto",
+  "floor": "integration",
+  "why": "public interface definition"
+ },
+ {
+  "path": "pkg/api/server.go",
+  "floor": "integration",
+  "why": "public interface surface"
+ },
+ {
+  "path": "internal/pb/user.pb.go",
+  "floor": "isolated",
+  "why": "generated code"
+ },
+ {
+  "path": "Makefile",
+  "floor": "isolated",
+  "why": "build script"
+ },
+ {
+  "path": ".goreleaser.yaml",
+  "floor": "release",
+  "why": "release machinery"
+ },
+ {
+  "path": "Cargo.toml",
+  "floor": "integration",
+  "why": "dependency manifest"
+ },
+ {
+  "path": "src/main.rs",
+  "floor": "isolated",
+  "why": "ordinary entry point"
+ },
+ {
+  "path": "crates/core/src/lexer.rs",
+  "floor": "logic",
+  "why": "lexing"
+ },
+ {
+  "path": "crates/core/Cargo.toml",
+  "floor": "integration",
+  "why": "dependency manifest"
+ },
+ {
+  "path": "src/crypto/aes.rs",
+  "floor": "critical",
+  "why": "cryptography"
+ },
+ {
+  "path": "tests/integration_test.rs",
+  "floor": "isolated",
+  "why": "test of ordinary code"
+ },
+ {
+  "path": "build.rs",
+  "floor": "isolated",
+  "why": "build script"
+ },
+ {
+  "path": "pom.xml",
+  "floor": "integration",
+  "why": "dependency manifest"
+ },
+ {
+  "path": "build.gradle.kts",
+  "floor": "integration",
+  "why": "dependency manifest"
+ },
+ {
+  "path": "src/main/java/com/acme/OrderService.java",
+  "floor": "isolated",
+  "why": "ordinary class"
+ },
+ {
+  "path": "src/test/java/com/acme/OrderServiceTest.java",
+  "floor": "isolated",
+  "why": "test of ordinary code"
+ },
+ {
+  "path": "src/main/java/com/acme/security/PasswordEncoder.java",
+  "floor": "critical",
+  "why": "password handling"
+ },
+ {
+  "path": "src/main/resources/db/migration/V2__add_orders.sql",
+  "floor": "data",
+  "why": "schema migration"
+ },
+ {
+  "path": "src/main/kotlin/com/acme/pricing/TaxCalculator.kt",
+  "floor": "logic",
+  "why": "pricing arithmetic"
+ },
+ {
+  "path": "src/main/resources/application.yml",
+  "floor": "isolated",
+  "why": "application settings"
+ },
+ {
+  "path": "CMakeLists.txt",
+  "floor": "isolated",
+  "why": "build script (text extension, not documentation)"
+ },
+ {
+  "path": "include/mylib/api.h",
+  "floor": "integration",
+  "why": "public header is an interface"
+ },
+ {
+  "path": "src/mylib.c",
+  "floor": "isolated",
+  "why": "ordinary source"
+ },
+ {
+  "path": "src/spinlock.c",
+  "floor": "critical",
+  "why": "concurrency primitive"
+ },
+ {
+  "path": "src/crypto/sha256.c",
+  "floor": "critical",
+  "why": "cryptography"
+ },
+ {
+  "path": "tests/test_parser.c",
+  "floor": "isolated",
+  "why": "test of logic code"
+ },
+ {
+  "path": "third_party/zlib/inflate.c",
+  "floor": "integration",
+  "why": "vendored code you did not write"
+ },
+ {
+  "path": "Gemfile",
+  "floor": "integration",
+  "why": "dependency manifest"
+ },
+ {
+  "path": "app/controllers/users_controller.rb",
+  "floor": "isolated",
+  "why": "ordinary controller"
+ },
+ {
+  "path": "db/migrate/20240101_add_x.rb",
+  "floor": "data",
+  "why": "schema migration"
+ },
+ {
+  "path": "db/schema.rb",
+  "floor": "data",
+  "why": "schema definition"
+ },
+ {
+  "path": "spec/models/user_spec.rb",
+  "floor": "isolated",
+  "why": "test of ordinary code"
+ },
+ {
+  "path": "Package.swift",
+  "floor": "integration",
+  "why": "dependency manifest"
+ },
+ {
+  "path": "Package.resolved",
+  "floor": "integration",
+  "why": "lockfile"
+ },
+ {
+  "path": "Sources/App/Views/ProfileView.swift",
+  "floor": "isolated",
+  "why": "ordinary view"
+ },
+ {
+  "path": "Sources/App/Keychain/KeychainStore.swift",
+  "floor": "critical",
+  "why": "secret storage"
+ },
+ {
+  "path": "Tests/AppTests/ProfileTests.swift",
+  "floor": "isolated",
+  "why": "test of ordinary code"
+ },
+ {
+  "path": "scripts/build.sh",
+  "floor": "isolated",
+  "why": "build script"
+ },
+ {
+  "path": "scripts/release.sh",
+  "floor": "release",
+  "why": "release machinery"
+ },
+ {
+  "path": "scripts/deploy.sh",
+  "floor": "release",
+  "why": "deployment machinery"
+ },
+ {
+  "path": "scripts/backup.sh",
+  "floor": "data",
+  "why": "backup of stored data"
+ },
+ {
+  "path": "db/queries/report.sql",
+  "floor": "data",
+  "why": "SQL touches stored data"
+ },
+ {
+  "path": "sql/001_init.sql",
+  "floor": "data",
+  "why": "schema definition"
+ },
+ {
+  "path": "prisma/schema.prisma",
+  "floor": "data",
+  "why": "schema definition"
+ },
+ {
+  "path": "Dockerfile",
+  "floor": "integration",
+  "why": "image build changes what runs in production"
+ },
+ {
+  "path": "docker/Dockerfile.dev",
+  "floor": "integration",
+  "why": "image build"
+ },
+ {
+  "path": "docker-compose.yml",
+  "floor": "integration",
+  "why": "service wiring"
+ },
+ {
+  "path": ".dockerignore",
+  "floor": "trivial",
+  "why": "repository metadata"
+ },
+ {
+  "path": "terraform/main.tf",
+  "floor": "integration",
+  "why": "infrastructure change"
+ },
+ {
+  "path": "terraform/iam.tf",
+  "floor": "critical",
+  "why": "access policy"
+ },
+ {
+  "path": "k8s/deployment.yaml",
+  "floor": "integration",
+  "why": "infrastructure change"
+ },
+ {
+  "path": "charts/app/values.yaml",
+  "floor": "integration",
+  "why": "deployment settings"
+ },
+ {
+  "path": "ansible/playbook.yml",
+  "floor": "integration",
+  "why": "infrastructure change"
+ },
+ {
+  "path": ".github/workflows/ci.yml",
+  "floor": "integration",
+  "why": "CI pipeline change affects every merge"
+ },
+ {
+  "path": ".github/workflows/release.yml",
+  "floor": "release",
+  "why": "release pipeline"
+ },
+ {
+  "path": ".github/workflows/deploy.yml",
+  "floor": "release",
+  "why": "deployment pipeline"
+ },
+ {
+  "path": ".gitlab-ci.yml",
+  "floor": "integration",
+  "why": "CI pipeline"
+ },
+ {
+  "path": "Jenkinsfile",
+  "floor": "integration",
+  "why": "CI pipeline"
+ },
+ {
+  "path": ".githooks/pre-commit",
+  "floor": "integration",
+  "why": "runs automatically on every commit"
+ },
+ {
+  "path": ".husky/pre-commit",
+  "floor": "integration",
+  "why": "runs automatically on every commit"
+ },
+ {
+  "path": ".github/ISSUE_TEMPLATE/bug.md",
+  "floor": "trivial",
+  "why": "documentation"
+ },
+ {
+  "path": "api/openapi.yaml",
+  "floor": "integration",
+  "why": "public API schema"
+ },
+ {
+  "path": "openapi.json",
+  "floor": "integration",
+  "why": "public API schema"
+ },
+ {
+  "path": "schema.graphql",
+  "floor": "integration",
+  "why": "public API schema"
+ },
+ {
+  "path": "proto/events.proto",
+  "floor": "integration",
+  "why": "public interface definition"
+ },
+ {
+  "path": "src/config.schema.json",
+  "floor": "integration",
+  "why": "contract for configuration"
+ },
+ {
+  "path": "docs/architecture.md",
+  "floor": "trivial",
+  "why": "documentation"
+ },
+ {
+  "path": "docs/api/reference.md",
+  "floor": "trivial",
+  "why": "documentation of an API"
+ },
+ {
+  "path": "docs/migrations.md",
+  "floor": "trivial",
+  "why": "documentation about migrations"
+ },
+ {
+  "path": "db/migrations/README.md",
+  "floor": "trivial",
+  "why": "documentation of a migration directory"
+ },
+ {
+  "path": "docs/auth.md",
+  "floor": "trivial",
+  "why": "documentation about authentication"
+ },
+ {
+  "path": "docs/diagrams/flow.png",
+  "floor": "trivial",
+  "why": "image"
+ },
+ {
+  "path": "assets/fonts/inter.woff2",
+  "floor": "trivial",
+  "why": "font"
+ },
+ {
+  "path": "VERSION",
+  "floor": "release",
+  "why": "version marker for a release"
+ },
+ {
+  "path": "src/billing/README.md",
+  "floor": "trivial",
+  "why": "documentation inside a critical directory"
+ }
+]

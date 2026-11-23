@@ -3,12 +3,38 @@
 `assess` is a pure function from changed paths (and optionally diff text) to a floor
 profile plus the reasons. Tables come from canon/risk.json, a user-store adjustment
 file, and a project override at .sisi/risk.json; later tables only add patterns.
+
+How ONE path is classified (`classify_path`), in this order:
+  1. Kind stage (patterns with "stage": "kind"; the first match wins and is final).
+     What the file IS comes before what it is called: documentation, assets, styling,
+     fixtures, tests, generated output, lockfiles and manifests, vendored code. So
+     `docs/installation.md` is documentation and `Cargo.lock` is a lockfile whatever
+     their names contain. Documentation, assets and styling are trivial; fixtures,
+     generated output and ordinary tests are isolated; lockfiles, manifests and vendored
+     code are integration (behaviour of code you did not write changes: not trivial, but
+     not critical either). A test of data, critical or release code is `logic`: it is not
+     itself critical, but it is not trivial. A test of anything else stays isolated.
+  2. Name stage (patterns with "stage": "name"): globs on the path, and tokens on the
+     directory names and file stem split on punctuation and camelCase (`AuthorCard` is
+     "author", "card", never "auth"; `sparse` is not "pars*"). The highest matching
+     profile wins. A source file that matches nothing is isolated.
+  3. Override patterns (no "stage": project and user-store adjustments) only raise.
+How a CHANGE is classified (`assess`): the highest floor among its paths; a change that
+touches two or more top-level packages (tests, docs, fixtures, generated output and root
+files do not count as packages) is at least integration; diff keywords raise the floor but
+only from the diff of files that are not docs, tests, fixtures, lockfiles or manifests.
+Every rule is a maximum over a growing set, so adding a path never lowers the floor.
 """
-import fnmatch, json, os, subprocess
+import fnmatch, json, os, re, subprocess
 
 PROFILES = ["trivial", "isolated", "logic", "integration", "data", "critical", "release"]
 _ORDER = {name: i for i, name in enumerate(PROFILES)}
 _TRIVIAL_PROFILES = {"trivial"}
+_DEFAULT_REASON = "ordinary source file: one module's behaviour"
+_CONTAINERS = {"src", "lib", "app", "packages", "apps", "services", "crates", "modules", "libs",
+               "cmd", "internal", "pkg"}
+_NO_PACKAGE_KINDS = {"doc", "asset", "style", "content", "template", "fixture", "test", "generated", "text"}
+_TOKEN_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 
 
 def _load_json(path):
@@ -38,7 +64,7 @@ def requirements_for(profile, table=None):
 def _patterns_from(table):
     out = []
     for p in (table or {}).get("patterns") or []:
-        if isinstance(p, dict) and p.get("profile") in _ORDER and (p.get("glob") or p.get("keyword")):
+        if isinstance(p, dict) and p.get("profile") in _ORDER and (p.get("glob") or p.get("token") or p.get("keyword")):
             out.append(p)
     return out
 
@@ -55,18 +81,97 @@ def load_patterns(cwd=None):
     return pats
 
 
+def _expand_braces(pat):
+    m = re.search(r"\{([^{}]*)\}", pat)
+    if not m:
+        return [pat]
+    out = []
+    for alt in m.group(1).split(","):
+        out += _expand_braces(pat[:m.start()] + alt + pat[m.end():])
+    return out
+
+
 def _glob_match(path, pattern):
-    p = path.replace(os.sep, "/")
-    pat = pattern.replace(os.sep, "/")
-    if fnmatch.fnmatch(p, pat):
+    p = path.replace(os.sep, "/").lower()
+    for pat in _expand_braces(pattern.replace(os.sep, "/").lower()):
+        if fnmatch.fnmatchcase(p, pat):
+            return True
+        # A leading **/ should also match at the root.
+        if pat.startswith("**/") and fnmatch.fnmatchcase(p, pat[3:]):
+            return True
+        # A trailing /** should match the directory itself and anything under it.
+        if pat.endswith("/**") and (p == pat[:-3] or p.startswith(pat[:-2])):
+            return True
+    return False
+
+
+def _as_list(v):
+    return [v] if isinstance(v, str) else list(v or [])
+
+
+def _tokens(name):
+    return [t.lower() for t in _TOKEN_RE.findall(name)]
+
+
+def _path_tokens(path):
+    """(directory tokens, file stem tokens) of a path."""
+    parts = [x for x in path.replace(os.sep, "/").split("/") if x and x != "."]
+    if not parts:
+        return [], []
+    stem = parts[-1].rsplit(".", 1)[0] if "." in parts[-1].lstrip(".") else parts[-1]
+    dirs = [t for d in parts[:-1] for t in _tokens(d)]
+    return dirs, _tokens(stem)
+
+
+def _token_match(path, wanted, scope):
+    dirs, stem = _path_tokens(path)
+    have = (dirs if scope == "dir" else stem if scope == "stem" else dirs + stem)
+    for w in wanted:
+        w = w.lower()
+        for t in have:
+            if (t.startswith(w[:-1]) if w.endswith("*") else t == w):
+                return True
+    return False
+
+
+def _pattern_hits(path, pat):
+    if pat.get("glob") and any(_glob_match(path, g) for g in _as_list(pat["glob"])):
         return True
-    # A leading **/ should also match at the root.
-    if pat.startswith("**/") and fnmatch.fnmatch(p, pat[3:]):
-        return True
-    # A trailing /** should match the directory itself and anything under it.
-    if pat.endswith("/**") and (p == pat[:-3] or p.startswith(pat[:-2])):
+    if pat.get("token") and _token_match(path, _as_list(pat["token"]), pat.get("scope") or "any"):
         return True
     return False
+
+
+def _name_stage(path, pats):
+    """(profile, reason) from the name patterns: the highest match, else an ordinary file."""
+    best = None
+    for pat in pats:
+        if pat.get("stage") == "name" and _pattern_hits(path, pat):
+            if best is None or _ORDER[pat["profile"]] > _ORDER[best[0]]:
+                best = (pat["profile"], pat.get("reason") or pat["profile"])
+    return best or ("isolated", _DEFAULT_REASON)
+
+
+def classify_path(path, patterns=None):
+    """(profile, kind, reason) for one path. `kind` is the kind-stage match, or None."""
+    pats = list(patterns if patterns is not None else _patterns_from(default_table()))
+    p = str(path).replace(os.sep, "/")
+    kind, profile, reason = None, None, None
+    for pat in pats:
+        if pat.get("stage") == "kind" and _pattern_hits(p, pat):
+            kind, profile, reason = pat.get("kind") or "kind", pat["profile"], pat.get("reason") or pat["profile"]
+            if pat.get("elevate"):
+                name_prof, name_reason = _name_stage(p, pats)
+                if _ORDER[name_prof] >= _ORDER["data"]:
+                    profile, reason = "logic", "test of %s code (%s)" % (name_prof, name_reason)
+            break
+    if kind is None:
+        profile, reason = _name_stage(p, pats)
+    for pat in pats:  # overrides (no stage) only raise
+        if pat.get("stage") not in ("kind", "name") and (pat.get("glob") or pat.get("token")) \
+                and _pattern_hits(p, pat) and _ORDER[pat["profile"]] > _ORDER[profile]:
+            profile, reason = pat["profile"], pat.get("reason") or pat["profile"]
+    return profile, kind, reason
 
 
 def _packages(paths):
@@ -75,11 +180,26 @@ def _packages(paths):
         parts = [x for x in raw.replace(os.sep, "/").split("/") if x and x != "."]
         if len(parts) < 2:
             continue
-        if parts[0] in ("src", "lib", "app") and len(parts) >= 3:
+        if parts[0] in _CONTAINERS and len(parts) >= 3:
             pkgs.add(parts[1])
-        elif len(parts) >= 2:
+        else:
             pkgs.add(parts[0])
     return pkgs
+
+
+_DIFF_HEAD = re.compile(r"^diff --git a/(.+?) b/(.+)$", re.M)
+
+
+def _diff_blocks(diff_text):
+    """[(path or None, text)]: text before the first `diff --git` header has no path."""
+    heads = list(_DIFF_HEAD.finditer(diff_text))
+    if not heads:
+        return [(None, diff_text)]
+    out = [(None, diff_text[:heads[0].start()])]
+    for i, m in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(diff_text)
+        out.append((m.group(2), diff_text[m.start():end]))
+    return out
 
 
 def assess(paths, diff_text=None, extra_patterns=None, patterns=None):
@@ -91,49 +211,34 @@ def assess(paths, diff_text=None, extra_patterns=None, patterns=None):
     if not clean:
         return "trivial", ["no changed paths"]
     best, reasons = "trivial", []
-    matched_profiles = []
-    trivial_hits = set()
-    for pat in pats:
-        prof = pat["profile"]
-        reason = pat.get("reason") or prof
-        if pat.get("glob"):
-            hits = [p for p in clean if _glob_match(p, pat["glob"])]
-            if hits:
-                matched_profiles.append(prof)
-                if prof == "trivial":
-                    trivial_hits.update(hits)
-                if _ORDER[prof] >= _ORDER[best]:
-                    if _ORDER[prof] > _ORDER[best]:
-                        best, reasons = prof, []
-                    reasons.append("%s: %s" % (hits[0], reason))
-        if pat.get("keyword") and diff_text:
-            if pat["keyword"].lower() in diff_text.lower():
-                matched_profiles.append(prof)
-                if _ORDER[prof] >= _ORDER[best]:
-                    if _ORDER[prof] > _ORDER[best]:
-                        best, reasons = prof, []
-                    reasons.append("diff: %s" % reason)
-    # Structural rules that patterns cannot express. Documentation and styling
-    # paths do not count as packages: two docs folders are not an integration.
-    pkgs = _packages([p for p in clean if p not in trivial_hits])
-    if len(pkgs) >= 2 and _ORDER["integration"] >= _ORDER[best]:
-        if _ORDER["integration"] > _ORDER[best]:
-            best, reasons = "integration", []
-        reasons.append("touches %d top-level packages (%s): integration surface"
-                       % (len(pkgs), ", ".join(sorted(pkgs))))
-    if best == "trivial" and len(trivial_hits) == len(clean):
-        return "trivial", reasons or ["documentation, text or styling only"]
-    if best == "trivial":
-        return "isolated", ["one module's behaviour changed"]
-    if not reasons:
-        reasons = ["%s: matched the %s profile" % (clean[0], best)]
-    # Keep reasons short and de-duplicated, strongest first is unnecessary: keep order.
-    seen, out = set(), []
-    for r in reasons:
-        if r not in seen:
-            seen.add(r)
-            out.append(r)
-    return best, out[:6]
+
+    def offer(prof, text):
+        nonlocal best, reasons
+        if _ORDER[prof] > _ORDER[best]:
+            best, reasons = prof, []
+        if prof == best and text not in reasons:
+            reasons.append(text)
+
+    kinds = {}
+    for p in clean:
+        prof, kind, why = classify_path(p, pats)
+        kinds[p] = kind
+        offer(prof, "%s: %s" % (p, why))
+    if diff_text:
+        for dpath, text in _diff_blocks(diff_text):
+            if dpath is not None and classify_path(dpath, pats)[1]:
+                continue  # docs, tests, lockfiles and the like are not scanned for keywords
+            low = text.lower()
+            for pat in pats:
+                kw = pat.get("keyword")
+                if kw and re.search(r"\b" + re.escape(kw.lower()), low):
+                    offer(pat["profile"], "diff: %s" % (pat.get("reason") or pat["profile"]))
+    # Structural rule that patterns cannot express: several top-level packages.
+    pkgs = _packages([p for p in clean if kinds[p] not in _NO_PACKAGE_KINDS])
+    if len(pkgs) >= 2:
+        offer("integration", "touches %d top-level packages (%s): integration surface"
+              % (len(pkgs), ", ".join(sorted(pkgs))))
+    return best, reasons[:6]
 
 
 def floor_for_working_tree(cwd):
@@ -154,7 +259,7 @@ def floor_for_working_tree(cwd):
             try:
                 if os.path.isfile(fp) and os.path.getsize(fp) < 200000:
                     with open(fp, encoding="utf-8", errors="replace") as f:
-                        diff_text += "\n" + f.read(20000)
+                        diff_text += "\ndiff --git a/%s b/%s\n" % (rel, rel) + f.read(20000)
             except OSError:
                 pass
     except Exception:
