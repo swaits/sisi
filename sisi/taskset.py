@@ -24,7 +24,6 @@ Split: sha256(task id) mod 100 < 70 is `dev`, else `holdout`. It depends on the 
 """
 import hashlib, json, os, time
 
-from . import harvest, paths
 
 DEV_PERCENT = 70
 MATCH_SLACK_S = 1200

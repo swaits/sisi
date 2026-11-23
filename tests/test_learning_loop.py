@@ -542,6 +542,34 @@ class Mechanisms(Base):
         self.assertEqual(len(cycle.routing_adjustments(self.proj)), 1)
         self.assertEqual(cycle.routing_adjustments(self.other_project()), [])
 
+    def test_a_promoted_routing_adjustment_changes_sisi_route_for_its_project_only(self):
+        """R-11.1-7, R-7.1-1: the reader of routing-adjustments.json is `sisi route`: a cycle's avoid entry
+        moves the choice in its own project, names its learning in --explain, and leaves another project alone."""
+        bindir = os.path.join(self.tmp, "bin")
+        os.makedirs(bindir)
+        tool = os.path.join(bindir, "muse")
+        with open(tool, "w") as f:
+            f.write('#!/bin/sh\nif [ "$1 $2" = "exec --list-models" ]; then echo beta-1; echo beta-2; fi\nexit 0\n')
+        os.chmod(tool, 0o755)
+        env = {"PATH": bindir}
+        for m, price in (("beta-1", "1"), ("beta-2", "2")):
+            r = self.sisi("workers", "fact", "muse/" + m, "--price", price, "--source", "fixture", env=env)
+            self.assertEqual(r.returncode, 0, r.stderr)
+        other = self.other_project()
+        route = ("route", "--kind", "impl", "--difficulty", "2", "--explain")
+        before, before_other = self.sisi(*route, env=env), self.sisi(*route, cwd=other, env=env)
+        self.assertEqual(before.stdout.splitlines()[0], "muse/beta-1", before.stdout)
+        self.assertEqual(before_other.stdout, before.stdout)
+        self.propose()
+        self.assertEqual(self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "routing",
+                                      "kind": "impl", "avoid": "beta-1"}]).returncode, 0)
+        after, after_other = self.sisi(*route, env=env), self.sisi(*route, cwd=other, env=env)
+        self.assertEqual(after.stdout.splitlines()[0], "muse/beta-2", after.stdout)
+        self.assertIn("learning L-0001", after.stdout)
+        self.assertEqual(after_other.stdout, before_other.stdout)
+        unrelated = self.sisi("route", "--kind", "review", "--difficulty", "2", env=env)
+        self.assertEqual(unrelated.stdout.splitlines()[0], "muse/beta-1")
+
     def test_earned_scope_widens_what_a_cycle_may_apply(self):
         """R-11.6-2: once a learning has earned scope (two units, two projects) its risk adjustment
         reaches both projects and a rule it motivates needs no approval for reach alone."""
@@ -929,6 +957,21 @@ class Store(Base):
         self.assertIn("prefer short plain reports", r.stdout)
         self.assertEqual(len(L.owner_statements()), 1)
 
+    def test_learn_says_what_it_stored_and_how_to_take_it_back(self):
+        """R-12-1: the receipt shows the stored text (secrets scrubbed), id, scope and a withdraw command that works."""
+        out = self.sisi("learn", "--scope", "project", "prefer short plain reports, password=hunter2hunter2").stdout
+        row = self.rows()[0]
+        self.assertIn(row["id"], out)
+        self.assertIn("scope:  project", out)
+        self.assertIn(row["observation"]["evidence"], out)
+        self.assertNotIn("hunter2", out)
+        cmd = [l for l in out.splitlines() if "sisi learn --withdraw" in l][0].split("sisi learn ", 1)[1]
+        self.assertIn("--withdraw %s " % row["id"], cmd)
+        import shlex
+        r = self.sisi("learn", *shlex.split(cmd.replace("<why it was recorded by mistake>", "test")))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(L.owner_statements(), [])
+
     def test_learn_records_whether_the_owner_typed_it(self):
         """A statement quoted from a human-typed message of the session transcript is `typed by the
         owner`; a relayed one, or none to check, is `relayed by an agent`. Never blocked."""
@@ -976,12 +1019,29 @@ class Store(Base):
         root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
         bad = []
         for n in sorted(os.listdir(os.path.join(root, "sisi"))):
-            if not n.endswith(".py") or n == "gate.py":  # gate.py's retro.lessons_block is the live gate seam
+            if not n.endswith(".py"):
                 continue
             with open(os.path.join(root, "sisi", n)) as f:
                 for i, line in enumerate(f, 1):
                     if any(w in line for w in ("retro.db_path", "retro.cycle_records", "retro.lesson", "retro.connect",
                                                "_folded_lessons(rule_id):\n        try")):
+                        bad.append("%s:%d" % (n, i))
+        self.assertEqual(bad, [])
+
+    def test_no_guarded_seams_between_modules_that_always_exist(self):
+        """Item 4: no `except ImportError` or `hasattr(module, ...)` probe stands in for a module of this
+        package, and nothing names a removed seam. The one platform probe (fcntl, absent on Windows, in pdata) stays."""
+        import re
+        root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+        bad = []
+        for n in sorted(os.listdir(os.path.join(root, "sisi"))):
+            if not n.endswith(".py"):
+                continue
+            with open(os.path.join(root, "sisi", n)) as f:
+                for i, line in enumerate(f, 1):
+                    if n != "pdata.py" and re.search(r"except \(?ImportError|hasattr\((delivery|unit|gate|retro|learning|cycle)\b", line):
+                        bad.append("%s:%d" % (n, i))
+                    if re.search(r"retro\.(TEMPLATE|satisfied|lessons_block)|ensure_imported", line):
                         bad.append("%s:%d" % (n, i))
         self.assertEqual(bad, [])
 

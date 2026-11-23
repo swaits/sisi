@@ -12,11 +12,14 @@ applies_to: Turning a one-line or short description (an app, a service, a tool) 
 - It is safe: dependencies audited, secrets handled, trust boundaries modelled, data stored survives crashes and upgrades.
 - One command defines done; documentation says how to run and verify it; a release path exists.
 - The owner walked it and accepted it, and what was assumed is reported.
+- The first usable increment is named, the work is ordered to reach it early, and every status update gives its estimated time, labelled as an estimate.
+- Where the design depends on a heuristic, classifier or matcher being right most of the time, a throwaway version was first scored on labels a different worker wrote, and the measured ceiling and what stands behind the heuristic are in the design.
 
 ## Checks
 - What to build: `acceptance-examples`, `requirement-to-check-map` (completeness), `spec-traceability`; design: `tlaplus` or `quint` for state machines (design).
 - Logic: `lean4-proofs`, `kani` or `proptest` (prove, many-inputs), rung 1 to 2; `stateful-model-test`, `differential-reference`, `round-trip`.
 - Tests are real: `cargo-mutants` or the language's mutation tool, `vacuity-check`, `assertion-strength-review` (test-quality).
+- Tests are stable: `repeat-under-parallel-load` (test-quality), rung 3.
 - Real world: `e2e-playwright` or `cli-transcript-tests`, `clean-clone-build`, `packaging-install-upgrade`, `cross-platform-matrix`.
 - Safety: `rust-lints-strict`, `dependency-audit-rust`, `secret-scanning`, `threat-model-checklist`, `licence-notices`.
 - Done: `single-gate-command`, `no-stubs-scan`, `check-tiering`, `release-gate`; the human: `owner-acceptance-runbook` (intent), rung 6.

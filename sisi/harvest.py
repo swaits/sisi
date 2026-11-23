@@ -37,7 +37,7 @@ sub-agents is not machine-written.
 Pasted content does not count towards length (it is a human attachment). The heuristic errs towards
 calling things machine-written: a false "machine" only removes a session from the human task set.
 """
-import json, os, re, sys, time
+import json, os, re
 from collections import namedtuple
 
 from . import paths

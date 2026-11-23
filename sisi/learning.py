@@ -583,7 +583,7 @@ def statement_origin(statement):
             text = harvest.typed_text(d)[0]
             if text and want in _norm_words(text):
                 return "typed by the owner"
-    except (OSError, ImportError):
+    except OSError:
         pass
     return "relayed by an agent"
 

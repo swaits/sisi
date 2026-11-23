@@ -98,30 +98,6 @@ def personal_config():
         return {}
 
 
-def set_personal_config(keys, value, msg):
-    """Set (or with None remove) a nested key in the personal config.json; one commit in the personal repository."""
-    import json
-    from . import pdata
-    cfg = personal_config()
-    d = cfg
-    for k in keys[:-1]:
-        d = d.setdefault(k, {}) if isinstance(d.get(k, {}), dict) else d.setdefault(k, {})
-    if value is None:
-        d.pop(keys[-1], None)
-        if not d and len(keys) > 1:
-            cfg.pop(keys[0], None)
-    else:
-        d[keys[-1]] = value
-    os.makedirs(data(), exist_ok=True)
-    p = data_file("config.json")
-    tmp = p + ".sisi-tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, sort_keys=True)
-        f.write("\n")
-    os.replace(tmp, p)
-    pdata.commit(msg, ["config.json"])
-
-
 def state_file(name):
     return os.path.join(state(), name)
 

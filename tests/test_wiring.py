@@ -19,6 +19,37 @@ def snapshot(root):
     return snap
 
 
+def remove_hooks(obj):
+    """Test oracle: strip our hook groups from a settings object (the product removes them structurally)."""
+    changed = False
+    hooks = obj.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    for ev, sub in (("SessionStart", "tick"), ("UserPromptSubmit", "prompt"), ("Stop", "gate"), ("SubagentStop", "gate"),
+                    ("PreToolUse", "watch"), ("PostToolUse", "watch")):
+        groups = hooks.get(ev)
+        if not isinstance(groups, list):
+            continue
+        keep, ev_changed = [], False
+        for g in groups:
+            hs = g.get("hooks") if isinstance(g, dict) else None
+            if isinstance(hs, list) and any(wiring._is_ours(h, sub) for h in hs):
+                changed = ev_changed = True
+                rest = [h for h in hs if not wiring._is_ours(h, sub)]
+                if rest:
+                    g = dict(g, hooks=rest)
+                else:
+                    continue
+            keep.append(g)
+        if keep:
+            hooks[ev] = keep
+        elif ev_changed:
+            del hooks[ev]
+    if changed and not hooks:
+        del obj["hooks"]
+    return changed
+
+
 class WiringBase(SisiCase):
     def setUp(self):
         super().setUp()
@@ -127,7 +158,7 @@ class WiringPropertyTests(WiringBase):
         if st is not None and st.strip():
             orig = json.loads(st)
             now = json.loads(self.path(".claude/settings.json") and open(self.path(".claude/settings.json"), "rb").read())
-            wiring.remove_hooks(now)
+            remove_hooks(now)
 
             def norm(d):  # empty hook lists/objects may legitimately disappear in the structural path
                 h = d.get("hooks")

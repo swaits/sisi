@@ -1,10 +1,7 @@
 """Session-start hook. Records the session baseline, checks wiring, prints at most one line. Must be fast."""
-import json, os, sys, time
+import json, os, sys
 
 from . import store
-
-
-MAX_AGE_S = 30 * 86400
 
 
 def _prune(now=None, sid=None):

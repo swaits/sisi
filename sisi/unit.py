@@ -124,18 +124,6 @@ def delegations(project, t0, t1):
         return None
 
 
-def _row_epoch(r):
-    for k in ("ts", "t", "started", "ended", "time"):
-        v = r.get(k)
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            return float(v)
-        if isinstance(v, str):
-            t = harvest.epoch(v)
-            if t is not None:
-                return t
-    return None
-
-
 def policy_version(project, c):
     """Hash of the policies in force: the effective rulebook, the risk tables,
     the enforced checks, and the gate/verify config."""
@@ -412,7 +400,7 @@ def latest_results(c, rows):
             ever_failed.add(cid)
         latest[cid] = {"item": r["item"], "id": cid, "status": st, "reason": r.get("reason"),
                        "duration_s": r.get("duration_s", 0.0), "mandatory": r.get("mandatory", True),
-                       "tier": r.get("tier", "fast"), "ts": r.get("ts")}
+                       "tier": r.get("tier", "fast"), "ts": r.get("ts"), "evidence": r.get("evidence") or ""}
     for x in (c.get("checks") or []) + (c.get("invariants") or []):
         if isinstance(x, dict) and x.get("id") and x["id"] not in latest:
             latest[x["id"]] = {"item": "check", "id": x["id"], "status": "not-run",

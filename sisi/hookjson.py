@@ -234,18 +234,6 @@ def replace_node(text, node, new_text):
     return text[:node.start] + new_text + text[node.end:]
 
 
-def get_path(text, root, keys):
-    node = root
-    for k in keys:
-        if node.kind == "lit" and node.value == "null":
-            return node
-        found = member(node, k)
-        if found is None:
-            return None
-        node = found[1]
-    return node
-
-
 def _dump(v):
     return json.dumps(v, ensure_ascii=False)
 

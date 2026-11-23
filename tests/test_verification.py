@@ -264,7 +264,7 @@ class NothingUnrunIsEverPassedTests(SisiCase):
             if wc:
                 x["when_changed"] = wc
             return x
-        c = {"id": "t", "goal": "g", "assumptions": [], "questions": [], "invariants": [],
+        c = {"id": "t", "goal": "g", "risk": {"profile": "isolated"}, "assumptions": [], "questions": [], "invariants": [],
              "checks": [mk("a", "f_a", None, True), mk("b", "f_b", ["f_b*"], True),
                         mk("c", "f_c", ["nothing/**"], True), mk("d", "f_d", None, False)]}
         self.write_contract(c, d)

@@ -4,27 +4,10 @@ No arguments: print the unit's record and what stands out. With --finding: recor
 finding with a disposition. Only the fields the disposition needs are asked for; search
 terms, topics and short lines are derived by the tool. A finding that resembles an
 existing learning is attached to it as a recurrence candidate, never refused in a loop.
-
-Gate compatibility (gate.py calls these; its control flow is unchanged): TEMPLATE,
-satisfied(), repo_of(), lessons_block().
 """
 import hashlib, json, os, subprocess, sys
 
 from . import learning as L, paths
-
-TEMPLATE = (
-    "Before this turn ends, record the retro for this unit ({n}).\n"
-    "Run `sisi retro` first: it prints the unit's record. Then record at least one finding:\n"
-    "  sisi retro --finding \"<what happened, with the evidence>\" --cause \"<root cause>\" "
-    "--impact value|correctness|time|cost|attention --disposition promote|record|drop\n"
-    "  promote also needs: --change \"<exact improvement>\" --mechanism policy|orchestration|skill|tool|"
-    "infrastructure|verification|knowledge|benchmark --expect \"<observable effect>\" --validate \"<how it will be tested>\"\n"
-    "  record also needs:  --limits \"<where it applies and where it does not>\"\n"
-    "  drop also needs:    --why-not \"<why it is not worth promoting>\"\n"
-    "Generic findings are refused. A finding that resembles a learning in scope here is attached to it as\n"
-    "a recurrence (--new records it as its own); --same-as ID names the learning it repeats.\n"
-    "A parent adopts a subagent's candidate by id: sisi retro --adopt ID."
-)
 
 
 def repo_of(cwd):
@@ -40,39 +23,12 @@ def _git_head(cwd):
         return None
 
 
-def satisfied(repo, since, fp):
-    """Gate seam: was a retro recorded for the current unit of this project?"""
-    try:
-        uid = L.unit_id(repo)
-        if L.findings_for_unit(repo, uid):
-            return True
-        # A finding recorded in this project since the request started also counts:
-        # the gate passes `since` from its own session bookkeeping.
-        pk = L.project_key(repo)
-        return any(f.get("project") == pk and (since is None or str(f.get("ts", "")) >= str(since))
-                   for f in L.load_findings()) if since else False
-    except Exception:
-        return False
-
-
-def lessons_block(query, place, session=None, limit=3, max_chars=600, extra=""):
-    """Gate seam: learnings in scope as background information. Nothing is recorded as shown."""
-    try:
-        text = L.delivery_text(os.getcwd(), str(query))
-        return text[:max_chars] if text else ""
-    except Exception:
-        return ""
-
-
 def unit_summary(project):
     """What `sisi retro` with no arguments prints: the unit's record and what stands out."""
-    try:
-        from . import unit as _unit  # work-unit worker's module, when merged
-        text = _unit.summary_for_retro(project)
-        if text:
-            return text
-    except Exception:
-        pass
+    from . import unit as _unit
+    text = _unit.summary_for_retro(project)
+    if text:
+        return text
     lines = []
     try:
         with open(os.path.join(project, ".sisi", "contract.json"), encoding="utf-8") as f:
@@ -90,13 +46,6 @@ def unit_summary(project):
         if rows:
             lines.append("recent verification: %d result(s) on record, %d failed" % (len(rows), len(fails)))
     except (OSError, ValueError):
-        pass
-    try:
-        from . import delivery
-        d = delivery.current(project) if hasattr(delivery, "current") else None
-        if d:
-            lines.append("delivery: %s" % d)
-    except Exception:
         pass
     head = _git_head(project)
     if head:

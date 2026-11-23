@@ -515,8 +515,9 @@ class StatusTests(UnitCase):
         helptext = self.sisi("help").stdout
         for gone in ("sisi time", "sisi scoreboard", "sisi improve", "sisi backlog"):
             self.assertNotIn(gone, helptext)
-        for kept in ("sisi unit close", "sisi unit pause", "sisi unit show", "sisi status"):
+        for kept in ("sisi unit close|pause|show|list", "sisi status"):
             self.assertIn(kept, helptext)
+        self.assertIn("sisi unit pause", self.sisi("help", "unit").stdout)
         for cmd in ("time", "scoreboard"):
             self.assertNotEqual(self.sisi(cmd).returncode, 0, cmd)
 
