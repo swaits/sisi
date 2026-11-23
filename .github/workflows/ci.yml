@@ -12,7 +12,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python: ["3.9", "3.11", "3.13"]
+        python: ["3.10", "3.11", "3.13"]
+        include:
+          # 3.9 is the stated minimum. The newest Ubuntu image no longer offers it, so it runs on macOS.
+          - os: macos-latest
+            python: "3.9"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

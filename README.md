@@ -171,8 +171,7 @@ Designed but not built (see [docs/design.md](docs/design.md)):
   rule changes, the taste judge, playbooks. The data layer above is groundwork for it; nothing acts on it yet.
 - Blocking gates outside Claude Code, and harvest of transcripts from tools other than Claude Code.
 
-Not verified: macOS (no run yet), Python 3.9 and 3.10 by running the tests (see below), and whether Codex
-and OpenCode obey the rulebook as well as Claude Code does. The library's claims about external tools are mostly
+Not verified: whether Codex and OpenCode obey the rulebook as well as Claude Code does. The library's claims about external tools are mostly
 from their documentation.
 
 ### Python versions
@@ -181,8 +180,8 @@ The minimum is Python 3.9. This was determined by reading, not by running old in
 with `ast.parse(..., feature_version=(3, 8))`, and a search found no `match` statements, no `X | Y` types and no
 walrus operators. The newest standard-library features in use are `shutil.copytree(..., dirs_exist_ok=True)` and
 `sys.pycache_prefix`, both added in 3.8. The stated minimum is 3.9 because 3.8 is end of life and current macOS runners do not
-offer it. The test suite was run here on Python 3.11 and 3.14 and passes. CI is configured for 3.9, 3.11 and 3.13 on
-Linux and macOS; it has not run yet, so 3.9 and 3.10 are unconfirmed.
+offer it. The test suite was run here on Python 3.11 and 3.14 and passes. CI runs the tests on Linux and macOS with Python 3.10, 3.11 and 3.13, and with 3.9 on macOS (the
+newest Ubuntu image no longer offers 3.9).
 
 ## Security
 
