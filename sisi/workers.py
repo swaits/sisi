@@ -1488,7 +1488,8 @@ def session_lines(model, payload=None):
     a missing number never argues against orchestrating. At most one extra line asks for worker
     facts to be researched when they are missing or stale (the caller shows these lines once per
     session). Uses only cached discovery and the record."""
-    if not model or is_subagent_payload(payload or {}):
+    from . import workerid
+    if not model or workerid.is_worker_session(payload or {}, {}, None):
         return []
     records = read_records()
     candidates, _tools = _cached_candidates(records)

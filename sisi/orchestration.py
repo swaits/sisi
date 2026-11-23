@@ -19,7 +19,7 @@ fails open (the caller wraps it): an error here must never hold up the user's to
 """
 import fcntl, json, os, re, shlex, time
 
-from . import paths, store
+from . import paths, store, workerid
 
 EVENTS = "orchestration.jsonl"
 _HOSTS = {}
@@ -221,11 +221,6 @@ def _peek(sid):
         return {}
 
 
-def worker_flag(sid):
-    """Did this session's first prompt open with the brief template's line (it is a worker)?"""
-    return bool(_peek(sid).get("worker"))
-
-
 def routed_kind(sid):
     """The kind in the session's current routing decision (`sisi route` recorded it, here, in the meter), or
     None when there is none or it is older than orchestrate.route_window_min. The one place the decision is read."""
@@ -288,15 +283,6 @@ def _task_done(m, key, ent, text, superseded=False):
     _event(m, m.get("sid"), "delegation-done", run=ent["run"])
 
 
-def brief_line():
-    from . import brief
-    return brief.template().splitlines()[0].strip().lower()
-
-
-def _session_is_worker(m, sess):
-    return bool(m.get("worker") or sess.get("subagent") or os.environ.get("SISI_WORKER_RUN"))
-
-
 def new_turn(sid, cwd=None, prompt=None):
     """A prompt reached the session. A human request starts the meter's turn again (the first one that opens
     with the brief template's line makes the session a worker for good). A host notice about a background worker
@@ -313,7 +299,7 @@ def new_turn(sid, cwd=None, prompt=None):
         if is_notice or failed:
             out = None
             key, ent = _pending_for(m, text) if is_notice else (None, None)
-            if failed and not _session_is_worker(m, sess):
+            if failed and not workerid.is_worker_session({}, sess, m):
                 out = fallback.handle(m, sid, cwd or m.get("project") or os.getcwd(), failed["text"],
                                       own_model=_own_model({}, sess, m), worker=(ent or {}).get("worker"),
                                       run_id=(ent or {}).get("run"))
@@ -323,8 +309,8 @@ def new_turn(sid, cwd=None, prompt=None):
         m["turn"] += 1
         m.update(calls=0, chars=0, ext=0, refusals=0, fails={}, ext_log=[], same_model_ok=False, unavail=None)
         m["prompts"] += 1
-        if m["prompts"] == 1 and text.lstrip()[:200].lower().startswith(brief_line()):
-            m["worker"] = True
+        if m["prompts"] == 1 and "worker" not in m:
+            m["worker"] = workerid.opens_as_brief(text)
     return None
 
 
@@ -445,10 +431,6 @@ def _norm(cmd):
     return " ".join((cmd or "").split())
 
 
-def _is_worker(payload, sess, m):
-    return bool(m.get("worker") or sess.get("subagent") or store.is_subagent_payload(payload))
-
-
 def _transcript_model(path):
     """The model the main thread last answered with, from the tail of the host's transcript (a session-start
     payload need not carry it). None when it cannot be read."""
@@ -512,7 +494,7 @@ def _before(payload, host=None):
     tool, cmd, _ev, cwd, sid = watch.extract(payload)
     host = host or store.tool() or "claude-code"
     hd = host_data(host)
-    if not hd or store.is_subagent_payload(payload):
+    if not hd:
         return {}
     sid = sid or "cwd-" + cwd
     inp = next((payload[k] for k in ("tool_input", "toolInput", "input") if isinstance(payload.get(k), dict)), {})
@@ -522,10 +504,10 @@ def _before(payload, host=None):
         return _dialog_guard(payload, host, sid, cwd)
     if kind == "exempt" and not shell:
         return {}
+    if workerid.session_is_worker(payload, sid, cwd):
+        return {}
     sess = store.load_session(sid)
     with Meter(sid) as m:
-        if _is_worker(payload, sess, m):
-            return {}
         project = _project(m, cwd)
         m["last_tool"] = tool
         if shell:
@@ -572,10 +554,12 @@ def _dialog_guard(payload, host, sid, cwd):
     from . import fallback, workers
     if refuse_style(host) not in ("json-deny", "exit-2"):
         return {}
+    if workerid.session_is_worker(payload, sid, cwd):
+        return {}
     sess = store.load_session(sid)
     with Meter(sid) as m:
         info = m.get("unavail")
-        if not info or _is_worker(payload, sess, m):
+        if not info:
             return {}
         own = _own_model(payload, sess, m)
         project = _project(m, cwd)
@@ -661,7 +645,7 @@ def after(payload, host=None):
     tool, cmd, ev, cwd, sid = watch.extract(payload)
     host = host or store.tool() or "claude-code"
     hd = host_data(host)
-    if not hd or store.is_subagent_payload(payload):
+    if not hd:
         return {}
     sid = sid or "cwd-" + cwd
     inp = next((payload[k] for k in ("tool_input", "toolInput", "input") if isinstance(payload.get(k), dict)), {})
@@ -669,11 +653,11 @@ def after(payload, host=None):
     shell = watch.is_shell(tool, cmd)
     if kind == "exempt" and not shell:
         return {}
+    if workerid.session_is_worker(payload, sid, cwd):
+        return {}
     sess = store.load_session(sid)
     out = {}
     with Meter(sid) as m:
-        if _is_worker(payload, sess, m):
-            return {}
         _project(m, cwd)
         if kind == "delegation":
             return _after_delegation(payload, ev, sid, m, sess, cwd)
@@ -876,7 +860,7 @@ def fallback_sendback(payload, sid):
     sess = store.load_session(sid)
     with Meter(sid) as m:
         info = m.get("unavail")
-        if not info or int(m.get("fallback_asked") or 0) >= FALLBACK_SENDBACKS or _session_is_worker(m, sess):
+        if not info or int(m.get("fallback_asked") or 0) >= FALLBACK_SENDBACKS or workerid.is_worker_session({}, sess, m):
             return None
         own = _own_model({}, sess, m)
         project = m.get("project") or os.getcwd()
