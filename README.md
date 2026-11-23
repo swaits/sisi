@@ -1,9 +1,23 @@
-# sisi
+# sisi: self-improving superintelligence
 
-sisi is a rulebook and a small command-line tool, shared by every AI coding agent on your machine (Claude Code,
-Codex, OpenCode). It makes an agent write down how success will be checked, run those checks before it says it is
-done, and record afterwards how the work could have gone better. It is plain Python with no dependencies, and what
-it learns about you is kept outside the clone, so updating never loses it.
+**The purpose of sisi is that your AI agents get better at working for you on every single turn, in every tool,
+without you doing anything.** Each piece of work ends with the agent recording how it could have gone better.
+That lesson goes into one store that every agent in every tool reads, so the next turn, in any tool, starts
+smarter than the last one. Lessons that keep recurring are strengthened until the mistake cannot happen again.
+
+The direction it pushes is fixed: you state an outcome at a higher and higher level (a function, then a module,
+then a product) and get it back correct, complete, verified by the strongest method available, and fast, with
+fewer and fewer interruptions.
+
+To improve, an agent first has to know whether it succeeded. So sisi also makes an agent write down how success
+will be checked, run those checks before it says it is done, and get sent back when they fail. It is a rulebook
+and a small command-line tool, plain Python with no dependencies. What it learns about you is kept outside the
+clone, so updating never loses it.
+
+**How far along this is.** The name states the goal, not the present. Today every turn is checked, measured and
+ends with a recorded lesson, and lessons are shown to every later session. The part that turns lessons into
+stronger rules and enforced checks on its own is under construction. See [Status](#status) for exactly what
+works.
 
 ## Why it exists
 
@@ -171,8 +185,7 @@ Designed but not built (see [docs/design.md](docs/design.md)):
   rule changes, the taste judge, playbooks. The data layer above is groundwork for it; nothing acts on it yet.
 - Blocking gates outside Claude Code, and harvest of transcripts from tools other than Claude Code.
 
-Not verified: whether Codex and OpenCode obey the rulebook as well as Claude Code does. The library's claims about external tools are mostly
-from their documentation.
+Not verified: whether Codex and OpenCode obey the rulebook as well as Claude Code does. 
 
 ### Python versions
 
