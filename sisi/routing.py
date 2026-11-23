@@ -31,7 +31,12 @@ The rule, in order:
      A worker with a thick bad record (MIN_ATTEMPTS attempts, rate under the bar) for the kind at
      this or an easier difficulty is never capable, so never rides on a benchmark. A thin record
      that already shows repeated rejections also cancels the benchmark prior.
-  5. Among the capable workers the cheapest wins: a flat-rate plan with allowance left first
+  5. Above difficulty 1 a benchmark is a reason to try a worker, not to prefer it to proof: when any
+     usable worker is capable by a judged record for the kind (evidence a, or b from a harder
+     difficulty of the kind), only those compete; the record across all kinds counts as proof only
+     when no usable worker has evidence from the kind; benchmark standing decides only when nobody
+     has a judged record for the request. At difficulty 1 every capable worker competes.
+     Among those the cheapest wins: a flat-rate plan with allowance left first
      (it costs nothing more per task), then the blended price (an unknown price counts as most
      expensive), then the benchmark standing, then load. A user's `prefer` patterns come first.
      If no worker is capable, the weak evidence decides; failing that, the strongest known usable
@@ -401,9 +406,23 @@ def _make_key(stats, kind, difficulty, prefer):
     return key, rate, load_ratio
 
 
-def _select(eligible, assessments):
+def _prefer_judged(capable, assessments, difficulty):
+    """(workers, judged): above difficulty 1 a benchmark standing is a reason to try a worker on low-stakes
+    work, not to prefer it to measured proof. When any capable worker is capable by a judged record for
+    this kind (evidence a, or b from a harder difficulty of the kind), only those compete; failing that,
+    those capable by the judged record across all kinds; failing that, everyone capable."""
+    if difficulty is None or difficulty < 2:
+        return list(capable), False
+    for tiers in (("a", "b-higher"), ("b-all",)):
+        own = [c for c in capable if assessments[c["worker"]]["tier"] in tiers]
+        if own:
+            return own, True
+    return list(capable), False
+
+
+def _select(eligible, assessments, difficulty):
     """(pool, basis): the workers to rank by price, and what put them there.
-    basis is "capable", "weak" (nobody capable; judged evidence at an easier difficulty),
+    basis is "capable" (see _prefer_judged), "weak" (nobody capable; judged evidence at an easier difficulty),
     "strongest" (nobody capable; the strongest known by evidence), "nothing" (nobody has any
     evidence) or "all-bad" (every usable worker has a thick bad record)."""
     live = [c for c in eligible if not assessments[c["worker"]]["bad"]]
@@ -411,7 +430,7 @@ def _select(eligible, assessments):
         return list(eligible), "all-bad"
     capable = [c for c in live if assessments[c["worker"]]["capable"]]
     if capable:
-        return capable, "capable"
+        return _prefer_judged(capable, assessments, difficulty)[0], "capable"
     weak = [c for c in live if assessments[c["worker"]]["weak"]]
     if weak:
         return weak, "weak"
@@ -430,7 +449,7 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
     assessments, best = _assess_all(eligible, stats, kind, difficulty, floors)
     key, rate, load_ratio = _make_key(stats, kind, difficulty, prefer)
 
-    pool, basis = _select(eligible, assessments) if eligible else ([], "none")
+    pool, basis = _select(eligible, assessments, difficulty) if eligible else ([], "none")
     detail = {}
     ranked = sorted(pool, key=key)
 
@@ -485,11 +504,12 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
                           if r is not None and cr is not None and r < cr else
                           "equal on price and load; the choice came first in worker-id order")
             passed.append((w, reason))
-    capable_n = sum(1 for c in eligible if assessments[c["worker"]]["capable"])
+    judged_first = basis == "capable" and _prefer_judged(pool, assessments, difficulty)[1]
+    capable_n = len(pool) if basis == "capable" else 0
     return {"choice": choice, "passed_over": passed, "stats": stats, "author_maker": author_maker,
             "explored": explored["worker"] if explored else None,
             "load_ratios": {c["worker"]: load_ratio(c) for c in candidates},
-            "assessments": assessments, "basis": basis, "capable_count": capable_n,
+            "assessments": assessments, "basis": basis, "capable_count": capable_n, "judged_first": judged_first,
             "best_standing": best, "passed_detail": detail, "floors": floors,
             "kind": kind, "difficulty": difficulty}
 
@@ -503,6 +523,13 @@ def _why_not(a, difficulty, basis, cheaper):
         return ("%saccepted rate below the bar over %d attempts%s" % ("cheaper but " if cheaper else "", a["n"], where),
                 "%d of %d accepted" % (a["good"], a["n"]))
     if basis == "capable":
+        if a["capable"]:
+            if a["tier"] == "b-all":
+                return (lead + "its only judged proof is across other kinds, and a worker with a judged record "
+                        "for this kind is usable", None)
+            return (lead + "capable only by benchmark standing or as an exploration; above difficulty 1 a worker "
+                    "with a judged record is preferred to a benchmark",
+                    ("standing %g" % a["standing"]) if a["standing"] is not None else None)
         if a.get("below"):
             return (lead + "not capable enough for difficulty %d: benchmark standing under the %g needed "
                     "(%g%% of the best usable standing, %g)" % (difficulty, a["needed"], a["floor"], a["best"]),
@@ -553,6 +580,7 @@ def retry_choice(candidates, records, availability, kind, difficulty, rejected, 
     floor = (strength(assessments[rejected]) if mine is not None else
              strength(assess(stats, rejected, kind, difficulty, _standing_of(gone) if gone else None, best, floors)))
     better = [c for c in others if assessments[c["worker"]]["capable"] and strength(assessments[c["worker"]]) > floor]
+    better = _prefer_judged(better, assessments, difficulty)[0]
     if better:
         out.update(choice=sorted(better, key=key)[0], step="better")
         return out
@@ -636,7 +664,8 @@ def explain_choice(result, kind, difficulty):
         if basis in (None, "capable"):
             head = "chose %s: %s" % (choice["worker"], price)
             if result.get("capable_count"):
-                head += "; %d usable worker(s) capable enough" % result["capable_count"]
+                head += "; %d usable worker(s) capable %s" % (
+                    result["capable_count"], "by a judged record" if result.get("judged_first") else "enough")
         else:
             head = "chose %s: none is proven capable for %s at difficulty %s" % (choice["worker"], kind, difficulty)
             head += ("; taken for the strongest known evidence (%s)" % price if basis == "strongest" else

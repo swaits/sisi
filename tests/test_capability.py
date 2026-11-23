@@ -179,11 +179,11 @@ class SufficientCapabilityTests(unittest.TestCase):
         self.assertIsNone(down["choice"])
 
     def test_the_two_scales_are_never_compared(self):
-        """R-7.2-2: V (standing 60, the best) is cheaper than W (standing 50, but 10 of 10 accepted here). At
-        difficulty 3 both are capable (V on 60 against its own best, W on its record) and the cheapest, V, wins. A
-        comparison of W's accepted rate (100) with a standing would make 100 the 'best' and V (60) incapable."""
-        cands = [cand("v-1", cost=1.0, standing=60.0), cand("w-1", cost=5.0, standing=50.0)]
-        recs = attempts("t/w-1", KIND, 3, 10, 0)
+        """R-7.2-2: V (standing 60, the best) is cheaper than W (standing 55, and 5 of 5 accepted: a thin record that
+        proves nothing). At difficulty 3 both clear the floor on standing and the cheaper, V, wins. A comparison of
+        W's accepted rate (100) with a standing would make 100 the 'best' and V (60) incapable."""
+        cands = [cand("v-1", cost=1.0, standing=60.0), cand("w-1", cost=5.0, standing=55.0)]
+        recs = attempts("t/w-1", KIND, 3, 5, 0)
         r = pick(cands, recs, 3)
         self.assertEqual(r["choice"]["worker"], "t/v-1")
         self.assertEqual(r["best_standing"], 60.0)
@@ -199,6 +199,90 @@ class SufficientCapabilityTests(unittest.TestCase):
                     got = pick(scaled, recs, d)
                     self.assertEqual((got["choice"] or {}).get("worker"), (base["choice"] or {}).get("worker"), (d, k))
                     self.assertEqual(got["basis"], base["basis"])
+
+
+class MeasuredProofBeatsABenchmarkTests(unittest.TestCase):
+    """Above difficulty 1 a benchmark standing is a reason to try a worker, not to prefer it to a judged record.
+    The grid's case: a cheap worker whose standing is just over the floor, no record; a dearer one with a thick,
+    good record for exactly this kind and difficulty. R-7.2-2, R-7.2-3, R-7.3-3."""
+
+    def pair(self):
+        # 40 is 60.8 percent of the best usable standing, 65.8: over the difficulty-2 floor of 60
+        return [cand("cheap-1", cost=0.2, standing=40.0), cand("proven-1", cost=4.0, standing=65.8)]
+
+    def test_the_proven_worker_takes_ordinary_work_the_cheap_one_takes_routine_work(self):
+        recs = attempts("t/proven-1", KIND, 2, 21, 0)
+        r2 = pick(self.pair(), recs, 2)
+        self.assertEqual(r2["choice"]["worker"], "t/proven-1")
+        self.assertEqual(r2["assessments"]["t/proven-1"]["tier"], "a")
+        self.assertTrue(r2["assessments"]["t/cheap-1"]["capable"])        # capable by standing, still not preferred
+        self.assertEqual(chosen(self.pair(), recs, 1), "t/cheap-1")
+        self.assertEqual(chosen(self.pair(), attempts("t/proven-1", KIND, 3, 12, 0), 3), "t/proven-1")
+
+    def test_with_the_proven_worker_unavailable_the_cheap_one_is_taken_on_its_standing(self):
+        recs = attempts("t/proven-1", KIND, 2, 21, 0)
+        down = {"t/proven-1": {"retry_at": 5000.0, "reason": "limit"}}
+        r = routing.choose(self.pair(), recs, down, KIND, 2, now=1000.0)
+        self.assertEqual(r["choice"]["worker"], "t/cheap-1")
+        self.assertIn("evidence (c)", routing.explain_choice(r, KIND, 2)[1])
+
+    def test_the_explanation_says_why_the_cheaper_benchmark_worker_was_passed_over(self):
+        recs = attempts("t/proven-1", KIND, 2, 21, 0)
+        r = pick(self.pair(), recs, 2)
+        lines = routing.explain_choice(r, KIND, 2)
+        self.assertIn("evidence (a)", lines[1])
+        self.assertIn("by a judged record", lines[0])
+        self.assertTrue([l for l in lines if "cheap-1" in l and "judged record is preferred to a benchmark" in l], lines)
+
+    def test_the_judged_record_across_all_kinds_counts_only_when_nobody_has_evidence_from_the_kind(self):
+        cands = [cand("pooled-1", cost=1.0), cand("kind-1", cost=5.0)]
+        pooled = attempts("t/pooled-1", "other", 2, 10, 0)
+        self.assertEqual(chosen(cands, pooled, 2), "t/pooled-1")          # nobody has the kind: the pooled record counts
+        both = pooled + attempts("t/kind-1", KIND, 2, 9, 1)
+        r = pick(cands, both, 2)
+        self.assertEqual(r["choice"]["worker"], "t/kind-1")               # the kind's own record outranks it
+        self.assertEqual(r["assessments"]["t/pooled-1"]["tier"], "b-all")
+
+    def test_a_record_from_a_harder_difficulty_of_the_kind_is_the_kinds_own_evidence(self):
+        cands = [cand("cheap-1", cost=0.2, standing=40.0), cand("hard-1", cost=4.0, standing=65.8)]
+        recs = attempts("t/hard-1", KIND, 3, 10, 0)
+        self.assertEqual(chosen(cands, recs, 2), "t/hard-1")
+
+    def test_nobody_with_a_record_means_the_benchmark_decides_as_before(self):
+        self.assertEqual(chosen(self.pair(), [], 2), "t/cheap-1")
+        self.assertEqual(chosen(self.pair(), [], 3), "t/proven-1")        # 40 is under 85 percent of 65.8
+
+    def test_a_worker_with_a_judged_record_is_always_chosen_when_one_is_capable(self):
+        """With at least one usable worker capable by a judged record at difficulty 2 or 3, the choice has a judged
+        record: evidence a or b, from the kind when any usable worker has it."""
+        rng = random.Random(31337)
+        covered = 0
+        for _ in range(400 * ITERS):
+            cands, recs = gen_world(rng)
+            for d in (2, 3):
+                r = pick(cands, recs, d)
+                a = r["assessments"]
+                same_kind = [w for w in a if a[w]["tier"] in ("a", "b-higher")]
+                pooled = [w for w in a if a[w]["tier"] == "b-all"]
+                if not (same_kind or pooled):
+                    continue
+                covered += 1
+                self.assertEqual(r["basis"], "capable")
+                self.assertIn(a[r["choice"]["worker"]]["tier"], ("a", "b-higher") if same_kind else ("b-all",),
+                              (d, a[r["choice"]["worker"]]["tier"]))
+        self.assertGreater(covered, 100)
+
+    def test_difficulty_one_is_unchanged_and_the_cheapest_capable_wins_whatever_the_evidence(self):
+        rng = random.Random(77)
+        for _ in range(200 * ITERS):
+            cands, recs = gen_world(rng)
+            r = pick(cands, recs, 1)
+            if r["basis"] != "capable" or r["explored"]:
+                continue
+            price = lambda c: (routing._price_tier(c), c["cost"] if c.get("cost") is not None else float("inf"))
+            for c in cands:
+                if r["assessments"][c["worker"]]["capable"]:
+                    self.assertGreaterEqual(price(c), price(r["choice"]))
 
 
 def gen_world(rng, kinds=("research", "edit")):
@@ -237,7 +321,8 @@ class CapabilityPropertyTests(unittest.TestCase):
                     self.assertTrue(lo[got["worker"]]["capable"], (d, got["worker"]))
 
     def test_a_capable_worker_that_is_as_good_and_cheaper_is_never_passed_over(self):
-        """R-7.2-2: the choice is the cheapest of the capable workers (a prefer pattern aside, none here)."""
+        """R-7.2-2: the choice is the cheapest of the capable workers that compete (above difficulty 1 those capable
+        by a judged record when there are any); a prefer pattern aside, none here."""
         rng = random.Random(4242)
         for _ in range(300 * ITERS):
             cands, recs = gen_world(rng)
@@ -247,9 +332,11 @@ class CapabilityPropertyTests(unittest.TestCase):
                     continue
                 x = r["choice"]
                 price = lambda c: (routing._price_tier(c), c["cost"] if c.get("cost") is not None else float("inf"))
-                for c in cands:
-                    a = r["assessments"].get(c["worker"])
-                    if a and a["capable"] and c["worker"] != x["worker"]:
+                capable = [c for c in cands if r["assessments"][c["worker"]]["capable"]]
+                competing, _judged = routing._prefer_judged(capable, r["assessments"], d)
+                self.assertIn(x["worker"], [c["worker"] for c in competing])
+                for c in competing:
+                    if c["worker"] != x["worker"]:
                         self.assertGreaterEqual(price(c), price(x), (d, c["worker"], x["worker"]))
 
     def test_a_thick_bad_record_is_never_chosen_over_a_usable_worker_without_one(self):
@@ -500,6 +587,7 @@ class RetryLadderTests(unittest.TestCase):
             rejected_strength = routing.strength(a[rejected])
             stronger = [c for c in cands if a[c["worker"]]["capable"] and c["worker"] != rejected
                         and routing.strength(a[c["worker"]]) > rejected_strength]
+            stronger = routing._prefer_judged(stronger, a, d)[0]
             if r["step"] == "better":
                 self.assertTrue(a[w]["capable"] and routing.strength(a[w]) > rejected_strength)
                 price = lambda c: (routing._price_tier(c), c["cost"] if c.get("cost") is not None else float("inf"))

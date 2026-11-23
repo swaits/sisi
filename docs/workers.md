@@ -67,10 +67,14 @@ kinds at that difficulty or a harder one (the same kind at an easier difficulty 
 used only when no usable worker is capable otherwise); (c) benchmark standing as a prior, compared
 only with other workers' standing: at least 85 percent of the best usable standing for difficulty
 3, 60 percent for difficulty 2, no floor for difficulty 1 (`route.standing_floor` in the config);
-(d) nothing known: difficulty 1 only, as an exploration. A thick bad record at this or an easier
+(d) nothing known: difficulty 1 only, as an exploration. Above difficulty 1 a benchmark is a reason
+to try a worker, not to prefer it to proof: when any usable worker is capable by a judged record for
+the kind (a, or b from a harder difficulty of the kind), only those compete; the record across all
+kinds counts as proof only when nobody has evidence from the kind; standing decides only when nobody
+has a judged record for the request. A thick bad record at this or an easier
 difficulty, or a thin one with repeated rejections, keeps a worker off its benchmark. The two
 scales never meet: a standing is never compared with an accepted rate. Cheapest first among the
-capable: flat-rate allowance before per-use prices (blended input and output), unknown prices
+competing workers: flat-rate allowance before per-use prices (blended input and output), unknown prices
 last, then standing, `prefer` patterns first, then load balancing across allowances. When no
 worker is capable by the evidence, the strongest known usable worker is recommended and `--explain`
 says that none is proven. About one difficulty-1 task in ten goes to a cheaper thin-record worker
