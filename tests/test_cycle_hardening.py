@@ -949,3 +949,28 @@ class Odds(Base):
         text = self.sisi("cycle").stdout
         self.assertLessEqual(len(text), 6000)
         self.assertEqual(text.count("FLAGGED NOT WORKING"), 8)
+
+
+class Snapshot(Base):
+    """R-16-9 (item 4's repair runs inside `sisi update`, whose backup must not fail on git housekeeping)."""
+
+    def test_a_file_that_vanishes_while_the_backup_copies_the_data_folder_is_not_a_failure(self):
+        import shutil, unittest.mock
+        from sisi import lifecycle
+        d = os.path.join(self.tmp, "src")
+        os.makedirs(os.path.join(d, "objects"))
+        for n in ("a", "b"):
+            with open(os.path.join(d, n), "w") as f:
+                f.write(n)
+        with open(os.path.join(d, "objects", "maintenance.lock"), "w") as f:
+            f.write("x")
+        real = shutil.copy2
+
+        def vanishing(src, dst, **kw):
+            if os.path.basename(src) == "b":
+                os.unlink(src)  # removed by another process between listing and copying
+            return real(src, dst, **kw)
+        with unittest.mock.patch("shutil.copy2", vanishing):
+            lifecycle._copy_into(d, os.path.join(self.tmp, "bak"), "src")
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "bak", "src", "a")))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "bak", "src", "objects", "maintenance.lock")))

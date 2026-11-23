@@ -38,7 +38,13 @@ def _copy_into(src, bdir, rel):
     dst = os.path.join(bdir, rel)
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     if os.path.isdir(src):
-        shutil.copytree(src, dst, dirs_exist_ok=True)
+        try:
+            # lock files are not data, and git's background maintenance removes them while we copy
+            shutil.copytree(src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.lock", "gc.pid"))
+        except shutil.Error as e:
+            # a file that vanished while being copied (git housekeeping in the personal repository) is not a failure
+            if not all(isinstance(x, tuple) and "No such file or directory" in str(x[2]) for x in e.args[0]):
+                raise
     elif src.endswith(".db"):
         _sqlite_copy(src, dst)
     else:
