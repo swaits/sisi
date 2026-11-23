@@ -157,7 +157,7 @@ def stamp(extra):
 DEFAULTS = {"gate": {"enabled": True, "budget_s": 120, "max_blocks": 3},
             "verify": {"default_timeout_s": 60, "fast_limit_s": 60},
             "retro": {"required": True},
-            "orchestrate": {"enabled": True, "direct_calls": 6, "direct_chars": 30000, "extension": 10},
+            "orchestrate": {"enabled": True, "direct_calls": 6, "direct_chars": 30000, "extension": 10, "route_window_min": 15},
             "scratch": {"session_max_age_days": 30, "prune_every": 20, "prune_max_delete": 1000,
                         "prune_budget_s": 0.25}}
 

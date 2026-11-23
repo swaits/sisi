@@ -17,6 +17,9 @@ def seed_workers(case, names=("alpha-small", "beta-large")):
                                    "outcome": "accepted", "check": "read"})
     with open(os.path.join(case.data, "worker-prices.json"), "w") as f:
         json.dump({"models": {names[0]: {"cost_per_million_tokens": 1}, names[1]: {"cost_per_million_tokens": 9}}}, f)
+    # a fresh discovery cache (no command-line tool installed): no test ever runs a real tool's model listing
+    with open(os.path.join(case.data, "workers.json"), "w") as f:
+        json.dump({"checked": time.time(), "tools": [{"name": "opencode", "installed": False, "models": [], "usable": False}]}, f)
 
 
 class MeterBase(SisiCase):
@@ -41,9 +44,18 @@ class MeterBase(SisiCase):
         d.update(kw)
         self.sisi("tick", "--tool", "claude-code", stdin=json.dumps(d))
 
-    def prompt(self, text="fix the parser and explain each module in the project", sid=None):
-        return self.sisi("prompt", "--tool", "claude-code", stdin=json.dumps(
+    def prompt(self, text="fix the parser and explain each module in the project", sid=None, route=True):
+        """A prompt reaches the session; by default the agent has also asked `sisi route` (a delegation needs that)."""
+        r = self.sisi("prompt", "--tool", "claude-code", stdin=json.dumps(
             {"session_id": sid or self.sid, "cwd": self.proj, "hook_event_name": "UserPromptSubmit", "prompt": text}))
+        if route and not text.startswith("<task-notification>") and not text.startswith("[failed]") \
+                and not text.startswith("You are a worker"):
+            self.route(sid=sid)
+        return r
+
+    def route(self, kind="research", difficulty="1", *extra, sid=None):
+        return self.sisi("route", "--kind", kind, "--difficulty", difficulty, *extra,
+                         env={"SISI_SESSION_ID": sid or self.sid})
 
     def pre(self, tool="Read", inp=None, **kw):
         """The decoded hook output of one before-tool call: (denied, reason, whole output)."""
@@ -544,8 +556,8 @@ class FallbackTests(MeterBase):
         self.assertIn("2036-11-30 05:00 UTC", ctx)
         self.assertIn("alpha-small", ctx)                              # every prefixed provider is down: host-native
         self.assertIn("host's own subagent tool", ctx)
-        self.assertIn("do not ask the person", ctx.lower().replace("not ask", "not ask"))
-        self.assertIn("one line", ctx)
+        self.assertIn("Do not ask the person, and do not report this to them", ctx)
+        self.assertNotIn("tell them", ctx.lower())                    # worker availability is internal (SPEC 9.7, 17)
         self.assertIn("Cancel or interrupt", ctx)
 
     def test_the_same_through_a_delegation_tool_result(self):
@@ -593,6 +605,7 @@ class FallbackTests(MeterBase):
         self.assertTrue(denied)
         self.assertIn("alpha-small", reason)
         self.assertIn("do not ask the person", reason.lower())
+        self.assertIn("do not report this to them", reason.lower())
         self.assertFalse(self.pre("AskUserQuestion", {"questions": [{"question": "something else"}]})[0])
         self.assertEqual([e["why"] for e in self.events("refusal")], ["question-after-unavailable"])
 
@@ -617,6 +630,8 @@ class FallbackTests(MeterBase):
                                                    "Your usage window resets at " + FUTURE, use_id="zz")))
         self.assertIn("No other worker is usable now", ctx)
         self.assertIn("earliest due: alpha-small at 2036-11-30 05:00 UTC", ctx)
+        self.assertIn("only if what they receive, or when, changes", ctx)      # the one case the person hears of it
+        self.assertIn("not about the workers", ctx)
         self.assertLessEqual(len(ctx.splitlines()), 6)
         self.assertFalse(self.pre("AskUserQuestion", {"questions": []})[0])
 

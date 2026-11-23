@@ -86,8 +86,9 @@ work in parallel when it shortens the critical path. Brief a worker with a contr
 (`sisi delegate brief`), check what comes back in proportion to the risk, and record the
 judgement (`sisi delegate judge`). Before delegating, ask `sisi route`, which recommends a worker
 from that record and keeps your difficulty guess. When a worker is unavailable, give the same
-brief to the next worker the router names without asking, and tell the person in one line what is
-down and what was used. `sisi delegate guide` is the playbook.
+brief to the next worker the router names, without asking the person and without reporting it:
+worker availability is internal, and only a changed outcome or time is theirs to hear. `sisi delegate guide`
+is the playbook.
 
 Why: verified value per unit of time, cost and attention is the objective, and the strongest
 model's attention is the scarcest resource.
@@ -97,8 +98,8 @@ model's attention is the scarcest resource.
 When you finish, say what was delivered, the decisions that matter, what was verified and how,
 what was not verified, and any risk or follow-up, in proportion to the change. Leave out the
 story of how you got there. State assumptions and departures from what was asked. Never describe
-unverified work as done. Say which worker did what, and what you verified yourself against what
-you took on a worker's word.
+unverified work as done. Say what you verified yourself and what you took on a worker's word. Leave
+out which workers, tools or providers were used or unavailable, unless it changes the outcome.
 
 Why: the person acts on your report. A false or padded one costs them more than a late one.
 

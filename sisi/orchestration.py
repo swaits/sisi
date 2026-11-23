@@ -34,7 +34,8 @@ def cfg():
         except (TypeError, ValueError):
             return default
     return {"enabled": bool(c.get("enabled", True)), "direct_calls": max(1, num("direct_calls", 6)),
-            "direct_chars": max(1, num("direct_chars", 30000)), "extension": max(1, num("extension", 10))}
+            "direct_chars": max(1, num("direct_chars", 30000)), "extension": max(1, num("extension", 10)),
+            "route_window_min": max(1, num("route_window_min", 15))}
 
 
 def hosts():
@@ -336,6 +337,27 @@ def refusal_text(m, c, picks, why="budget", detail=""):
     return "\n".join(lines)
 
 
+KINDS = ("research", "implementation", "review", "test", "docs", "debug")
+
+
+def route_text():
+    return ("sisi: ask the router before delegating (rule 6; it also records your difficulty guess). Run "
+            "`sisi route --kind K --difficulty N` first: K is one of %s; N is 1 routine, 2 ordinary, 3 hard. "
+            "This delegation was not started; start it again after." % ", ".join(KINDS))
+
+
+def record_route(kind, difficulty, worker, cwd, retry_of=None):
+    """`sisi route` ran: the session's routing decision (kind, difficulty guess, recommended worker, time). Quiet
+    when no session can be named."""
+    sid = find_session(cwd)
+    if not sid:
+        return
+    with Meter(sid) as m:
+        m["route"] = {"kind": kind, "difficulty": difficulty, "worker": worker, "ts": time.time(), "retry_of": retry_of}
+        m["route_asked"] = False
+        _event(m, sid, "route", kind=kind, difficulty=difficulty, worker=worker)
+
+
 def repeat_text(key, n):
     return ("sisi: `%s` has failed %d times in a row and no file has changed since, so running it again will not "
             "produce new information (rule 5). Diagnose why it fails, or change the approach; this one repeat is "
@@ -429,7 +451,22 @@ def _own_model(payload, sess, m=None):
 
 
 def before(payload, host=None):
-    """{"deny": text} to refuse the call, {"context": text} for advice, {} otherwise."""
+    """{"deny": text} to refuse the call, {"context": text} for advice, {} otherwise. On a host whose before-tool
+    hook cannot refuse (canon/orchestration-tools.json), a refusal is recorded as not made and the call goes on."""
+    out = _before(payload, host)
+    if out.get("deny") and refuse_style(host or store.tool() or "claude-code") not in ("json-deny", "exit-2"):
+        try:
+            from . import watch
+            _t, _c, _e, cwd, sid = watch.extract(payload)
+            with Meter(sid or "cwd-" + cwd) as m:
+                _event(m, sid or "cwd-" + cwd, "unrefused", why="the host cannot refuse")
+        except Exception as e:
+            store.log_error("orchestration-unrefused", e)
+        return {}
+    return out
+
+
+def _before(payload, host=None):
     c = cfg()
     if not c["enabled"]:
         return {}
@@ -532,12 +569,25 @@ def _before_delegation(payload, hd, tool, inp, host, sid, sess, m, c, cwd):
             _event(m, sid, "refusal", why="delegation-model", tool=tool)
             return {"deny": refusal_text(m, c, picks, why="delegation", detail=problem)}
     from . import brief, workers
-    run_id = uuid.uuid4().hex[:8]
     now = time.time()
+    route = m.get("route")
+    if route and now - float(route.get("ts") or 0) > c["route_window_min"] * 60:
+        route = None  # a decision from long ago is no decision
+    if route is None and not m.get("route_asked"):
+        m["route_asked"] = True  # once: the next delegation goes through even without a decision
+        m["refusals"] += 1
+        _event(m, sid, "refusal", why="route", tool=tool)
+        return {"deny": route_text()}
+    run_id = uuid.uuid4().hex[:8]
     worker = model or own or "(inherited)"
+    against = None
+    if route and route.get("worker"):
+        against = not workers.same_model(worker, route["worker"])
     try:
-        workers.append_record({"kind": "run", "id": run_id, "ts": round(now), "type": None, "difficulty": None,
-                               "worker": worker, "model": model or own, "tool": workers.host_tool(), "cwd": m.get("project") or cwd,
+        workers.append_record({"kind": "run", "id": run_id, "ts": round(now),
+                               "type": (route or {}).get("kind"), "difficulty": (route or {}).get("difficulty"),
+                               "route_worker": (route or {}).get("worker"), "chosen_against_route": against,
+                               "retry_of": (route or {}).get("retry_of"), "worker": worker, "model": model or own, "tool": workers.host_tool(), "cwd": m.get("project") or cwd,
                                "session": sid, "started": round(now), "ended": None, "minutes": None,
                                "status": "pending", "origin": "hook", "tokens": None, "tokens_class": "unavailable"})
     except OSError as e:
@@ -546,9 +596,12 @@ def _before_delegation(payload, hd, tool, inp, host, sid, sess, m, c, cwd):
     m["pending"][key] = {"run": run_id, "t0": now, "worker": worker}
     m["unavail"] = None  # the agent is falling back (or delegating anew): nothing left to refuse a question for
     _event(m, sid, "delegation", run=run_id, worker=worker)
-    lines = ["sisi: delegation recorded as run %s. When it returns, judge it: `sisi delegate judge %s --outcome "
-             "accepted|rejected --check read|tests|diffstat|review|none --type KIND --difficulty 1|2|3`."
-             % (run_id, run_id)]
+    known = bool(route and route.get("kind") and route.get("difficulty"))
+    lines = ["sisi: delegation recorded as run %s%s. When it returns, judge it: `sisi delegate judge %s --outcome "
+             "accepted|rejected --check read|tests|diffstat|review|none%s`."
+             % (run_id, (" (%s, difficulty %s%s)" % (route["kind"], route["difficulty"],
+                                                    "; you chose %s over the router's %s" % (worker, route["worker"]) if against else ""))
+                if known else "", run_id, "" if known else " --type KIND --difficulty 1|2|3")]
     if isinstance(text, str):
         lines += ["sisi brief advice: " + a for a in brief.check(text)]
     return {"context": "\n".join(lines)}

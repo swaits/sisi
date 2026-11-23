@@ -1556,9 +1556,11 @@ def _down_lines(down, limit=3):
     return ["down now: %s%s" % ("; ".join(shown), more)]
 
 
-def _route_setup(args):
-    kind = _opt(args, "--kind")
+def _route_setup(args, derived=None):
+    kind = _opt(args, "--kind") or (derived or {}).get("kind")
     difficulty = _opt(args, "--difficulty")
+    if difficulty is None and derived:
+        difficulty = derived.get("difficulty")
     if not kind or difficulty is None:
         return None
     try:
@@ -1570,10 +1572,99 @@ def _route_setup(args):
     return kind, difficulty
 
 
+def retry_context(retry_id, records=None):
+    """What `sisi route --retry-of ID` needs from the judged record: the attempt (ID is an attempt id, or the
+    id of a run that was judged), its kind and difficulty, and how many results in the retry chain behind it
+    were rejected in a row, newest first, with the workers that produced them. None when ID is unknown or
+    its run is not judged yet."""
+    records = read_records() if records is None else records
+    attempts = {r["id"]: r for r in records if r.get("kind") == "attempt" and r.get("id")}
+    by_run = {r["run_id"]: r for r in attempts.values() if r.get("run_id")}
+    a = attempts.get(retry_id) or by_run.get(retry_id)
+    if a is None:
+        return None
+    rejected, seen, cur = [], set(), a
+    while cur is not None and cur["id"] not in seen:
+        seen.add(cur["id"])
+        if cur.get("outcome") != "rejected":
+            break
+        rejected.append(cur.get("worker"))
+        cur = attempts.get(cur.get("retry_of"))
+    return {"attempt": a, "kind": a.get("type"), "difficulty": a.get("difficulty"), "rejected": rejected}
+
+
+def stronger_choice(candidates, records, kind, difficulty, excluded, prefs, now=None):
+    """The next worker up after rejections: not one already rejected in the chain, usable and allowed as in any
+    route, then the strongest by the judged record or the stored benchmark standing; a host-native worker ahead
+    of the unknown when nothing is known. None when nobody else is usable."""
+    now = time.time() if now is None else now
+    pool, ordered = [c for c in candidates if c["worker"] not in excluded], []
+    while pool:
+        c = routing.choose(pool, records, read_availability(), kind, difficulty, now=now,
+                           avoid=prefs["avoid"], prefer=prefs["prefer"])["choice"]
+        if c is None:
+            break
+        ordered.append(c)
+        pool = [x for x in pool if x is not c]
+    scores = strength_scores(candidates, records)
+
+    def key(ic):
+        i, c = ic
+        known = scores.get(c["worker"])
+        return (0, -known[0], i) if known else (1, 0 if c.get("host_native") else 1, i)
+    return min(enumerate(ordered), key=key)[1] if ordered else None
+
+
+RETRY_BRIEF_LINE = ("retry: most failures are brief failures. Improve the brief (what was missing, what is known now, "
+                    "the exact failure) and check it with `sisi delegate check`, then give it to this same worker once more.")
+
+
+def _route_retry(args, ctx, kind, difficulty, candidates, records, prefs):
+    """Print the pick for a retry and return (worker or None). The first rejection keeps the worker and asks for
+    a better brief; a second rejection in the chain moves up."""
+    rejected = ctx["rejected"]
+    same = next((c for c in candidates if c["worker"] == rejected[0]), None) if len(rejected) == 1 else None
+    if same is not None:
+        usable = routing.choose([same], records, read_availability(), kind, difficulty, now=time.time(),
+                                avoid=prefs["avoid"], prefer=prefs["prefer"])["choice"]
+        if usable is not None:
+            print(usable["worker"])
+            print("mechanism: %s" % mechanism_for(usable))
+            print(RETRY_BRIEF_LINE)
+            return usable
+    pick = stronger_choice(candidates, records, kind, difficulty, set(rejected), prefs)
+    if pick is None:
+        print("no stronger usable worker for kind %s at difficulty %d after rejections by %s"
+              % (kind, difficulty, ", ".join(sorted(set(rejected)))))
+        return None
+    print(pick["worker"])
+    print("mechanism: %s" % mechanism_for(pick))
+    print("stronger: %s was rejected%s, so it is excluded; this is the next one up by the judged record or benchmark standing."
+          % (", ".join(sorted(set(rejected))), " twice in this chain" if len(rejected) > 1 else ""))
+    return pick
+
+
+def route_decision(kind, difficulty, worker, retry_of=None):
+    """Write the routing decision for the session this command runs in (see orchestration.record_route)."""
+    try:
+        from . import orchestration
+        orchestration.record_route(kind, difficulty, worker, os.getcwd(), retry_of)
+    except Exception as e:
+        store.log_error("route-decision", e)
+
+
 def cmd_route(args=()):
-    setup = _route_setup(args)
+    retry_id = _opt(args, "--retry-of")
+    ctx = None
+    if retry_id:
+        ctx = retry_context(retry_id)
+        if ctx is None:
+            print("sisi route: no judged delegation with id %s (judge the run first: `sisi delegate judge`)" % retry_id,
+                  file=sys.stderr)
+            return 1
+    setup = _route_setup(args, ctx)
     if setup is None:
-        print("usage: sisi route --kind K --difficulty 1|2|3 [--review-of WORKER] [--explain]")
+        print("usage: sisi route --kind K --difficulty 1|2|3 [--review-of WORKER] [--explain] | --retry-of ID")
         return 1
     kind, difficulty = setup
     records = read_records()
@@ -1581,6 +1672,10 @@ def cmd_route(args=()):
     prefs = effective_prefs(kind, difficulty, os.getcwd())
     everyone = candidates
     candidates, limited = apply_limits(candidates, prefs)
+    if ctx is not None and ctx["rejected"]:
+        pick = _route_retry(args, ctx, kind, difficulty, candidates, records, prefs)
+        route_decision(kind, difficulty, pick["worker"] if pick else None, ctx["attempt"]["id"])
+        return 0 if pick else 1
     result = routing.choose(candidates, records, read_availability(), kind, difficulty,
                             review_of=_opt(args, "--review-of"), now=time.time(),
                             avoid=prefs["avoid"], prefer=prefs["prefer"])
@@ -1588,6 +1683,7 @@ def cmd_route(args=()):
     by_worker = {c["worker"]: c for c in everyone}
     down = _down_now(read_availability(), time.time())
     if result["choice"] is None:
+        route_decision(kind, difficulty, None, ctx["attempt"]["id"] if ctx else None)
         print("no usable worker for kind %s at difficulty %d" % (kind, difficulty))
         for line in _down_lines(down):
             print(line)
@@ -1598,6 +1694,7 @@ def cmd_route(args=()):
             for line in routing.explain_choice(result, kind, difficulty)[1:]:
                 print(line)
         return 1
+    route_decision(kind, difficulty, result["choice"]["worker"], ctx["attempt"]["id"] if ctx else None)
     print(result["choice"]["worker"])
     print("mechanism: %s" % mechanism_for(result["choice"]))
     for line in _down_lines(down):
@@ -1778,7 +1875,8 @@ def _cmd_judge(args):
                "minutes": run.get("minutes"), "tokens": run.get("tokens"), "tokens_class": run.get("tokens_class"),
                "cost": run.get("cost"), "cost_class": run.get("cost_class"),
                "started": run.get("started"), "ended": run.get("ended"),
-               "retry_of": run.get("retry_of"), "note": None}
+               "retry_of": run.get("retry_of"), "note": None,
+               "route_worker": run.get("route_worker"), "chosen_against_route": run.get("chosen_against_route")}
         if _opt(args, "--type") or _opt(args, "--kind"):  # a run the host started carries no kind until judged
             rec["type"] = _opt(args, "--type") or _opt(args, "--kind")
         if _opt(args, "--difficulty") in ("1", "2", "3"):
@@ -1820,6 +1918,9 @@ def _cmd_judge(args):
     # it never marks the worker unavailable.
     clear_down(rec["worker"])
     print(rec["id"])
+    if rec["outcome"] == "rejected":
+        print("next: `sisi route --retry-of %s` names the worker for the retry (the same one with a better brief first, "
+              "a stronger one after a second rejection)" % rec["id"])
     return 0
 
 

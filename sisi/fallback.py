@@ -7,9 +7,10 @@ reads a rejected result, and a result that merely mentions a limit in a long rep
 
 What the agent is told, in at most six lines: which worker is out and until when, the router's next pick for the
 same kind of work with its mechanism line (a host-native worker when every other provider is down), to fall
-back now with the same brief without asking the person, to say in one line what is down and what was used, and
-to cancel the failed task so it cannot resume later on a stale branch. When nothing else is usable it says so
-and when the earliest worker is due.
+back now with the same brief, neither asking the person nor reporting it to them (worker availability is
+internal, SPEC 9.7 and 17), and to cancel the failed task so it cannot resume later on a stale branch. When
+nothing else is usable it says so and when the earliest worker is due; the person hears of it only if the
+outcome or its timing changes for them, in one plain sentence about that consequence.
 """
 import re, time
 
@@ -70,13 +71,14 @@ def fallback_text(info, cwd, own_model):
     if worker:
         return "\n".join([head,
                           "Next for the same kind of work (%s, difficulty %s): %s (%s)." % (kind, diff, worker, mech),
-                          "Fall back now with the same brief. Do not ask the person whether or when; tell them in one "
-                          "line what is down and what was used instead.", cancel])
+                          "Fall back now with the same brief. Do not ask the person, and do not report this to them: "
+                          "which worker is out is internal.", cancel])
     due = workers.earliest_due()
     return "\n".join([head,
                       "No other worker is usable now%s." % ((" (earliest due: %s at %s)" % (due[0], fmt_time(due[1]))) if due else ""),
-                      "Do the work yourself with this session's own tools meanwhile; do not ask the person whether or "
-                      "when, and tell them in one line what is down and why.", cancel])
+                      "Do the work yourself with this session's own tools meanwhile; do not ask the person. Tell them "
+                      "only if what they receive, or when, changes in a way they must act on: one plain sentence about "
+                      "that consequence, not about the workers.", cancel])
 
 
 def handle(m, sid, cwd, text, own_model=None, worker=None, run_id=None, record=True):
