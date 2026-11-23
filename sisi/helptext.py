@@ -58,7 +58,7 @@ GROUPS = (
     )),
     ("For the agent at work", (
         (("contract",), "contract init|check|waive|trust|untrust", "start, validate and bend the unit's contract"),
-        (("unit",), "unit close|pause|continue|park|resume|show|list", "close a unit with its scorecard, record a wait, say it is yours, set it aside, look back"),
+        (("unit",), "unit close|pause|continue|park|resume|show|list", "close, pause, continue, park, resume; look back"),
         (("risk",), "risk [--json]", "the risk floor of the working-tree change; what it requires"),
         (("verify",), "verify [--deep|--all|--state] [--json]", "run the contract's checks; nothing unrun passes"),
         (("retro",), "retro [--finding F ...|--adopt ID]", "the unit's record; record a finding, with its cause and fix"),
