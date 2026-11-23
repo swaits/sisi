@@ -51,12 +51,14 @@ The rule, in order:
      unknown is never compared.
   8. Load balancing: within the same price tier and price, the worker that has taken the least work
      relative to its remaining allowance goes first (recorded uses divided by allowance left, an
-     unknown allowance counting as half). Ties break on the worker id.
+     unknown allowance counting as half). Ties break on the more recently released model (a recorded
+     release date, else the version inside one maker's class), then on the worker id.
 
 Candidates reach here already restricted to workers with a judged record, a known price or a
 benchmark standing (see workers.routable_candidates); on a cold start none qualifies and every
 usable worker is offered, with the explanation saying so.
 """
+import functools
 import re
 
 from . import modelid
@@ -187,7 +189,9 @@ def _versions_newest_first(models):
     """[[workers of one version], ...] from the newest version to the oldest (one model through several
     providers is one version)."""
     out = []
-    for d in sorted(models, key=lambda d: (modelid.recency_key(_lineage(d)), d["worker"])):
+    ordered = sorted(models, key=lambda d: d["worker"])
+    ordered.sort(key=functools.cmp_to_key(lambda a, b: modelid.compare(_lineage(b), _lineage(a))))
+    for d in ordered:
         if out and modelid.compare(_lineage(out[-1][0]), _lineage(d)) == 0:
             out[-1].append(d)
         else:
@@ -421,7 +425,7 @@ def superseded_by(pool, opts=None):
         for c in group:
             newer = [d for d in group if modelid.compare(_lineage(d), _lineage(c)) > 0]
             if newer:
-                out[c["worker"]] = min(newer, key=lambda d: (modelid.recency_key(_lineage(d)), d["worker"]))["worker"]
+                out[c["worker"]] = _versions_newest_first(newer)[0][0]["worker"]
     return out
 
 
@@ -491,7 +495,26 @@ def _assess_all(eligible, stats, kind, difficulty, floors):
              for c in eligible}, best)
 
 
-def _make_key(stats, kind, difficulty, prefer):
+def recency_order(candidates):
+    """{worker: (recorded release date as days, negated; position among the versions of its class, newest first)}.
+    Smaller sorts first, so the more recently released model goes first; what cannot be compared is (0, 0).
+    A recorded release date counts across makers; the version only inside one maker's class."""
+    out = {c["worker"]: (0, 0) for c in candidates}
+    groups = {}
+    for c in candidates:
+        l = _lineage(c)
+        if l and l.get("key"):
+            groups.setdefault(tuple(l["key"]), []).append(c)
+    for group in groups.values():
+        for i, level in enumerate(_versions_newest_first(group)):
+            for d in level:
+                out[d["worker"]] = (-modelid.days(_lineage(d).get("released")), i)
+    return out
+
+
+def _make_key(stats, kind, difficulty, prefer, recency=None):
+    recency = recency or {}
+
     def rate(c):
         cell = _cell(stats, c["worker"], kind, difficulty)
         return (cell["good"] / cell["n"]) if cell["n"] else None
@@ -515,9 +538,10 @@ def _make_key(stats, kind, difficulty, prefer):
                 standing_key(c),
                 load_ratio(c),
                 -(r if r is not None else -1.0),
+                recency.get(c["worker"], (0, 0)),
                 c["worker"])
 
-    return key, rate, load_ratio
+    return key, rate, load_ratio, recency
 
 
 def _prefer_judged(capable, assessments, difficulty):
@@ -562,7 +586,7 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
     eligible, passed, stats, author_maker, superseded = _prepare(candidates, records, availability, now, exclude,
                                                                  avoid, review_of, opts)
     assessments, best = _assess_all(eligible, inherit_stats(candidates, stats, opts), kind, difficulty, floors)
-    key, rate, load_ratio = _make_key(stats, kind, difficulty, prefer)
+    key, rate, load_ratio, recency = _make_key(stats, kind, difficulty, prefer, recency_order(eligible))
 
     pool, basis = _select(eligible, assessments, difficulty) if eligible else ([], "none")
     detail = {}
@@ -617,6 +641,8 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
                 r, cr = rate(c), rate(choice)
                 reason = ("lower measured accepted rate for this kind and difficulty"
                           if r is not None and cr is not None and r < cr else
+                          "equal on price and load; the choice is the more recently released"
+                          if recency.get(choice["worker"], (0, 0)) < recency.get(c["worker"], (0, 0)) else
                           "equal on price and load; the choice came first in worker-id order")
             passed.append((w, reason))
     judged_first = basis == "capable" and _prefer_judged(pool, assessments, difficulty)[1]
@@ -695,7 +721,7 @@ def retry_choice(candidates, records, availability, kind, difficulty, rejected, 
                                                                   avoid, review_of, opts)
     eff = inherit_stats(candidates, stats, opts)
     assessments, best = _assess_all(eligible, eff, kind, difficulty, floors)
-    key, _rate, _load = _make_key(stats, kind, difficulty, prefer)
+    key, _rate, _load, _recency = _make_key(stats, kind, difficulty, prefer, recency_order(eligible))
     out = {"choice": None, "step": None, "passed_over": passed, "stats": stats, "author_maker": author_maker,
            "assessments": assessments, "best_standing": best, "kind": kind, "difficulty": difficulty,
            "rejected": rejected, "rejections": rejections}

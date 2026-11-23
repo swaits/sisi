@@ -907,7 +907,8 @@ def facts_line(now=None):
     return ("sisi: %s: ask a fast, cheap worker to research current prices and "
             "software-engineering benchmark standing for the workers found here (`sisi workers`) "
             "and record each with its source: `sisi workers fact WORKER --price N --source S` "
-            "and `sisi workers fact WORKER --standing N --source S`. Until then routing "
+            "and `sisi workers fact WORKER --standing N --source S`; also the release date of each "
+            "worker that lacks one: `sisi workers fact WORKER --released YYYY-MM-DD --source S`. Until then routing "
             "goes by the judged record alone." % what)
 
 

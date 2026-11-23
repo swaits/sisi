@@ -81,7 +81,9 @@ wrong work.
 
 You own the whole outcome; workers are specialists whose reports are evidence for you to judge.
 Give each task to the least expensive worker that is capable enough, counting rework as cost,
-and keep your own context for judgement. Use the host's own delegation first. Run independent
+and keep your own context for judgement. Always use the most recently released model of a class
+when it is usable, never an older version of it; classify a maker's models before comparing them,
+because different classes are different things. Use the host's own delegation first. Run independent
 work in parallel when it shortens the critical path. Brief a worker with a contract
 (`sisi delegate brief`), check what comes back in proportion to the risk, and record the
 judgement (`sisi delegate judge`). `sisi route` recommends a worker from that record, and

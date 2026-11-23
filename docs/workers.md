@@ -82,6 +82,34 @@ instead, so cheaper options gather evidence. The choice is deterministic for one
 `--explain` prints one line for the evidence behind the choice (which of a to d, with the numbers),
 one per group of workers passed over as not capable enough, and names an exploration or a fallback.
 
+## Newest version of a class, always
+
+Newer models are almost always better and almost always cheaper, so `sisi route` always uses the
+most recently released model of a class that is usable, and never an older version of it. A
+model's identity is its maker, its line and its class, read from the id by `sisi/modelid.py`
+(version numbers compared numerically, a date in the id as a date, tier words such as a "flash" or
+"mini" from `canon/model-words.json`) and overridden by what the lead agent records:
+`sisi workers fact WORKER --class NAME [--family NAME] [--maker M] [--released YYYY-MM-DD] --source S`.
+A recorded release date beats version numbers for recency. The same model through two providers is
+one model: if its newest version is usable through any provider, older versions do not compete
+through any provider, and the existing cost comparison picks the provider. There is no exception for
+a better old record or a cheaper old plan. The older version competes again only while the newer is
+unusable (marked down, allowance spent, avoided by the user, or limited away), or when its class is
+unknown. A newer model with a thick bad record is not replaced by its older version either: routing
+moves to another class or maker by the usual rules. Different classes are different things and never
+supersede each other. A class read from the id with confidence takes part at once
+(`route.supersede_guessed`, default true; false lets only recorded classes take part); a class that
+cannot be read (no version, or a word the data does not know) never does, and `sisi route` adds one
+line asking the lead agent to record it.
+
+A new version starts from its predecessor's judged record: a model with no thick record of its own
+for a kind and difficulty inherits, as evidence, the thick record of the closest older version of
+its maker and class (one version back at a time), named in `--explain`. It ranks below the model's
+own record and above a benchmark, counts as a judged record for the rule that proof comes before
+benchmark, stops once the model has a thick record of its own, and a predecessor's bad record is not
+inherited. A discovered model with no data of its own is routable when its predecessor is. Where the
+arithmetic falls back to a stable tie-break, the more recently released model wins first.
+
 ## Costs and failures
 
 Tokens and cost are captured where the worker's output reports them, and marked `unavailable`

@@ -192,14 +192,10 @@ def compare(a, b):
     return 0
 
 
-def recency_key(l):
-    """A tuple that sorts the more recently released first, for tie-breaks: recorded release date, then version
-    inside one line (the line first, so versions of different lines are never compared), then the id's date."""
-    if not l:
-        return (0, 0, "", (), 0)
-    rel = l.get("released") or ""
-    days = int(rel[0:4]) * 372 + int(rel[5:7]) * 31 + int(rel[8:10]) if len(rel) >= 10 and rel[:4].isdigit() else 0
-    ver = tuple(-x for x in (tuple(l.get("version") or ()) + (0,) * 6)[:6])
-    d = l.get("date") or ""
-    dd = int(d[0:4]) * 372 + int(d[5:7]) * 31 + int(d[8:10]) if len(d) >= 10 else 0
-    return (0 if l.get("alias") else 1, -days, "|".join(l.get("key") or ()), ver, -dd)
+def days(date):
+    """A YYYY-MM-DD date as a number of days that sorts correctly (months of 31 days: only the order matters); 0 when
+    there is no date."""
+    d = str(date or "")
+    if len(d) >= 10 and d[:4].isdigit() and d[5:7].isdigit() and d[8:10].isdigit():
+        return int(d[0:4]) * 372 + int(d[5:7]) * 31 + int(d[8:10])
+    return 0

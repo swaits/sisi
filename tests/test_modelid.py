@@ -112,7 +112,6 @@ class ParseTests(unittest.TestCase):
             self.assertEqual(modelid.compare(a, b), -modelid.compare(b, a), ident)
             if a["source"] == "unknown":
                 self.assertIsNone(a["key"])
-            modelid.recency_key(a)
 
 
 if __name__ == "__main__":
