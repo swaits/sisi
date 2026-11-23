@@ -36,8 +36,8 @@ def data_file(*parts):
 
 
 def personal(name):
-    """A personal file. Until `sisi migrate` has moved it, a copy still sitting in the state dir is used,
-    so an installation that has not been migrated yet keeps working."""
+    """A personal file. Until `sisi update` has moved it, a copy still sitting in the state dir is used,
+    so an installation that has not been updated yet keeps working."""
     p = data_file(name)
     if not os.path.exists(p):
         old = state_file(name)
@@ -139,5 +139,5 @@ def notes_dir():
 
 
 def legacy_notes_dir():
-    """Where earlier versions wrote field notes: inside the product. Read only, by `sisi migrate`."""
+    """Where earlier versions wrote field notes: inside the product. Read only, by `sisi update`."""
     return os.path.join(REPO, "notes")

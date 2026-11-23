@@ -30,22 +30,14 @@ def is_source(d):
     return all(os.path.exists(os.path.join(d, p)) for p in ("bin/sisi", "sisi/cli.py", "canon/core.md"))
 
 
-def dev_source():
-    s = (paths.personal_config().get("developer") or {}).get("source")
-    return s if isinstance(s, str) and s else None
-
-
 def source(explicit=None):
-    """The source folder: the one given, else the folder sisi runs from (unless that is a release), else the
-    developer setting."""
+    """The source folder: the one given, else the product folder of the launcher that is running."""
     if explicit:
         s = os.path.abspath(os.path.expanduser(explicit))
     elif not in_lib(paths.REPO):
         s = paths.REPO
     else:
-        s = dev_source()
-        if not s:
-            raise ReleaseError("no source folder: run this from the source folder, or set it with `sisi dev on PATH`")
+        raise ReleaseError("no source folder: run this from the source folder (bin/sisi release from the clone)")
     if not is_source(s):
         raise ReleaseError("%s does not look like the sisi source folder (bin/sisi, sisi/, canon/core.md)" % s)
     return s
@@ -188,10 +180,13 @@ def prune(keep=KEEP):
 
 
 def _rebuild_rulebook():
-    """Regenerate the rulebook with the code that is now live (not the code that is switching it)."""
-    launcher = os.path.join(paths.current_link(), "bin", "sisi")
-    r = subprocess.run([sys.executable, launcher, "build-canon"], capture_output=True, text=True)
-    return (r.stdout + r.stderr).strip(), r.returncode
+    """Regenerate the rulebook with the code that is now live."""
+    try:
+        from . import overlay
+        b = overlay.build_canon()
+        return ("%s: %d lines, %d characters" % (b["path"], b["lines"], b["chars"])), 0
+    except Exception as e:
+        return str(e), 1
 
 
 def run_checks(src, deep=False):
@@ -252,40 +247,11 @@ def cmd_rollback(args):
     return 0 if ok else 1
 
 
-# ---- developer mode ---------------------------------------------------------
-def cmd_dev(args):
-    sub = args[0] if args else "status"
-    if sub == "on":
-        cand = args[1] if len(args) > 1 else (os.getcwd() if is_source(os.getcwd()) else
-                                               (paths.REPO if not in_lib(paths.REPO) else None))
-        if not cand:
-            print("usage: sisi dev on PATH", file=sys.stderr)
-            return 1
-        cand = os.path.abspath(os.path.expanduser(cand))
-        if not is_source(cand):
-            print("sisi dev: %s does not look like the sisi source folder" % cand, file=sys.stderr)
-            return 1
-        paths.set_personal_config(("developer", "source"), cand, "developer mode on: " + cand)
-        print("developer mode on: source is %s" % cand)
-        return 0
-    if sub == "off":
-        paths.set_personal_config(("developer", "source"), None, "developer mode off")
-        print("developer mode off")
-        return 0
-    if sub == "status":
-        s = dev_source()
-        print("developer mode: " + ("on, source %s%s" % (s, "" if is_source(s) else " (NOT a sisi source folder)") if s else "off"))
-        print("live copy: " + live_text())
-        return 0
-    print("usage: sisi dev on [PATH] | off | status", file=sys.stderr)
-    return 1
-
-
 def live_text():
     cur = current_name()
     if not cur or not os.path.isdir(paths.current_link()):
         return "the clone %s (no release made)" % paths.REPO
-    s = dev_source() or (paths.REPO if not in_lib(paths.REPO) and is_source(paths.REPO) else None)
+    s = paths.REPO if not in_lib(paths.REPO) and is_source(paths.REPO) else None
     txt = "release %s at %s" % (cur, os.path.realpath(paths.current_link()))
     if s and is_source(s):
         a, c, r = diff(s, paths.current_link())
@@ -543,12 +509,12 @@ def _promote_lesson(lid, apply):
               "(`sisi cycle`) first, then promote it; or send it upstream with "
               "`sisi promote --export`." % lid, file=sys.stderr)
         return 1
-    src = dev_source()
-    if not src or not is_source(src):
-        print("sisi promote: this is not a developer install (no developer source set): nothing "
+    try:
+        src = source()
+    except ReleaseError:
+        print("sisi promote: run this from the source folder (bin/sisi promote from the clone): nothing "
               "was written. `sisi promote --export` writes a contribution file you may send "
-              "upstream; on a developer install (`sisi dev on PATH`) promote writes into the "
-              "source tree.", file=sys.stderr)
+              "upstream.", file=sys.stderr)
         return 1
     return _promote_overlay(pid, apply, src)
 

@@ -21,22 +21,17 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
                                      wire sisi into the tools (by reference), undo, inspect; --dry-run only prints what would change
   sisi release [--deep]              run the source's checks, then make the stable copy the tools run (see docs/developing.md)
   sisi rollback                      switch the stable copy back to the previous release
-  sisi dev on [PATH] | off | status  developer mode: where the source folder is
   sisi promote [ID|lesson:N] [--apply] | --export [PATH]
                                      no ID: list core-tier items not yet in the product; an ID
                                      scrubs a personal overlay item into the source folder and
                                      drops the personal copy once the product contains it (dry
                                      run unless --apply); lesson:N promotes a core lesson on a
-                                     developer install; --export writes a contribution file
+                                     from the clone; --export writes a contribution file
                                      (universal text only; nothing is sent anywhere)
-  sisi migrate                       move an older installation's personal data into the personal folder (safe to repeat)
   sisi update                        fast-forward the product clone, then back up, migrate and rebuild personal data
   sisi export [PATH] | import PATH   one tar.gz of personal data, results and session records; restore it
-  sisi build-canon                   regenerate the effective rulebook (base rules + your overlay)
-  sisi canon cost                    size of what is always loaded: rulebook lines and characters against both budgets, lessons block maximum
   sisi overlay list|diff|add-rule|replace-rule|disable-rule|enable-rule|add-verifier|...|revert COMMIT
                                      learned changes to rules, verifiers and recipes; each one a commit in your personal repo
-  sisi audit                         inventory of standing instructions per tool
   sisi retro --scope core|user|project --aim A --moment M --cause C --change-kind K --change X --when "csv, tsv, spreadsheet, tabular data, import, parse, delimited file" --pattern "the general failure of thinking, one line" [--pattern-id N] [--target ID] [--same-as ID | --new] [--short "one plain sentence"] [--topic "1-3 lower-case words"]
              (or --json - with the same keys on stdin)
                                      end of every piece of work: HOW it could have gone better; --when (at least
@@ -59,8 +54,6 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
                                      when none is due; check/--dry-run prints what would change, changing
                                      nothing; help prints the full cycle file format
   sisi improve                       is it getting better? lessons, recurrence, send-backs, time, rulebook size
-  sisi note TEXT                     (older; prefer retro) record something that went wrong
-  sisi propose TEXT                  (older; prefer retro) suggest a rule change
   sisi learn --scope core|user|project TEXT
                                      record a human-stated preference; it takes effect at once.
                                      --scope is required, by two questions: (a) does it apply to
@@ -212,18 +205,6 @@ def _commit_personal(path, msg):
         pdata.commit(msg, [os.path.basename(path)])
 
 
-def cmd_store(kind, args):
-    from . import store
-    text = " ".join(args).strip()
-    if not text:
-        print("usage: sisi %s TEXT" % {"notes": "note", "proposals": "propose"}[kind])
-        return 1
-    store.append(kind, store.stamp({"text": text}))
-    _commit_personal(store.file_path(kind), "%s: %s" % ({"notes": "note", "proposals": "proposal"}[kind], " ".join(text.split())[:60]))
-    print("recorded")
-    return 0
-
-
 def cmd_oracle():
     from . import principles
     sys.stdout.write(principles.oracle_text())
@@ -343,6 +324,11 @@ def cmd_wiring(name, args=()):
             if r.get("action"):
                 line += " | you need to: " + r["action"]
             print(line)
+        try:
+            from . import overlay
+            print("always loaded      : " + overlay.cost_line())
+        except Exception:
+            pass
         return 0
     rc, notes = getattr(wiring, name)()
     for n in notes:
@@ -357,23 +343,6 @@ def cmd_personal(cmd, args):
             return overlay.main(args)
         if cmd == "update":
             return lifecycle.cmd_update(args)
-        if cmd == "migrate":
-            for n in lifecycle.run() or ["nothing to migrate: personal data is in place"]:
-                print(n)
-            return 0
-        if cmd == "build-canon":
-            b = overlay.build_canon()
-            print("%s: %d lines, %d characters%s" % (b["path"], b["lines"], b["chars"], "" if b["changed"] else " (unchanged)"))
-            if b["over_budget"]:
-                print("sisi: over the %d-line budget; shorten or replace a rule" % overlay.MAX_LINES, file=sys.stderr)
-                return 1
-            return 0
-        if cmd == "canon":
-            if args[:1] == ["cost"]:
-                print(overlay.cost_line())
-                return 0
-            print("usage: sisi canon cost")
-            return 1
         if cmd == "export":
             print("exported to %s" % lifecycle.export(args[0] if args else None))
             return 0
@@ -447,27 +416,22 @@ def main(argv):
         return verify.cmd_verify(args)
     if cmd in ("install", "uninstall", "doctor"):
         return cmd_wiring(cmd, args)
-    if cmd in ("migrate", "update", "export", "import", "build-canon", "canon", "overlay"):
+    if cmd in ("update", "export", "import", "overlay"):
         return cmd_personal(cmd, args)
-    if cmd in ("release", "rollback", "dev", "promote"):
+    if cmd in ("release", "rollback", "promote"):
         from . import release
         try:
             return {"release": release.cmd_release, "rollback": release.cmd_rollback,
-                    "dev": release.cmd_dev, "promote": release.cmd_promote}[cmd](args)
+                    "promote": release.cmd_promote}[cmd](args)
         except release.ReleaseError as e:
             print("sisi %s: %s" % (cmd, e), file=sys.stderr)
             return 1
-    if cmd == "audit":
-        from . import audit
-        return audit.main(args)
     if cmd == "learn":
         from . import scope
         return scope.cmd_learn(args)
     if cmd == "handover":
         from . import handover
         return handover.main(args)
-    if cmd in ("note", "propose"):
-        return cmd_store({"note": "notes", "propose": "proposals"}[cmd], args)
     if cmd == "retro":
         from . import retro
         return retro.cmd_retro(args)

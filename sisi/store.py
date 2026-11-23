@@ -3,7 +3,7 @@ import json, os, re, time
 
 from . import paths
 
-FILES = {"results": "results.jsonl", "notes": "notes.jsonl", "proposals": "proposals.jsonl",
+FILES = {"results": "results.jsonl",
          "learn": "learn.jsonl", "quarantine": "learn.jsonl", "waivers": "waivers.jsonl",
          "deliveries": "deliveries.jsonl"}
 
@@ -82,7 +82,7 @@ def session_id():
     return os.environ.get("SISI_SESSION_ID") or None
 
 
-PERSONAL = ("notes", "proposals", "learn", "quarantine")  # what the person told or taught sisi: personal data, the rest is scratch
+PERSONAL = ("learn", "quarantine")  # what the person told or taught sisi: personal data, the rest is scratch
 
 
 def file_path(name):

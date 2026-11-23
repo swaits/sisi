@@ -378,9 +378,7 @@ def _ours(p):
         return True
     if t.startswith(os.path.join(paths.lib(), "")):
         return True  # the stable copy
-    from . import release  # a link made when the tools ran from the source folder
-    src = release.dev_source()
-    return bool(src) and t.startswith(os.path.join(src, ""))
+    return False
 
 
 def _link(m, p, target, notes, label):
@@ -698,12 +696,12 @@ def doctor():
     todo = lifecycle.pending()
     rows.append({"tool": "personal", "status": "ok" if pdata.exists() and not todo else "not ready",
                  "detail": "%s (format %d)%s" % (paths.data(), pdata.version(),
-                                                  "; run `sisi migrate`: still to move: " + ", ".join(todo) if todo else ""),
+                                                  "; run `sisi update`: still to move: " + ", ".join(todo) if todo else ""),
                  "blocking_hook": "-"})
     gen = paths.generated()
     cur = os.path.isfile(gen) and not overlay.is_stale()
     rows.append({"tool": "rulebook", "status": "current" if cur else ("stale" if os.path.isfile(gen) else "missing"),
-                 "detail": gen + ("" if cur else "; run `sisi build-canon`"), "blocking_hook": "-"})
+                 "detail": gen + ("" if cur else "; run `sisi update` to rebuild"), "blocking_hook": "-"})
     return rows
 
 
@@ -715,11 +713,11 @@ def quick_problem():
     refs = any(os.path.islink(p) and os.readlink(p) == core() for _, p in links)
     refs = refs or _claude_md_wired(_read(L["claude_md"]))  # only complain about a rulebook something points at
     if refs and not os.path.isfile(core()):
-        return "the generated rulebook is missing at %s (run `sisi build-canon`)" % core()
+        return "the generated rulebook is missing at %s (run `sisi update` to rebuild)" % core()
     if refs:
         from . import overlay
         if overlay.is_stale():
-            return "the generated rulebook is out of date (run `sisi build-canon`)"
+            return "the generated rulebook is out of date (run `sisi update` to rebuild)"
     for k, p in links:
         if os.path.islink(p) and os.readlink(p).startswith((paths.REPO, paths.data())) and not os.path.exists(p):
             return "%s link is dangling" % k

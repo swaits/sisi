@@ -564,8 +564,8 @@ Notes - one object per decision; the same lesson may appear several times (split
                   (b) would it be useful to every user who installs sisi? Both yes: core -
                   examples: "write delimited files with a quoting writer"; "use what the host
                   tool already provides instead of building a replacement". (a) yes, (b) no:
-                  user - examples: "always ask this owner questions as options with a
-                  recommendation"; "prefer this owner's flat-rate plans over per-use ones".
+                  user - examples: "always present questions as options with a
+                  recommendation"; "prefer flat-rate plans over per-use ones where available".
                   (a) no: project - examples: "this product's settings page keeps advanced
                   options behind one toggle"; "this app uses the left control key for search".
                   Core and user require the delivered text (change, short, when) to be
@@ -613,8 +613,8 @@ Learn statements - the equivalent for `sisi learn` statements ("learn" at the to
   project moves it to that project's handover pile, out of the global store. Tier by the two
   questions at set-scope above: a statement about how sisi itself should behave for everyone
   is core ("sisi should anticipate what is needed from what was already said"; "checks, not
-  advice"); how this owner wants work done is user ("always ask questions as options with a
-  recommendation"; "never set up scheduled jobs or timers"); a fact about one product is
+  advice"); how the user wants work done is user ("always present questions as options with
+  a recommendation"; "never set up scheduled jobs or timers"); a fact about one product is
   project ("this product's settings page keeps advanced options behind one toggle"; "this app
   uses the left control key for search").
 

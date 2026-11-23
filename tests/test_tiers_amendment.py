@@ -1,8 +1,9 @@
 """Three tiers (core, user, project): round-trips, migration of `everywhere`, the sisi-name
-exemption, promote on a developer install, export, and exact cycle revert with tiers."""
+exemption, promote from the clone, export, and exact cycle revert with tiers."""
 import json, os, shutil, subprocess, unittest
 from support import *
-from sisi import retro, scope, store
+from sisi import paths, retro, scope, store
+from unittest import mock
 
 WHEN = "csv, tsv, spreadsheet, tabular data, import, export, parse, delimited file"
 PATTERN = "Build the obvious thing instead of using what the environment already provides"
@@ -115,7 +116,9 @@ class PromoteTierTests(SisiCase):
         open(os.path.join(self.src, "sisi", "cli.py"), "w").write("# cli\n")
         shutil.copy(os.path.join(REPO, "canon", "core.md"), os.path.join(self.src, "canon", "core.md"))
         os.makedirs(os.path.join(self.data), exist_ok=True)
-        json.dump({"developer": {"source": self.src}}, open(os.path.join(self.data, "config.json"), "w"))
+        _p = mock.patch.object(paths, "REPO", self.src)  # run from the clone
+        _p.start()
+        self.addCleanup(_p.stop)
 
     def core_lesson_folded_to_rule(self):
         r = retro_cli(self, "core")
@@ -138,7 +141,7 @@ class PromoteTierTests(SisiCase):
         out = self.sisi("promote").stdout
         self.assertIn("lesson:1", out)
 
-    def test_promote_on_dev_install_edits_product_and_drops_personal_copy(self):
+    def test_promote_from_clone_edits_product_and_drops_personal_copy(self):
         self.core_lesson_folded_to_rule()
         overlay_file = os.path.join(self.data, "overlay", "rules", "quoting-writer.md")
         self.assertTrue(os.path.exists(overlay_file))

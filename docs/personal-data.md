@@ -28,7 +28,7 @@ Under `SISI_HOME` (tests) the personal folder is `$SISI_HOME/.local/share/sisi` 
                          an older learn-quarantine.jsonl is migrated into learn.jsonl on first read)
     retest.jsonl         replaced items whose base changed in an update (id, old base hash, new base hash)
     retro.db             lessons database (sqlite; not in git; lessons.jsonl is its committed form)
-    generated/core.md    the effective rulebook (not in git; rebuilt by `sisi build-canon`)
+    generated/core.md    the effective rulebook (not in git; rebuilt by install and update)
     install/             manifest and original copies of the files `sisi install` edited (not in git)
     backups/             copies taken before a migration or an update (not in git)
 
@@ -50,13 +50,13 @@ Ids: rules are `## 1. Title {#rule-id}` in `canon/core.md`; verifiers and recipe
 Commands: `sisi overlay list | diff | add-rule | replace-rule | disable-rule | enable-rule` (and the same for
 `verifier` and `recipe`), `sisi overlay revert COMMIT`. Each change is one commit and rebuilds the rulebook.
 The generated rulebook may not exceed its line and character budgets: a change that would pass it is refused, so a rule is added
-by shortening or replacing another. `sisi canon cost` prints the always-loaded size.
+by shortening or replacing another. `sisi doctor` prints the always-loaded size.
 
 On `sisi update` the overlay is applied to the new product. A replacement whose base item changed keeps the
 person's version and is queued in `retest.jsonl` for the learning loop.
 
 ## Moving data
 
-`sisi migrate` (also run by install and update) moves an older layout in, after a timestamped copy under
+`sisi update` (also run by install) moves an older layout in, after a timestamped copy under
 `backups/`. `sisi export [PATH]` / `sisi import PATH` carry personal data, results and session records as one
 tar.gz.
