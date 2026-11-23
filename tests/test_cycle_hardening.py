@@ -746,6 +746,28 @@ class Check(Base):
         self.assertEqual(self.sisi("lessons", "show", "L-0001").stdout, one.stdout)
 
 
+class Library(Base):
+    """R-16-7, R-16-9 (items 8 and 9): a library entry that cannot pass lint is found by check, not by the owner."""
+
+    def test_an_entry_that_fails_lint_is_refused_at_check_and_the_overlay_is_untouched(self):
+        _contract(self)
+        self.retro(*PROMOTE[1:])
+        act = {"action": "promote", "learning": "L-0001", "mechanism_kind": "library", "library_kind": "recipe",
+               "entry_id": "my-recipe", "entry_text": "---\nid: my-recipe\n---\n# T\n\nbody\n"}
+        r = self.sisi("cycle", "check", self.cycle_file([act]))
+        self.assertEqual(r.returncode, 2)
+        for frag in ("does not pass `sisi verifiers lint`", "missing or empty 'title'", "'applies_to'", "Done means"):
+            self.assertIn(frag, r.stderr)
+        self.assertFalse(self.exists("overlay/done"))
+        good = ("---\nid: my-recipe\ntitle: My recipe\napplies_to: work on the importer\n---\n\n## Done means\n- It is checked.\n\n"
+                "## Checks\n- Runs: `check-the-checker` (test-quality), rung 3.\n\n## Common false finishes\n- Not run.\n")
+        r = self.sisi("cycle", "check", self.cycle_file([dict(act, entry_text=good)]))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse(self.exists("overlay/done"))  # check changed nothing
+        self.assertEqual(self.apply([dict(act, entry_text=good)]).returncode, 0)
+        self.assertEqual(len(self.pending()), 1)  # a one-project learning's library entry waits
+
+
 class Brief(Base):
     """R-11.1-14, R-11.5-4, R-16-10 (item 8): a small model can act on the brief alone."""
 
@@ -845,3 +867,46 @@ class Brief(Base):
         r = self.sisi("cycle", "check", p)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.sisi("cycle", "apply", p).returncode, 0)
+
+
+class DueCounter(Base):
+    """R-11.5-4, R-14.4-1 (item 4): due is a counter of what arrived since the last cycle, not a nag."""
+
+    def test_what_a_brief_left_alone_does_not_make_the_next_cycle_due(self):
+        from sisi import cycle
+        _contract(self)
+        self.git_init()
+        ids = [self.another(n) for n in range(12)]
+        self.assertIn("cycle is due (12 proposed", cycle.due_notice())
+        acts = [{"action": "reject", "learning": i, "why": "the %s importer was deleted in the last release" % i}
+                for i in ids[:3]]
+        self.assertEqual(self.apply(acts).returncode, 0)
+        self.assertEqual(len(cycle.proposed()), 9)  # nine are still waiting, all of them in the next brief
+        self.assertNotIn("cycle is due", cycle.due_notice())
+        self.assertIn("L-0004", self.sisi("cycle").stdout)
+        # five new learnings make it due again; the leftovers ride along in that brief
+        for n in range(12, 17):
+            self.another(n)
+        self.assertIn("cycle is due (5 proposed", cycle.due_notice())
+
+    def test_the_ones_it_left_alone_come_due_again_after_two_weeks(self):
+        from sisi import cycle
+        _contract(self)
+        self.git_init()
+        ids = [self.another(n) for n in range(7)]
+        self.assertEqual(self.apply([{"action": "reject", "learning": ids[0],
+                                      "why": "the alpha importer was deleted in the last release"}]).returncode, 0)
+        self.assertNotIn("cycle is due", cycle.due_notice())
+        p = os.path.join(self.data, "cycles", "cycle-0001.json")
+        with open(p) as f:
+            rec = json.load(f)
+        rec["ts"] = "2000-01-01T00:00:00Z"
+        with open(p, "w") as f:
+            json.dump(rec, f)
+        self.assertIn("cycle is due (6 proposed", cycle.due_notice())
+        # a cycle that was reverted does not count as having run
+        rec["ts"] = L.now()
+        rec["reverted"] = L.now()
+        with open(p, "w") as f:
+            json.dump(rec, f)
+        self.assertIn("cycle is due (6 proposed", cycle.due_notice())

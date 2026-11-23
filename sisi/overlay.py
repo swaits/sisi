@@ -596,6 +596,29 @@ def _lint_new(rel):
         raise OverlayError("the file does not pass `sisi verifiers lint`:\n  " + "\n  ".join(b[len(p) + 2:] for b in bad))
 
 
+def check_entry(kind, text, id=None, replacing=False):
+    """Would put_entry succeed? The same checks, with the overlay put back exactly as it was and
+    nothing committed: a library entry that cannot pass `sisi verifiers lint` is found when the
+    cycle file is checked, not when the owner approves it. Returns the entry id."""
+    from . import pdata
+    id, rel, mine = _put_entry(kind, text, id, replacing)
+    d = lib_dir(kind)
+    existed = os.path.isdir(d)
+    with pdata.lock():
+        snap = _snapshot(d)
+        try:
+            for p in mine:
+                _remove(p)
+            _write(rel, text if text.endswith("\n") else text + "\n")
+            _lint_new(rel)
+        finally:
+            _restore(d, snap)
+            if not existed:
+                import shutil
+                shutil.rmtree(d, ignore_errors=True)
+    return id
+
+
 def put_entry(kind, text, id=None, replacing=False):
     id, rel, mine = _put_entry(kind, text, id, replacing)
     with _txn("overlay: %s %s %s" % ("replace" if replacing else "add", kind, id)):

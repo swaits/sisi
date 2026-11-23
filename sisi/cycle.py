@@ -43,7 +43,8 @@ import copy, difflib, json, os, re, sys, time
 
 from . import documents, evaluate, learning as L, overlay, paths, pdata
 
-DUE_AFTER = 5  # proposed learnings waiting make a cycle due (a counter, checked in normal use)
+DUE_AFTER = 5  # new learnings a cycle can act on make a cycle due (a counter, checked in normal use)
+DUE_AFTER_DAYS = 14  # or, this long after the last cycle, the ones it left alone
 MECHANISM_KINDS = ("contract-requirement", "command-check", "library", "rule-add", "rule-replace",
                    "risk", "routing", "benchmark")
 GLOBAL_KINDS = ("rule-add", "rule-replace", "library")  # they change what every project loads: reach is `user`
@@ -205,10 +206,43 @@ def proposed(rows=None):
             and (r.get("proposed") or {}).get("mechanism") != "tool" and L.is_registered(r, ledger)]
 
 
+def _age_days(ts):
+    import calendar
+    try:
+        return (time.time() - calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))) / 86400.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _num(lid):
+    m = re.match(r"L-(\d+)$", str(lid))
+    return int(m.group(1)) if m else 0
+
+
+def due_count(rows=None):
+    """How many learnings make a cycle due: those a cycle can act on that arrived since the last
+    cycle ran (a brief shows only a few, so what it left alone does not make the next cycle due by
+    itself), or, once the last cycle is DUE_AFTER_DAYS old, everything still waiting. Every
+    learning waiting is in the next brief, oldest first, whenever it runs."""
+    pr = proposed(rows)
+    done = [r for r in cycle_records() if not r.get("reverted") and r.get("ts")]
+    if not done:
+        return len(pr)
+    lastrec = max(done, key=lambda r: r["ts"])
+    last = lastrec["ts"]
+    if lastrec.get("learning_max"):  # ids only grow: what has a higher number arrived after the cycle
+        new = [r for r in pr if _num(r["id"]) > lastrec["learning_max"]]
+    else:
+        new = [r for r in pr if str(r.get("created") or "") > last]
+    if len(new) < DUE_AFTER and len(pr) >= DUE_AFTER and _age_days(last) >= DUE_AFTER_DAYS:
+        return len(pr)
+    return len(new)
+
+
 def due_notice(session=None):
     """Session-start lines: a cycle is due, and/or a decision waits for the owner. The callers
     (tick, the gate) catch and log a failure; it is not hidden here."""
-    n = len(proposed())
+    n = due_count()
     fl = len(L.flagged())
     lines = []
     if n >= DUE_AFTER or fl:
@@ -232,21 +266,22 @@ Actions (L-0000 stands for an id listed below):
  {"action":"promote","learning":"L-0000","mechanism_kind":"contract-requirement","when":"src/auth/**","require_kind":"parsing"}
  {"action":"promote","learning":"L-0000","mechanism_kind":"rule-add","rule_id":"deliver-fast","add":"One or two sentences.","shortens":"nothing: <why>"}
  {"action":"promote","learning":"L-0000","mechanism_kind":"rule-replace","rule_id":"deliver-fast","rule_text":"## Title {#deliver-fast}\\n\\nBody.\\n\\nWhy: ...","shortens":"..."}
- {"action":"promote","learning":"L-0000","mechanism_kind":"library","library_kind":"recipe","entry_text":"---\\nid: x\\n---\\n..."}
+ {"action":"promote","learning":"L-0000","mechanism_kind":"library","library_kind":"recipe","entry_text":"---\\nid: x\\ntitle: T\\napplies_to: when\\n---\\n## Done means\\n- ...\\n## Checks\\n- `verifier-id`\\n## Common false finishes\\n- ..."}
  {"action":"promote","learning":"L-0000","mechanism_kind":"risk","pattern":"src/auth/**","profile":"critical"}
  {"action":"promote","learning":"L-0000","mechanism_kind":"routing","kind":"impl","difficulty":2,"prefer":"worker-x"}
  {"action":"promote","learning":"L-0000","mechanism_kind":"benchmark","name":"csv-import","case":{...}}
  {"action":"reject","learning":"L-0000","why":"names the evidence: the retry loop in sync.py was already removed"}
  {"action":"merge","learning":"L-0000","into":"L-9999","why":"same cause"}   {"action":"revise"|"revert","learning":"L-0000","why":"..."}
 Values: mechanism_kind @KINDS@; risk profile @PROFILES@; require_kind @REQKINDS@;
- library_kind recipe|verifier; difficulty 1|2|3; when = a risk profile (that or higher) or a path glob.
+ library_kind recipe|verifier (Checks may cite only ids `sisi verifiers` lists); difficulty 1|2|3;
+ when = a risk profile (that or higher) or a path glob.
 A command check: cmd must name a path the fix changed; apply replays it in a copy of the tree without .git, between the
  commits recorded for the learning (never ones you write): it must fail at the start and pass at the end. No commits: it waits.
 Takes effect at once: reject, merge, revise, revert; risk (not lowering), routing, benchmark, contract-requirement; a replayed
  command check; rule-add and library only from a learning seen in 2 units in 2 projects.
 Held for the owner: rule-replace, disable-rule, rule-add or library from a one-project learning, a command check that was not
  replayed, risk that lowers a profile, scope beyond what was earned, a project gone from disk.
-Refused (whole file, every reason listed): protected rules (@PROTECTED@), a vacuous or failed replay, a generic reject reason,
+Refused (whole file, every reason listed): a rule not in the list below (protected), a vacuous or failed replay, a generic reject reason,
  a learning acted on twice or already waiting, a rule with a change waiting, a rulebook over @BUDGET@, a flagged learning left out.
 Rules you may change (id): @RULES@. Rulebook now @SIZE@. Adding to it means naming what it shortens, or "nothing: <why>".
 """
@@ -288,7 +323,6 @@ def format_text(base):
     lines, chars = _book_size()
     return (FORMAT.replace("@BASE@", base).replace("@KINDS@", "|".join(MECHANISM_KINDS))
             .replace("@PROFILES@", "|".join(risk.PROFILES)).replace("@REQKINDS@", "|".join(_contract.KINDS))
-            .replace("@PROTECTED@", ", ".join(sorted(p for p in prot if p in {r["id"] for r in rules})))
             .replace("@BUDGET@", "%d lines/%d characters" % (overlay.MAX_LINES, overlay.MAX_CHARS))
             .replace("@RULES@", ids).replace("@SIZE@", "%d lines/%d characters" % (lines, chars)))
 
@@ -432,7 +466,7 @@ def _plan_rule(kind, a, rec, virtual_rules, reasons, n):
     lid = rec["id"]
     rid = a.get("rule_id")
     _need(isinstance(rid, str) and overlay.ID_OK.match(rid), "%s for %s needs \"rule_id\": the id the brief lists" % (kind, lid))
-    _need(rid not in protected_rules(), "rule %r is protected (canon/protected.json); a cycle may not touch it" % rid)
+    _need(rid not in protected_rules(), "rule %r is protected (canon/protected.json); a cycle may not touch it. Pick a rule from the brief's list" % rid)
     in_force = {r["id"]: r for r in overlay.effective()[1]}
     if kind == "rule-add":
         _need(rid in in_force or rid in virtual_rules, "no rule %r to add to (the brief lists the ids)" % rid)
@@ -530,7 +564,7 @@ def _plan_promote(a, rec, virtual_rules, run=True):
         _need(eid is None or (isinstance(eid, str) and overlay.ID_OK.match(eid)), "entry_id for %s is not a plain id" % lid)
         n["entry_id"], n["replacing"] = eid, bool(a.get("replacing"))
         try:
-            n["entry_id"], _rel, _mine = overlay._put_entry(n["library_kind"], n["entry_text"], eid, n["replacing"])
+            n["entry_id"] = overlay.check_entry(n["library_kind"], n["entry_text"], eid, n["replacing"])
         except overlay.OverlayError as e:
             raise CycleError("library entry for %s: %s" % (lid, e))
         if n["replacing"]:
@@ -593,7 +627,7 @@ def validate_doc(doc, rows, run=True):
                 rid = a.get("rule_id")
                 who += " (disable-rule %s)" % rid
                 _need(isinstance(rid, str) and rid, "disable-rule needs \"rule_id\"")
-                _need(rid not in protected_rules(), "rule %r is protected (canon/protected.json); a cycle may not touch it" % rid)
+                _need(rid not in protected_rules(), "rule %r is protected (canon/protected.json); a cycle may not touch it. Pick a rule from the brief's list" % rid)
                 _need(rid in _rule_known(), "no rule %r (the brief lists the ids)" % rid)
                 _need(rid not in wait_r and rid not in ruled, "rule %s already has a change %s; wait for the "
                       "owner's decision" % (rid, "waiting (%s)" % wait_r[rid] if rid in wait_r else "in this file"))
@@ -839,7 +873,9 @@ def _transact(label, fn):
     failure part-way restores every file it changed."""
     pdata.ensure()
     before = _head()
-    rows_before = {r["id"]: {k: copy.deepcopy(r[k]) for k in CYCLE_FIELDS if k in r} for r in L.load_learnings()}
+    all_rows = L.load_learnings()
+    rows_before = {r["id"]: {k: copy.deepcopy(r[k]) for k in CYCLE_FIELDS if k in r} for r in all_rows}
+    learning_max = max([_num(r["id"]) for r in all_rows] or [0])
     try:
         lines, touched, added = fn()
     except BaseException:
@@ -862,6 +898,7 @@ def _transact(label, fn):
     cid = "cycle-%04d" % n
     rec = {"id": cid, "label": label, "ts": L.now(), "before": before, "after": after, "lines": lines,
            "changed": _changed(before, after) if before and after else [],
+           "learning_max": learning_max,
            "rows_before": {i: rows_before[i] for i in touched if i in rows_before},
            "pending_added": added}
     pdata.write_text("cycles/%s.json" % cid, json.dumps(rec, indent=2, sort_keys=True) + "\n")

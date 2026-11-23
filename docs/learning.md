@@ -14,8 +14,9 @@ A learning record carries: id, title, source unit, observation (evidence and imp
 root cause, the proposed change (description, mechanism type, scope, target), expected
 effect, validation (method, benchmark, result), status, version, provenance (every unit
 and project it was seen in) and confidence. Status moves through `observed`, `analyzed`,
-`proposed`, `implemented`, `validated`, `promoted`, `monitored`, and may end `revised`,
-`reverted` or `rejected`. Showings are never recorded: being printed is not evidence.
+`proposed`, `pending-approval` (a decision waits for the owner), `backlog` (a change to sisi
+itself), `implemented`, `validated`, `promoted`, `monitored`, and may end `revised`, `reverted`,
+`rejected` or `merged` (into another learning). Showings are never recorded: being printed is not evidence.
 
 ## The retro
 
@@ -73,15 +74,25 @@ commit as the row; a row added by hand, or edited by hand, has no matching entry
 
 ## The cycle
 
-Promotion is the cycle, due by a counter checked during normal use (no scheduler):
-`sisi cycle` prints the brief for a cheap worker, which writes one JSON cycle file
-(`sisi cycle help` is the format). Mechanism kinds a cycle can install in the user
-store: an enforced contract requirement, an enforced command check (both in
-`overlay/enforced.json`), a library entry (recipe or verifier), rule text, a risk-table
-adjustment (`overlay/risk-adjustments.json`), a routing adjustment
-(`overlay/routing-adjustments.json`), or a benchmark case
-(`overlay/benchmarks/<name>.json`). `tool` learnings — changes to sisi's own code — are
-refused by the cycle; they go to the tool list shown in the learning report and to the contribution export.
+Promotion is the cycle, due by a counter checked during normal use (no scheduler): five learnings a cycle
+can act on arrived since the last cycle, or, fourteen days after it, five still waiting. `sisi cycle` prints
+the brief for a cheap worker that has nothing else to read: the complete file format with one filled example
+per action, every enumerated value, what happens to each kind of action (takes effect, held for the owner,
+refused), and at most eight learnings (flagged first, then the most recurrent, then the oldest), each with its
+statement, origin project, source unit and whether commits are recorded, in at most 6,000 characters; what does
+not fit waits for the next cycle. The worker writes one JSON cycle file. `sisi cycle check FILE` runs nothing
+and lists every problem in the file at once, each with how to fix it; `sisi cycle apply FILE` prints what took
+effect, what waits and what was refused in at most fifteen lines. Mechanism kinds a cycle can install in the
+user store: an enforced contract requirement (`when` is a risk profile or a path glob: something the code
+evaluates), an enforced command check (both in `overlay/enforced.json`), a library entry (recipe or verifier;
+it is linted when the file is checked), `rule-add` (one or two sentences added to a named rule before its
+`Why:`, naming what the addition shortens or saying nothing can be; the applied message prints the loaded
+rulebook size before and after), `rule-replace` (the whole rule; always the owner's), a risk-table adjustment
+(`overlay/risk-adjustments.json`), a routing adjustment (`overlay/routing-adjustments.json`), or a benchmark case
+(`overlay/benchmarks/<name>.json`). A learning that should not be promoted is `reject`ed with a specific reason
+(a generic one is refused) or `merge`d into the learning it repeats. `tool` learnings are never in a brief or in
+"due": they have the status `backlog` from the moment they are recorded and go to the tool list in the learning
+report and to the contribution export (`sisi promote --export`).
 
 `sisi cycle apply FILE` treats the file as untrusted input and plans everything before writing anything —
 the budget and every other check run first, and a refusal applies nothing. If applying then fails part-way
@@ -91,24 +102,34 @@ the budget and every other check run first, and a refusal applies nothing. If ap
   the scope the learning has earned (`learning.earned_scope`: its origin project unless it earned more)
   and the origin project. Enforced checks, risk and routing adjustments are filtered by project when read.
   A scope or `every_project` flag in the cycle file is a request for more, never the gate.
-- **Replay before promotion** (`evaluate.validate_command`, the one replay implementation). A command check
-  is run in a temporary git worktree at the before-commit and the after-commit, and is `validated` only
-  if it **ran and failed** before the fix (not exit 126/127, not a timeout, not killed by a signal; its
-  program, and a script given to an interpreter, must exist at *both* commits) and ran and passed after.
-  The repository must be the learning's origin project and on the trust list, and `before` must be an
-  ancestor of `after`; otherwise the result is `unvalidated`, with the reason. A replay that ran and
-  behaved wrongly refuses the whole cycle. Replay never touches the working tree.
+- **Replay before promotion** (`evaluate.validate_command`, the one replay implementation). `check` never
+  executes anything from the file. `apply` replays a command check only between the two commits the learning's
+  own record holds (the start and closing commits of the unit it was found in, from the unit record, or the
+  commits stored with the finding; commits named in the file are ignored), in the learning's origin project, on
+  the trust list. Each run is in an exported copy of that commit's tree with no `.git` directory (the command
+  cannot read history), an environment of PATH, HOME (an empty directory) and LANG only, a time limit, and
+  the copy is deleted afterwards. The command must name a path that differs between the two trees, or it is
+  refused as vacuous. It is `validated` only if it **ran and failed** at the start (not exit 126/127, not a
+  timeout, not killed by a signal; its program, and a script given to an interpreter, must exist at *both*
+  commits) and ran and passed at the end, and `before` is an ancestor of `after`; a learning with no recorded
+  commits, or any other reason it cannot be shown, leaves it `unvalidated` and waiting for the owner. A replay
+  that ran and behaved wrongly refuses the whole cycle. Replay never touches the working tree.
 - **Protected rules** (`canon/protected.json`) cannot be replaced or disabled by a cycle or by
   `sisi overlay`. If the file cannot be read, no rule can be changed.
 - **Consequential changes wait for the owner**: more scope than the learning earned; an enforced command
   not proven by replay (or that would run outside its origin project); a risk pattern that lowers a
-  profile; any replacement or disabling of a rule; rule text or a library entry from a learning confined to
-  one project; `sisi overlay replace-rule` and `disable-rule`. They are stored as pending and take effect
-  only after `sisi approve ID --yes|--no`.
+  profile; any whole-rule replacement or disabling of a rule; a sentence added to a rule, or a library entry,
+  from a learning confined to one project; a mechanism for a project that no longer exists on disk;
+  `sisi overlay replace-rule` and `disable-rule`. They are stored as pending and take effect only after
+  `sisi approve ID --yes|--no`. While a decision waits, its learning is `pending-approval`; promoting it
+  again is refused, and so is a second change to a rule that has one waiting. If the owner refuses, the
+  learning is rejected, not proposed again.
 - **`sisi approve`** with no arguments lists every waiting change in full: the command, the pattern and
-  profile, the rule text as a diff, why it needs the owner, and the replay result. A decision made without
-  a terminal (an agent, a script) is refused unless the user config sets `learning.agent_relayed_approval`;
-  every decision is recorded in `approvals.jsonl` (when, session, terminal or not, `relayed by an agent`).
+  profile, the rule text as a diff, why it needs the owner, and the replay result. A decision needs the word
+  `sisi approve ID --yes|--no` prints typed back at the controlling terminal device (never standard input), and
+  the before-tool hook refuses any shell command of an agent that invokes it; a process with no controlling
+  terminal is refused unless the user config sets `learning.agent_relayed_approval`. Every decision, and every
+  refused attempt, is recorded in `approvals.jsonl` (when, session, terminal or not, `relayed by an agent`).
   Session start prints one line while a decision is waiting, telling the agent to ask the owner through
   the host's question dialog and to give him the command to run himself. SECURITY.md says what this does and
   does not guarantee.
@@ -117,13 +138,16 @@ the budget and every other check run first, and a refusal applies nothing. If ap
   files and learning fields it changed. `sisi cycle revert [ID]` undoes exactly those: statements, findings
   and recurrences recorded after the cycle survive, and a revert is refused if a later change touched the
   same file.
-- A learning that was validated but waits for the owner has status `validated`; once promoted and a unit in
-  its scope has closed, or it has recurred, `monitored`.
+- A learning that was validated but waits for the owner is `pending-approval` with its validation result kept;
+  once promoted and a unit in its scope has closed, or it has recurred, `monitored`.
+- An origin project is always the main repository's key, never a linked worktree's path; `sisi update` repairs
+  records and mechanisms written before that (and statuses: tool learnings to `backlog`, learnings with a
+  decision waiting to `pending-approval`).
 
 ## Monitoring
 
 A recurrence after promotion counts against the learning (once per unit). Two flag it "not working";
-the next cycle must revise or revert it. `sisi status --learning` prints
+the next cycle must revise or revert it. `sisi status --learning` prints only
 `learning.learning_report()`: per promoted learning the units in its own scope since promotion
 (read from `units.jsonl` in the user store, one JSON object per line with `id`, `project`, `closed_at`,
 `risk`; the file may not exist yet, which counts as none), the recurrences, whether it is validated or
