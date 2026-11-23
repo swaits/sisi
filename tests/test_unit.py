@@ -152,6 +152,25 @@ class RecordTests(UnitCase):
             self.assertEqual(self.sisi("unit", "close").returncode, 0)
         self.assertEqual({r["id"] for r in store.read("units")}, {"proj", "proj-2"})
 
+    def test_usage_from_before_a_unit_started_is_not_that_units_and_the_window_edges_are_inclusive(self):
+        """R-13.3-2: the unit window is [started, closed], inclusive at both ends. Usage stamped before
+        the unit started belongs to an earlier unit and is not counted (nor priced); usage stamped in
+        the very second the unit started or closed is counted. Built with fixed stamps, no clock."""
+        t0 = harvest.epoch("2026-01-01T00:00:10Z")
+        t1 = harvest.epoch("2026-01-01T00:00:20Z")
+        def row(ts, out):
+            return {"type": "assistant", "timestamp": ts, "message": {
+                "model": "model-one", "content": [], "usage": {"input_tokens": 0, "output_tokens": out}}}
+        tp = os.path.join(self.tmp, "edges.jsonl")
+        with open(tp, "w") as f:
+            f.write("\n".join(json.dumps(x) for x in (
+                row("2026-01-01T00:00:09Z", 1), row("2026-01-01T00:00:10Z", 10),
+                row("2026-01-01T00:00:20Z", 100), row("2026-01-01T00:00:21Z", 1000))) + "\n")
+        st = harvest.transcript_stats(tp, t0, t1)
+        self.assertEqual(st["usage"]["by_category"]["output"], 110)  # 10 at the start edge + 100 at the end edge
+        before = harvest.transcript_stats(tp, harvest.epoch("2026-01-01T00:00:30Z"), harvest.epoch("2026-01-01T00:00:40Z"))
+        self.assertIsNone(before["usage"])  # a later unit sees none of it: tokens unavailable, never zero
+
     def finish_green_again(self):
         c = C.load(self.contract_path)
         c["checks"] = [real("again", "test -f done.txt")]
@@ -399,6 +418,9 @@ class TelemetryHonestyTests(UnitCase):
         self.assertEqual(tel["tokens_by_model"]["value"]["model-one"]["output"], 500)
         self.assertEqual(tel["cost"], {"value": None, "class": "unavailable"})  # no price recorded
         self.sisi("contract", "init")
+        # a new unit has its own window: usage from before it started belongs to the first unit, so
+        # the second unit needs its own usage, stamped after it started (T >= its whole-second start)
+        self.transcript(with_usage=True)
         self.finish_green_again()
         with open(os.path.join(self.data, "worker-prices.json"), "w") as f:
             json.dump({"models": {"model-one": {"cost_per_million_tokens": 2.0, "source": "test", "date": "2026-01-01"}}}, f)
