@@ -25,8 +25,9 @@ Wiring is always by reference: an import line, a symlink to the generated rulebo
 shell hook command first checks the sisi launcher still exists, so deleting the sisi folder without
 uninstalling makes hooks exit silently instead of erroring on every turn. The per-tool translation
 between each tool's hook JSON and the gate lives in `sisi/hookio.py`; the adapters live in
-`sisi/adapters.py`; the textual JSON editing lives in `sisi/hookjson.py`. Hooks fail open: any error
-lets the agent finish.
+`sisi/adapters.py`; the textual JSON editing lives in `sisi/hookjson.py`. Install also links any
+skills shipped under `canon/skills` into `~/.agents/skills`; `sisi doctor` reports the linked
+state. Hooks fail open: any error lets the agent finish.
 
 ## Claude Code
 
@@ -179,7 +180,7 @@ Code-compatible configuration; whether sisi's Claude hooks fire under Grok is no
 
 Rulebook symlink at `~/.config/crush/CRUSH.md` (or `$XDG_CONFIG_HOME/crush/CRUSH.md`, honoured as
 `crush dirs` confirms; one of Crush's default global context paths, confirmed from the binary's own
-configuration schema). Crush hooks currently support only `PreToolUse`, which is not a turn gate, so
+configuration schema). Crush hooks support only `PreToolUse`, which is not a turn gate, so
 sisi wires no hooks. Revisit when its session/turn hook events ship.
 
 ## Aider
@@ -198,6 +199,6 @@ hooks. There is nothing T3- or Orca-specific to wire; wire the providers and bot
 
 ## Not wired
 
-Roo Code was discontinued (2026-05-15) and gets no wiring; any remaining installs still read project
+Roo Code was discontinued and gets no wiring; any remaining installs still read project
 `AGENTS.md`. Agents beyond the list above that read a project `AGENTS.md` (Factory, Warp, Junie and
 similar) are covered by the project file, with no per-tool wiring and no gate.

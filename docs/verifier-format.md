@@ -34,8 +34,8 @@ verified: docs
 - `answers`: the question, in plain words, that a passing run answers. This
   is what the chooser matches on, so write it the way an agent would phrase
   its doubt.
-- `rung`: 1 proof, model checking or types; 2 property tests, fuzzing,
-  differential, mutation; 3 example tests; 4 golden files and snapshots;
+- `rung`: 1 proof, model checking or types; 2 property-based testing, fuzzing,
+  differential, mutation; 3 examples; 4 golden files and snapshots;
   5 judged rubric; 6 human.
 - `languages`: comma list, or `any`.
 - `kinds`: any of general, concurrency, parsing, money, state-machine,

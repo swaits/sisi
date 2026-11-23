@@ -7,9 +7,9 @@ Thanks for looking. sisi is small on purpose; this page says how to change it sa
     python3 tests/run_parallel.py        # every test file in its own process, side by side
     python3 -W ignore::ResourceWarning -m unittest discover -s tests    # the same tests, one at a time
     bin/sisi verifiers lint
-    bin/sisi verify          # runs the same two checks through sisi's own contract (.sisi/contract.json)
+    bin/sisi verify          # runs sisi's own contract (.sisi/contract.json)
 
-Side by side the suite takes well under a minute on an idle machine; one at a time, a minute or two. Tests never touch your real home folder: they point `SISI_HOME` and `SISI_STATE`
+Tests never touch your real home folder: they point `SISI_HOME` and `SISI_STATE`
 at temporary directories, and a test fails at once if a path resolves outside them. Set `SISI_TEST_ITERS=10` to
 run the property tests with more iterations.
 
@@ -19,8 +19,14 @@ A pull request should pass all three. If you fix a bug, add a test that fails wi
 
 - Standard library only. No third-party packages, no build step, no install step beyond cloning. This is what
   lets the tool run unchanged in any tool's hook, on any machine with Python.
-- Python 3.9 or newer (see the README for how that was determined). Do not use syntax or library calls that need a
-  newer version.
+- Python 3.9 or newer. Do not use syntax or library calls that need a newer version. The minimum
+  was set by reading the code, not by running old interpreters: every Python file parses with
+  `ast.parse(..., feature_version=(3, 8))`, and there are no `match` statements, `X | Y` types or
+  walrus operators. The newest standard library features in use, `shutil.copytree(...,
+  dirs_exist_ok=True)` and `sys.pycache_prefix`, were added in 3.8; the stated minimum is 3.9
+  because 3.8 is end of life and the CI runners in use do not offer it. Which versions and systems
+  CI proves is stated in `.github/workflows/ci.yml`; read that file rather than trusting a list
+  here.
 - Hooks (`sisi tick`, `sisi gate`) must stay fast and must fail open: anything that goes wrong inside sisi lets
   the agent through and is logged.
 - sisi never writes into the product folder at run time. Anything it writes goes to the personal data folder or

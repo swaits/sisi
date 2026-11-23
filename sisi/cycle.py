@@ -19,7 +19,7 @@ Every part is optional except version and base. Apply is one commit in the perso
 the personal-data lock; a stale base (another cycle or lesson landed since the brief) refuses cleanly.
 Each applied cycle records the exact bytes it changed, so revert restores them byte for byte.
 """
-import base64, hashlib, json, os, re, shlex, shutil, time
+import base64, difflib, hashlib, json, os, re, shlex, shutil, time
 
 from . import overlay, paths, pdata, retro, store
 
@@ -28,7 +28,11 @@ class CycleError(Exception):
     pass
 
 
-ACTIONS = ("merge", "fold-into-rule", "fold-into-entry", "retire", "withdraw", "keep")
+ACTIONS = ("merge", "fold-into-rule", "fold-into-entry", "retire", "withdraw", "keep",
+           "set-when", "create-entry", "keep-as-draft")
+# Total characters of lesson text (change+moment+cause) the brief prints in full. Over this,
+# lessons are truncated and the brief says to run `sisi lessons show ID` for the full text.
+BRIEF_TEXT_BUDGET = 6000
 
 
 # ---- enforced lessons (overlay/enforced.json, checked like floors) ----------
@@ -106,9 +110,7 @@ def due_state(con=None):
         pending = con.execute(
             "SELECT count(*) FROM lessons WHERE status IN ('open','applied') AND "
             "(COALESCE(needs_cycle,0)=1 OR (COALESCE(strength,1)>=3 AND check_json IS NULL))").fetchone()[0]
-        notes_chars = con.execute(
-            "SELECT COALESCE(sum(length(change)),0) FROM lessons WHERE status IN ('open','applied') "
-            "AND COALESCE(strength,1)=1").fetchone()[0]
+        notes_chars = retro.notes_chars(con)
         loose = [dict(r) for r in con.execute(
             "SELECT * FROM lessons WHERE status IN ('open','applied') AND folded_into IS NULL ORDER BY id")]
         headings_chars = sum(len(retro.loose_heading(r)) + 1 for r in loose)
@@ -184,36 +186,115 @@ def _announce_save(data):
 
 
 # ---- base version and cycle records ------------------------------------------
+# Only what a cycle may change counts toward the base: lesson content and status (aim, kind,
+# target, moment, cause, change, status, strength, folded_into, effect, when-terms, check),
+# the rulebook, field/draft notes and enforced checks. Listed/read counters (impressions),
+# occurrence counters (count, last_seen) and new lessons do NOT count: reading a lesson or a
+# lesson arriving must never stale a brief (gaps 2 and 3).
+_RELEVANT = ("aim", "change_kind", "target", "moment", "cause", "change", "status", "strength",
+             "folded_into", "effect", "when_terms", "check_json", "needs_cycle")
+
+
+def _snapshot(con):
+    lessons = {}
+    for r in con.execute("SELECT * FROM lessons ORDER BY id"):
+        d = dict(r)
+        lessons[str(d["id"])] = {k: d.get(k) for k in _RELEVANT}
+    files = {}
+    for rel, b in _scan_files().items():
+        files[rel] = hashlib.sha256(b).hexdigest()[:16]
+    try:
+        rules = overlay.render()
+    except Exception:
+        rules = ""
+    try:
+        with open(enforced_path(), "rb") as f:
+            enf = f.read().decode("utf-8", "replace")
+    except OSError:
+        enf = ""
+    try:
+        cyc = sorted(os.listdir(cycles_dir()))
+    except OSError:
+        cyc = []
+    return {"lessons": lessons, "files": files, "rules": rules, "enforced": enf,
+            "last_cycle_ts": retro.get_meta(con, "last_cycle_ts") or "", "cycles": cyc}
+
+
+def _save_snapshot(base, snap):
+    try:
+        d = os.path.join(paths.state(), "cycle-bases")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, base + ".json"), "w", encoding="utf-8") as f:
+            json.dump(snap, f, sort_keys=True)
+    except OSError:
+        pass
+
+
+def _load_snapshot(base):
+    try:
+        with open(os.path.join(paths.state(), "cycle-bases", base + ".json"), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
 def base_version(con=None):
-    """A fingerprint of everything a cycle may change. The brief prints it; apply refuses a stale one,
-    which is how two sessions consolidating at once cannot overwrite each other."""
+    """A fingerprint of everything a cycle may change (see _RELEVANT). The brief prints it; apply
+    refuses a stale one, which is how two sessions consolidating at once cannot overwrite each other."""
     own = con is None
     if own:
         con = retro.connect()
     try:
-        h = hashlib.sha256()
-        for line in retro.dump_lines(con):
-            h.update(line.encode("utf-8") + b"\n")
-        try:
-            h.update(overlay.render().encode("utf-8"))
-        except Exception:
-            pass
-        try:
-            with open(enforced_path(), "rb") as f:
-                h.update(f.read())
-        except OSError:
-            pass
-        # an applied cycle changes the base even when it only re-states a lesson, so a second
-        # session working from the same brief is refused instead of silently overwriting it
-        h.update((retro.get_meta(con, "last_cycle_ts") or "").encode("utf-8"))
-        try:
-            h.update(",".join(sorted(os.listdir(cycles_dir()))).encode("utf-8"))
-        except OSError:
-            pass
-        return h.hexdigest()[:16]
+        snap = _snapshot(con)
+        h = hashlib.sha256(json.dumps(snap, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+        _save_snapshot(h, snap)
+        return h
     finally:
         if own:
             con.close()
+
+
+def _check_base(doc_base, con):
+    """[] when the base is current, or differs only by lessons that arrived since the brief.
+    Otherwise one precise line per changed thing (never 'likely another cycle landed')."""
+    if doc_base == base_version(con):
+        return []
+    old = _load_snapshot(doc_base)
+    if old is None:
+        return ["stale base %s: it does not match the current base %s and no brief with that base "
+                "is on record. Run `sisi cycle` again and copy its base version" % (doc_base, base_version(con))]
+    cur = _snapshot(con)
+    errs, new_only = [], True
+    for lid, ov in sorted(old["lessons"].items(), key=lambda kv: int(kv[0])):
+        cv = cur["lessons"].get(lid)
+        if cv is None:
+            errs.append("lesson #%s was removed since the brief" % lid)
+            new_only = False
+            continue
+        diffs = [k for k in _RELEVANT if ov.get(k) != cv.get(k)]
+        if diffs:
+            errs.append("lesson #%s changed since the brief (%s: %s -> %s)"
+                        % (lid, ", ".join(diffs),
+                           ", ".join("%s=%r" % (k, ov.get(k)) for k in diffs[:2]),
+                           ", ".join("%s=%r" % (k, cv.get(k)) for k in diffs[:2])))
+            new_only = False
+    if old.get("last_cycle_ts") != cur.get("last_cycle_ts") or old.get("cycles") != cur.get("cycles"):
+        added = [c for c in cur.get("cycles", []) if c not in old.get("cycles", [])]
+        errs.append("another cycle landed since the brief (%s)" % (", ".join(added) or "cycle record changed"))
+        new_only = False
+    if old.get("rules") != cur.get("rules"):
+        errs.append("the rulebook changed since the brief")
+        new_only = False
+    if old.get("enforced") != cur.get("enforced"):
+        errs.append("the enforced checks changed since the brief")
+        new_only = False
+    # Note/overlay files are not listed separately: a cycle that changed one also changed the
+    # lesson or rule above, and a new lesson's own field note must not stale the brief.
+    if new_only:
+        return []  # only lessons recorded since the brief: they are left for the next cycle
+    return ["stale base %s (now %s): %s. Nothing was applied; run `sisi cycle` again"
+            % (doc_base, base_version(con), "; ".join(errs))]
 
 
 def cycles_dir():
@@ -290,9 +371,13 @@ def measures(con):
         lines = overlay.size(overlay.render())[0]
     except Exception:
         lines = None
+    try:
+        chars = overlay.size(overlay.render())[1]
+    except Exception:
+        chars = None
     return {"lessons": con.execute("SELECT count(*) FROM lessons").fetchone()[0],
             "active": con.execute("SELECT count(*) FROM lessons WHERE status IN ('open','applied')").fetchone()[0],
-            "by_status_strength": rows, "rulebook_lines": lines,
+            "by_status_strength": rows, "rulebook_lines": lines, "rulebook_chars": chars,
             "deliveries_so_far": _delivery_measures(store.read("deliveries"))}
 
 
@@ -330,17 +415,109 @@ def flagged(rec):
 
 
 # ---- the brief -----------------------------------------------------------------
-FORMAT_DOC = """Write ONE JSON file, then run `sisi cycle apply FILE`. Shape (all but version/base optional):
-  {"version": 1, "base": "<the base version above>", "summary": "one line",
-   "rules": [{"id": "rule-id", "title": "Title", "body": "rule text ending with a Why: ... paragraph",
-              "action": "add" or "replace"}],
+FORMAT_DOC = """Write ONE JSON file at the path printed in the brief, then `sisi cycle check FILE`, then `sisi cycle apply FILE`.
+Shape (all but version/base optional; full detail: `sisi cycle help`):
+  {"version": 1, "base": "<base above>", "summary": "one line",
+   "rules": [{"id": "rule-id", "title": "Title", "body": "text ending with Why: ...", "action": "add|replace",
+              "shortens": "rule-id: what text is removed/shortened (required when the rulebook would grow in characters)"}],
    "disable_rules": ["rule-id"],
-   "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep",
-              "into": "rule id or verifier/recipe id (for folds)", "merged_into": 4,
-              "when": "csv, tsv, spreadsheet, tabular data, import, parse (optional; at least 5 terms, sets when-terms)"}],
-   "enforced": [{"lesson": 3, "type": "command", "cmd": "a real command", "expect": {"exit": 0}, "timeout_s": 30},
-                {"lesson": 4, "type": "contract-requirement", "when": "parser",
-                 "require_kind": "parsing", "max_rung": 2}]}"""
+   "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-when|create-entry|keep-as-draft",
+              "into": "id or [ids] (folds; entry folds append a field note)", "merged_into": 4,
+              "note": "text to append instead of the lesson change (for splitting one lesson)",
+              "when": "at least 5 terms (sets when-terms; alone with action set-when)",
+              "entry_kind": "recipe|verifier", "entry_text": "full file text (create-entry)",
+              "reason": "why it stays a draft (keep-as-draft)"}],
+   "enforced": [{"lesson": 3, "type": "command", "cmd": "...", "expect": {"exit": 0}, "timeout_s": 30},
+                {"lesson": 4, "type": "contract-requirement", "when": "parser", "require_kind": "parsing", "max_rung": 2}]}"""
+
+HELP_TEXT = """sisi cycle help: the full cycle file format (the brief is the short form)
+
+File: write ONE JSON file at the scratch path the brief prints, then:
+  sisi cycle check FILE     validate and print exactly what would change, changing nothing
+                            (also: sisi cycle --dry-run FILE)
+  sisi cycle apply FILE     apply it (one commit in the personal repository)
+  sisi cycle revert [ID]    undo the newest applied cycle exactly
+  sisi cycle status         past cycles and what happened since
+
+Top level: {"version": 1 (required), "base": "<from the brief, required>", "summary": "one line",
+  "rules": [...], "disable_rules": [...], "notes": [...], "enforced": [...]} - all else optional.
+The file covers only the lessons listed in its brief. Lessons recorded since the brief are left
+for the next cycle and do not make the apply fail. Reading (`sisi lessons show ID`, `sisi done`,
+`sisi verifiers show`) never stales the base: it covers only lesson content/status, rules, notes
+and enforced checks, not listed/read counters. A stale refusal names exactly what changed.
+
+Rules - format: {"id", "title", "body", "action": "add|replace", "shortens": "..."}.
+  Body: prose paragraphs wrapped at 100 characters (apply re-wraps for you), ending with a
+  paragraph starting "Why:". Keep the id and the Why when replacing. Title is the heading text.
+  Budget: at most 120 lines AND at most 7200 characters, and a cycle must not increase the
+  characters unless it names in "shortens" which existing rule text gets shorter or is replaced
+  (required whenever a rule is added or the book would grow in characters); never past the budget.
+  Rule numbers in lessons ("rule 5") mean the numbered list in the brief, which maps number to id.
+
+Notes - one object per decision; the same lesson may appear several times (split, or fold+set-when):
+  merge           {"lesson": A, "action": "merge", "merged_into": B} - only when A and B request
+                  the SAME change (not merely the same topic). Merge the newer/ narrower into the
+                  older or more general one (B). A becomes superseded; B keeps its own text and
+                  its occurrence count unchanged. Superseded lessons need no further action.
+  fold-into-rule  {"lesson": A, "action": "fold-into-rule", "into": "rule-id" or ["id", ...]}
+                  The lesson is marked folded into that rule; its strength rises to at least 2.
+  fold-into-entry {"lesson": A, "action": "fold-into-entry", "into": "id" or ["id", ...],
+                  "note": "optional text"} - appends one field-note bullet to notes/<id>.md:
+                  "- YYYY-MM-DD: <the lesson's change, or `note` when given> (aim: <aim>; seen
+                  <count> times; lesson <id>)", and marks the lesson applied / field-note /
+                  folded_into=<id>. To split a compound lesson, use two notes objects with the
+                  same lesson, different `into` and different `note` text each.
+  create-entry    {"lesson": A, "action": "create-entry", "into": "new-id",
+                  "entry_kind": "recipe|verifier", "entry_text": "<full file text>"}
+                  Creates a personal recipe or verifier entry in the overlay from the lesson,
+                  validated by the existing library lint (docs/verifier-format.md). Use it when a
+                  lesson asks for a recipe/entry that does not exist (e.g. "Add a recipe 'x'").
+                  If a full, lint-clean entry is too large for this cycle, use keep-as-draft
+                  instead and say why; do not fold into a poor-matching existing entry.
+  keep-as-draft   {"lesson": A, "action": "keep-as-draft", "reason": "why"} - keeps it as a draft
+                  recipe note (shown by `sisi done for` when its words match), nothing else.
+  set-when        {"lesson": A, "action": "set-when", "when": "at least 5 terms"} - only sets
+                  the lesson's when-terms; nothing else changes.
+  keep            {"lesson": A, "action": "keep"} - leave it; clears its waiting flag.
+  retire          leave the active notes. Only when fully folded and quiet: folded into a rule,
+                  entry or enforced check, listed/read at least 20 times, and 0 recurrences after
+                  first being listed. Folding in this cycle does not make it quiet: fold now,
+                  keep it, and retire it in a later cycle once it is quiet. (sisi also retires
+                  such lessons itself at 20 showings.)
+  withdraw        it made things worse or keeps recurring at strength 3; same wording is not
+                  re-learned. Tool lessons: cannot be done in a cycle (they are changes to sisi
+                  itself) - leave them in `sisi backlog` untouched, except merging a duplicate.
+
+Enforced checks - write none for lessons below strength 3. One per strength-3 NEEDS A CHECK:
+  command: {"lesson": 3, "type": "command", "cmd": "program + args that exist here",
+    "expect": {"exit": 0} (integer exit code required; runs only in trusted projects),
+    "timeout_s": 30 (seconds, optional)}
+  contract-requirement: {"lesson": 4, "type": "contract-requirement",
+    "when": "word in the contract goal/claims that triggers it",
+    "require_kind": "general|concurrency|parsing|money|state-machine|migration|ui",
+    "max_rung": 2 (optional, 1-6: the required check must be at this rung or stronger)}
+  Complete examples are the two objects above.
+
+Learned-notes limit: counts length(change) of active strength-1 loose learned notes only
+(limit 4000 characters). Folded, strengthened, retired, withdrawn and tool-backlog lessons do
+not count. fold-into-entry, fold-into-rule, merge, retire, withdraw and writing an enforced
+check all reduce it; keep and set-when do not.
+"""
+
+def cycle_file_path():
+    return os.path.join(paths.state(), "cycle.json")
+
+
+def _into_list(e):
+    v = e.get("into")
+    if v is None:
+        return []
+    return list(v) if isinstance(v, list) else [v]
+
+
+def _suggest(bad, valid):
+    close = difflib.get_close_matches(str(bad), sorted(valid), n=3, cutoff=0.4)
+    return (" Closest valid: %s." % ", ".join(close)) if close else ""
 
 
 def brief_text():
@@ -359,6 +536,13 @@ def brief_text():
         before = measures(con)
     finally:
         con.close()
+    from . import verifiers as V
+    try:
+        _, eff_rules = overlay.effective()
+    except Exception:
+        eff_rules = []
+    recipes = [e for e in V.load_recipes() if e["header"]]
+    vers = [e for e in V.load_verifiers() if e["header"]]
     out = ["sisi learning cycle: consolidation brief", ""]
     bad = [r for r in cycle_records() if flagged(r)]
     if bad:
@@ -367,47 +551,87 @@ def brief_text():
         out += ["  %s (%s): %s" % (r["id"], r.get("ts"), r.get("summary") or "") for r in bad] + [""]
     out += ["Due: " + ("; ".join(st["reasons"]) if st["due"] else "not due by the counters; a cycle may still help"),
             "Base version (copy into your file): %s" % base,
-            "Rulebook: %s lines, budget %d. It must not grow: a rule enters only by shortening or "
-            "replacing existing text." % (before["rulebook_lines"], overlay.MAX_LINES), "",
-            "Lessons (id, status, kind, strength, occurrences, listed, read, recurrences-after-listed, effect):"]
+            "Write your file to: %s  then `sisi cycle check FILE`, then `sisi cycle apply FILE`. "
+            "Full format: `sisi cycle help`." % cycle_file_path(),
+            "This file covers only the lessons below; lessons recorded since are left for the next "
+            "cycle and do not fail the apply. Reading lessons (`sisi lessons show ID`) does not stale the base.",
+            "Rulebook: %s lines (budget %d), %s characters (budget %d). It must not grow in "
+            "characters unless `shortens` names what is removed; never past either budget. "
+            "Rules are re-wrapped to 100 chars on apply."
+            % (before["rulebook_lines"], overlay.MAX_LINES, before.get("rulebook_chars"), overlay.MAX_CHARS),
+            "Learned notes: %d of %d characters counted (active strength-1 loose learned notes "
+            "only, length of each lesson's change; folded/strengthened/tool lessons do not count). "
+            "fold-into-entry, fold-into-rule, merge, retire, withdraw and enforced checks reduce it."
+            % (st.get("notes_chars", 0), retro.NOTES_LIMIT_CHARS), "",
+            "Rules (number = what 'rule 5' means; choose folds by this list, full text in %s):" % paths.generated()]
+    for i, r in enumerate(eff_rules, 1):
+        out.append("  %d. %s - %s" % (i, r["id"], r["title"]))
+    out.append("Recipes (fold by reading applies-to, not by word matching):")
+    for e in sorted(recipes, key=lambda x: x["id"]):
+        out.append("  %s - %s" % (e["id"], (e.get("applies_to") or e.get("title") or "")[:110]))
+    out.append("Verifier entries (valid fold/create targets): " +
+               ", ".join(sorted(e["id"] for e in vers)))
+    out += ["", "Lessons (change chars = its size toward the notes limit when loose):"]
+    active_text = sum(len(r["change"] or "") + len(r["moment"] or "") + len(r["cause"] or "")
+                      for r in rows if r["status"] in retro.ACTIVE)
+    if active_text > BRIEF_TEXT_BUDGET:
+        out.append("Lesson text beyond the brief's %d-character text budget is truncated; run "
+                   "`sisi lessons show ID` for the full text of any lesson." % BRIEF_TEXT_BUDGET)
+    remaining = [BRIEF_TEXT_BUDGET]
     for r in rows:
-        out.append("#%-4d %-10s %-9s s%d x%-3d listed %-3d read %-3d rec %-3d %-13s %s"
+        out.append("#%-4d %-10s %-9s s%d x%-3d listed %-3d read %-3d rec %-3d %-13s change %d chars"
                    % (r["id"], r["status"], r["change_kind"], r["strength"] or 1, r["count"], listed[r["id"]],
-                      readn[r["id"]], rec[r["id"]], r["effect"] or "-", " ".join(r["change"].split())[:160]))
+                      readn[r["id"]], rec[r["id"]], r["effect"] or "-", len(r["change"] or "")))
+        if r["status"] not in retro.ACTIVE:
+            out.append("       (history; no action needed) change: %s" % " ".join((r["change"] or "").split())[:120])
+            continue
+        need = len(r["change"] or "") + len(r["moment"] or "") + len(r["cause"] or "")
+        full = need <= remaining[0]
+        remaining[0] -= need if full else 0
+        def show(label, text, _full=full, _id=r["id"]):
+            t = " ".join((text or "").split())
+            if _full:
+                out.append("       %s: %s" % (label, t))
+            else:
+                out.append("       %s: %s [truncated - `sisi lessons show %d` for the full text]" % (label, t[:200], _id))
+        if full:
+            show("change", r["change"])
+            show("moment", r["moment"])
+            show("cause", r["cause"])
+        else:
+            t = " ".join((r["change"] or "").split())
+            out.append("       change: %s [truncated - `sisi lessons show %d` for the full text, moment and cause]" % (t[:160], r["id"]))
+        if full:
+            out.append("       when: %s" % (r["when_terms"] or "MISSING - add at least 5 terms with set-when or any note's when"))
+        elif not r["when_terms"]:
+            out.append("       when: MISSING - add at least 5 terms with set-when or any note's when")
+        out.append("       target: %s  folded_into: %s" % (r["target"] or "-", r["folded_into"] or "-"))
         if listed[r["id"]] >= 5 and readn[r["id"]] == 0 and rec[r["id"]] > 0 and r["status"] in retro.ACTIVE:
-            out.append("       LISTED %d TIMES, NEVER READ, STILL RECURS: its heading is not earning a "
-                       "read - rewrite the start of its change and its when-terms" % listed[r["id"]])
-        out.append("       moment: %s" % " ".join((r["moment"] or "").split())[:160])
-        out.append("       when: %s" % (r["when_terms"] or "MISSING - add at least 5 terms (synonyms included) "
-                                          "in your cycle file, or this lesson is found only by its own wording"))
+            out.append("       LISTED %d TIMES, NEVER READ, STILL RECURS: rewrite the start of its change and its when-terms" % listed[r["id"]])
         if sight[r["id"]]:
-            out.append("       plus %d unconfirmed sighting(s) sisi matched to this lesson itself "
-                       "(merge candidates: the agent never confirmed with --same-as)" % sight[r["id"]])
+            out.append("       plus %d unconfirmed sighting(s) (merge candidates)" % sight[r["id"]])
         if (r["strength"] or 1) >= 3 and not r["check_json"] and r["status"] in retro.ACTIVE:
-            out.append("       NEEDS A CHECK: this lesson is at strength 3. Write one below (a command and "
-                       "expected result, or a contract requirement).")
-    out += ["", "Current rulebook (what every agent loads):", "-" * 60]
-    try:
-        out.append(overlay.render().rstrip("\n"))
-    except Exception as e:
-        out.append("(cannot render: %s)" % e)
+            out.append("       NEEDS A CHECK: strength 3 - write one enforced check (see `sisi cycle help`). "
+                       "Write no enforced check for lessons below strength 3.")
+    out += ["", "Current rulebook (what every agent loads): %s lines, %s characters; full text at %s"
+            % (before["rulebook_lines"], before.get("rulebook_chars"), paths.generated()), ""]
     missing = [r["id"] for r in rows if r["status"] in retro.ACTIVE and not r["when_terms"]]
     if missing:
-        out += ["", "Lessons with no when-terms yet (found only by their own wording until you add terms): "
-                + ", ".join("#%d" % i for i in missing)]
-    out += ["-" * 60, "", "Do this, in order:",
-            "1. First, shrink the loose list: fold each lesson into the recipe for its kind of work (or its "
-            "verifier entry), or lift several into one general rule, so they leave the loose list. The recipe "
-            "is the strongest route to the next agent, because `sisi done for` already maps a request to a "
-            "kind of work; a loose note depends on the asking agent spotting its heading, a folded one does "
-            "not (notes: fold-into-entry, fold-into-rule).",
-            "2. Merge lessons that say the same thing (notes: merge, with merged_into), including any pair an "
-            "unconfirmed sighting points at.",
-            "3. When lifting lessons into a rule (rules: add/replace), name which existing rule text gets "
-            "shorter or is replaced so the book stays the same size.",
-            "4. For each strength-3 lesson marked NEEDS A CHECK, write the check (enforced). Prefer a contract "
-            "requirement; a command must name a program that exists here and runs only in trusted projects.",
-            "5. Retire what is fully folded and quiet; withdraw what made things worse; keep the rest.",
+        out += ["Lessons with no when-terms yet: " + ", ".join("#%d" % i for i in missing), ""]
+    out += ["Do this, in order:",
+            "1. Fold each loose lesson into the recipe/entry whose applies-to (above) fits its kind of "
+            "work, or lift several into one general rule. fold-into-entry appends a field note (see help). "
+            "For a lesson naming a recipe/entry that does not exist, use create-entry with a lint-clean "
+            "file, or keep-as-draft with a reason if that is too large for this cycle - never fold into a poor match.",
+            "2. Merge only lessons requesting the same change (not just the same topic), into the older "
+            "or more general one; the survivor keeps its text and occurrence count. Superseded, retired "
+            "and withdrawn lessons need no action.",
+            "3. Tool lessons (kind tool) cannot be done in a cycle: leave them in `sisi backlog` untouched, except merging a duplicate.",
+            "4. Rules: keep id and Why, format per help; name in `shortens` which existing rule text gets shorter or is replaced whenever a rule is added or the book would grow in characters.",
+            "5. For each NEEDS A CHECK lesson write one enforced check (help has fields and examples); none below strength 3.",
+            "6. Retire only what is fully folded and quiet (folded, at least 20 listed/read, 0 recurrences "
+            "after first listed) - folding now does not make it quiet, so fold and keep, retire next cycle. "
+            "Withdraw what made things worse. set-when only sets when-terms. Keep the rest.",
             "Every changed rule keeps its id and ends with its Why. Never ask the human anything.", "", FORMAT_DOC]
     return "\n".join(out) + "\n"
 
@@ -454,10 +678,8 @@ def static_validate(doc, con):
         errs.append("version must be 1")
     if not doc.get("base"):
         errs.append("missing base: copy the base version printed by `sisi cycle` (it proves which state you read)")
-    elif doc["base"] != base_version(con):
-        errs.append("stale base %s: the lessons or rulebook changed since the brief (base is now %s), "
-                    "likely another cycle landed. Nothing was applied; run `sisi cycle` again"
-                    % (doc["base"], base_version(con)))
+    else:
+        errs.extend(_check_base(doc["base"], con))
     have = {r[0] for r in con.execute("SELECT id FROM lessons")}
     for lid in sorted(_lesson_ids_in(doc) - have):
         errs.append("no lesson with id %d" % lid)
@@ -486,22 +708,59 @@ def static_validate(doc, con):
             errs.append("rule %s: %s" % (rid, ex))
     for rid in doc.get("disable_rules") or []:
         if rid not in base_rule_ids | over_ids:
-            errs.append("no rule %s to disable" % rid)
+            errs.append("no rule %s to disable.%s" % (rid, _suggest(rid, base_rule_ids | over_ids)))
+    kinds = {}
+    try:
+        kinds = {r[0]: r[1] for r in con.execute("SELECT id, change_kind FROM lessons")}
+    except Exception:
+        pass
     for e in doc.get("notes") or []:
         if not isinstance(e, dict) or e.get("action") not in ACTIONS:
             errs.append("each note needs an action in %s: %r" % (", ".join(ACTIONS), e))
             continue
-        if e["action"] == "merge" and (not isinstance(e.get("merged_into"), int) or e.get("merged_into") == e.get("lesson")):
-            errs.append("lesson %s: merge needs merged_into naming a different lesson" % e.get("lesson"))
-        if e["action"] in ("fold-into-rule", "fold-into-entry") and not e.get("into"):
-            errs.append("lesson %s: %s needs into" % (e.get("lesson"), e["action"]))
+        lid = e.get("lesson")
+        if kinds.get(lid) == "tool" and e["action"] not in ("merge", "keep", "keep-as-draft", "set-when"):
+            errs.append("lesson %s: tool lessons cannot be done in a cycle (they change sisi itself); "
+                        "leave them in `sisi backlog` untouched, except merging a duplicate" % lid)
+        if e["action"] == "merge" and (not isinstance(e.get("merged_into"), int) or e.get("merged_into") == lid):
+            errs.append("lesson %s: merge needs merged_into naming a different lesson" % lid)
+        if e["action"] in ("fold-into-rule", "fold-into-entry", "create-entry") and not _into_list(e):
+            errs.append("lesson %s: %s needs into" % (lid, e["action"]))
         if e.get("when") is not None and len(retro.parse_when(e.get("when"))) < 5:
-            errs.append("lesson %s: when needs at least 5 terms (synonyms included)" % e.get("lesson"))
-        if e["action"] == "fold-into-entry" and e.get("into"):
+            errs.append("lesson %s: when needs at least 5 terms (synonyms included)" % lid)
+        if e["action"] == "set-when" and len(retro.parse_when(e.get("when"))) < 5:
+            errs.append("lesson %s: set-when needs when with at least 5 terms" % lid)
+        if e["action"] == "keep-as-draft" and not (e.get("reason") or "").strip():
+            errs.append("lesson %s: keep-as-draft needs a reason" % lid)
+        if e["action"] == "fold-into-rule":
+            valid = base_rule_ids | over_ids
+            for into in _into_list(e):
+                if into not in valid:
+                    errs.append("lesson %s: no rule with id %r to fold into.%s" % (lid, into, _suggest(into, valid)))
+        if e["action"] == "fold-into-entry":
             from . import verifiers as V
             ids = {x["id"] for x in V.load_verifiers() if x["header"]} | {x["id"] for x in V.load_recipes() if x["header"]}
-            if e["into"] not in ids:
-                errs.append("lesson %s: no verifier or recipe with id %r to fold into" % (e.get("lesson"), e["into"]))
+            for into in _into_list(e):
+                if into not in ids:
+                    errs.append("lesson %s: no verifier or recipe with id %r to fold into.%s "
+                                "If the lesson asks for a new one, use create-entry, or keep-as-draft with a reason"
+                                % (lid, into, _suggest(into, ids)))
+        if e["action"] == "create-entry":
+            if e.get("entry_kind") not in ("recipe", "verifier"):
+                errs.append("lesson %s: create-entry needs entry_kind recipe or verifier" % lid)
+            elif not (e.get("entry_text") or "").strip():
+                errs.append("lesson %s: create-entry needs entry_text (the full file, see docs/verifier-format.md)" % lid)
+            else:
+                for into in _into_list(e):
+                    try:
+                        from . import verifiers as V
+                        existing = {x["id"] for x in (V.load_verifiers() if e["entry_kind"] == "verifier" else V.load_recipes()) if x["header"]}
+                        if into in existing:
+                            errs.append("lesson %s: %s %r already exists; fold into it instead of create-entry" % (lid, e["entry_kind"], into))
+                        else:
+                            overlay._put_entry(e["entry_kind"], e["entry_text"], into, False)
+                    except Exception as ex:
+                        errs.append("lesson %s: create-entry %r: %s" % (lid, into, ex))
     from . import contract as C
     for e in doc.get("enforced") or []:
         if not isinstance(e, dict):
@@ -530,7 +789,8 @@ def _apply_writes(doc, con):
     """Write the validated cycle: rule files, disables, enforced checks, lesson updates. Caller holds the lock."""
     touched = set()
     for e in doc.get("rules") or []:
-        r = overlay.parse_rule_file("## %s\n\n%s\n" % (e["title"], e["body"]), e["id"])
+        body = overlay.wrap_rule_body(e["body"])
+        r = overlay.parse_rule_file("## %s\n\n%s\n" % (e["title"], body), e["id"])
         overlay._write("rules/%s.md" % e["id"], overlay.rule_text(r))
         if e.get("action") == "replace":
             overlay._set_base("rule", e["id"], overlay.base_hash("rule", e["id"]))
@@ -566,16 +826,29 @@ def _apply_writes(doc, con):
                         ("lesson:%d" % e["merged_into"], lid))
             con.execute("UPDATE lessons SET needs_cycle=0 WHERE id=?", (e["merged_into"],))
         elif act == "fold-into-rule":
+            intos = _into_list(e)
             con.execute("UPDATE lessons SET folded_into=?, needs_cycle=0, "
                         "promoted_shown=CASE WHEN COALESCE(strength,1)<2 THEN "
                         "(SELECT count(*) FROM impressions WHERE lesson_id=?) ELSE promoted_shown END, "
                         "strength=max(COALESCE(strength,1),2) WHERE id=?",
-                        ("rule:" + e["into"], lid, lid))
+                        (",".join("rule:" + x for x in intos), lid, lid))
         elif act == "fold-into-entry":
             r = con.execute("SELECT * FROM lessons WHERE id=?", (lid,)).fetchone()
-            retro._append_note(e["into"] + ".md", e["into"], r)
+            intos = _into_list(e)
+            for into in intos:
+                retro._append_note(into + ".md", into, r, note_text=e.get("note"))
             con.execute("UPDATE lessons SET status='applied', effect='field-note', folded_into=?, needs_cycle=0, "
-                        "applied_at=COALESCE(applied_at,?) WHERE id=?", (e["into"], store.now(), lid))
+                        "applied_at=COALESCE(applied_at,?) WHERE id=?", (",".join(intos), store.now(), lid))
+        elif act == "create-entry":
+            for into in _into_list(e):
+                _id, rel, _mine = overlay._put_entry(e["entry_kind"], e["entry_text"], into, False)
+                overlay._write(rel, e["entry_text"] if e["entry_text"].endswith("\n") else e["entry_text"] + "\n")
+            con.execute("UPDATE lessons SET status='applied', effect='field-note', folded_into=?, needs_cycle=0, "
+                        "applied_at=COALESCE(applied_at,?) WHERE id=?", (",".join(_into_list(e)), store.now(), lid))
+        elif act == "keep-as-draft":
+            con.execute("UPDATE lessons SET needs_cycle=0 WHERE id=?", (lid,))
+        elif act == "set-when":
+            pass  # when-terms were already set above; set-when does nothing else
         elif act == "retire":
             con.execute("UPDATE lessons SET status='retired', needs_cycle=0 WHERE id=?", (lid,))
         elif act == "withdraw":
@@ -604,16 +877,34 @@ def apply_file(path):
             before_rows = {r["id"]: dict(r) for r in con.execute("SELECT * FROM lessons")}
             before_m = measures(con)
             before_lines = before_m["rulebook_lines"]
+            before_chars = before_m.get("rulebook_chars")
             prev_last = retro.get_meta(con, "last_cycle_ts")
             try:
                 touched = _apply_writes(doc, con)
+                # create-entry files must pass the existing library lint
+                from . import verifiers as _V
+                for e in doc.get("notes") or []:
+                    if isinstance(e, dict) and e.get("action") == "create-entry":
+                        for into in _into_list(e):
+                            bad = [x for x in _V.lint() if os.path.basename(x.split(":")[0]) == into + ".md"]
+                            if bad:
+                                raise CycleError("create-entry %r does not pass `sisi verifiers lint`: %s"
+                                                   % (into, "; ".join(bad)))
                 con.commit()
                 built = overlay.build_canon()
                 has_replace = any(e.get("action") == "replace" for e in doc.get("rules") or [])
-                if built["lines"] > overlay.MAX_LINES:
-                    raise CycleError("the rulebook would be %d lines; the budget is %d. Shorten or replace "
-                                     "another rule first" % (built["lines"], overlay.MAX_LINES))
-                if before_lines is not None and built["lines"] > before_lines and not has_replace:
+                has_shortens = any(e.get("shortens") for e in doc.get("rules") or []) or bool(doc.get("disable_rules"))
+                if before_chars is not None and built["chars"] > before_chars and not has_shortens:
+                    raise CycleError("the rulebook would grow from %d to %d characters (and %d to %d lines). "
+                                     "A cycle must not increase the characters unless its rules name in "
+                                     "`shortens` which existing rule text gets shorter or is replaced; it "
+                                     "would grow, so add `shortens` or shorten existing text instead"
+                                     % (before_chars, built["chars"], before_lines or 0, built["lines"]))
+                if built["lines"] > overlay.MAX_LINES or built["chars"] > overlay.MAX_CHARS:
+                    raise CycleError("the rulebook would be %d lines and %d characters; the budgets are %d lines "
+                                     "and %d characters. Shorten or replace another rule first"
+                                     % (built["lines"], built["chars"], overlay.MAX_LINES, overlay.MAX_CHARS))
+                if before_lines is not None and built["lines"] > before_lines and not has_replace and not has_shortens:
                     raise CycleError("the rulebook would grow from %d to %d lines. It may grow only when a "
                                      "rule is replaced (and never past %d); shorten existing text instead"
                                      % (before_lines, built["lines"], overlay.MAX_LINES))
@@ -788,7 +1079,7 @@ def improve_text():
     else:
         lines.append("deliveries: send-backs each %s this week, %s before; median time %s this week, %s before"
                      % (sb(cur, cur_rows), sb(prev, prev_rows), _fmt_med(cur["median_s"]), _fmt_med(prev["median_s"])))
-    lines.append("rulebook: %s lines of %d allowed" % (m["rulebook_lines"], overlay.MAX_LINES))
+    lines.append("rulebook: %s lines of %d allowed, %s characters of %d allowed" % (m["rulebook_lines"], overlay.MAX_LINES, m.get("rulebook_chars"), overlay.MAX_CHARS))
     st = due_state()
     lines.append("next cycle: " + ("due now (%s); run `sisi cycle`" % st["reasons"][0] if st["due"] else "not due"))
     lines.append("Not measured: whether the work itself is what the human meant. That still rests on the "
@@ -815,9 +1106,101 @@ def improve_line():
         return "learning            : n/a"
 
 
+def check_file(path):
+    """Validate FILE and print exactly what would change, changing nothing. Returns lines."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError) as e:
+        raise CycleError("cannot read %s: %s" % (path, e))
+    con = retro.connect()
+    try:
+        retro.ensure_effects(con)
+        errs = static_validate(doc, con)
+        if errs:
+            raise CycleError("refused, nothing would be applied:\n" + "\n".join("  - " + e for e in errs))
+        before = measures(con)
+        out = ["check ok: %s would apply as follows (nothing was changed):" % path,
+               "  summary: %s" % (doc.get("summary") or "")]
+        for e in doc.get("rules") or []:
+            out.append("  rule %s: %s %r (shortens: %s)" % (e.get("id"), e.get("action"), e.get("title"), e.get("shortens") or "-"))
+        for rid in doc.get("disable_rules") or []:
+            out.append("  disable rule: %s" % rid)
+        for e in doc.get("notes") or []:
+            extra = ""
+            if _into_list(e):
+                extra = " into %s" % ", ".join(_into_list(e))
+            if e.get("merged_into"):
+                extra = " into lesson %s" % e["merged_into"]
+            if e.get("note"):
+                extra += " note=%r" % e["note"][:60]
+            if e.get("when"):
+                extra += " when=%r" % e["when"][:60]
+            if e.get("reason"):
+                extra += " reason=%r" % e["reason"][:60]
+            if e.get("entry_kind"):
+                extra += " entry_kind=%s" % e["entry_kind"]
+            out.append("  lesson %s: %s%s" % (e.get("lesson"), e.get("action"), extra))
+        for e in doc.get("enforced") or []:
+            out.append("  lesson %s: enforced %s %s" % (e.get("lesson"), e.get("type"),
+                         e.get("cmd") or ("when=%s require_kind=%s" % (e.get("when"), e.get("require_kind")))))
+        # predicted rulebook size with the rules applied in memory
+        try:
+            pre, rules = overlay.effective()
+            by_id = {r["id"]: dict(r) for r in rules}
+            order = [r["id"] for r in rules]
+            for rid in doc.get("disable_rules") or []:
+                by_id.pop(rid, None)
+                if rid in order:
+                    order.remove(rid)
+            for e in doc.get("rules") or []:
+                wrapped = overlay.wrap_rule_body(e["body"])
+                if e["id"] in by_id:
+                    by_id[e["id"]].update(title=e["title"], body=wrapped)
+                else:
+                    by_id[e["id"]] = {"id": e["id"], "title": e["title"], "body": wrapped}
+                    order.append(e["id"])
+            parts = [overlay.render().splitlines()[0] if overlay.render().splitlines() else "<!-- check -->"]
+            if pre.strip():
+                parts.append(pre)
+            for n, rid in enumerate(order, 1):
+                if rid in by_id:
+                    parts.append("## %d. %s {#%s}\n\n%s" % (n, by_id[rid]["title"], rid, by_id[rid]["body"]))
+            cand = "\n\n".join(parts) + "\n"
+            lines, chars = overlay.size(cand)
+            out.append("  rulebook: %s lines, %s characters -> %d lines, %d characters "
+                       "(budgets %d lines, %d characters)"
+                       % (before["rulebook_lines"], before.get("rulebook_chars"), lines, chars,
+                          overlay.MAX_LINES, overlay.MAX_CHARS))
+            has_shortens = any(e.get("shortens") for e in doc.get("rules") or []) or bool(doc.get("disable_rules"))
+            if chars > overlay.MAX_CHARS or lines > overlay.MAX_LINES:
+                raise CycleError("the rulebook would be %d lines and %d characters; budgets are %d and %d"
+                                 % (lines, chars, overlay.MAX_LINES, overlay.MAX_CHARS))
+            if before.get("rulebook_chars") is not None and chars > before["rulebook_chars"] and not has_shortens:
+                raise CycleError("the rulebook would grow from %d to %d characters; add `shortens` naming "
+                                 "which existing rule text gets shorter or is replaced" % (before["rulebook_chars"], chars))
+        except CycleError:
+            raise
+        except Exception:
+            pass
+        return out
+    finally:
+        con.close()
+
+
 def cmd_cycle(args):
     sub = args[0] if args else "brief"
     try:
+        if sub in ("help", "--help", "-h"):
+            print(HELP_TEXT, end="")
+            return 0
+        if sub in ("check", "--dry-run"):
+            if len(args) != 2:
+                print("usage: sisi cycle check FILE  (or sisi cycle --dry-run FILE)")
+                return 2
+            for line in check_file(args[1]):
+                print(line)
+            return 0
         if sub == "due":
             st = due_state()
             if st["due"]:
@@ -846,7 +1229,7 @@ def cmd_cycle(args):
             for line in status_lines():
                 print(line)
             return 0
-        print("usage: sisi cycle [due|apply FILE|revert [ID]|status]  (no argument prints the brief)")
+        print("usage: sisi cycle [due|apply FILE|check FILE|--dry-run FILE|revert [ID]|status|help]  (no argument prints the brief)")
         return 2
     except CycleError as e:
         print("sisi cycle: %s" % e)

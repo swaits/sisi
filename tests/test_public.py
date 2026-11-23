@@ -38,6 +38,34 @@ _ALLOWED_HOME_USERS = {"alice", "bob", "user", "you", "name", "username", "examp
 HOME_RE = re.compile(r"(?<![\w.])/(?:home|Users)/([A-Za-z0-9_.-]+)")
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 
+# Values that change under the text and make it go stale: a release number, a count of things in the
+# library or the tool list, a year, or words tied to when the sentence was written. A reader who needs
+# such a fact is pointed at the command or file that gives the live answer (`sisi --version`,
+# `sisi status`, `sisi doctor`, `sisi verifiers`, CHANGELOG.md) instead. Two-part versions (the
+# minimum Python) and rung numbers do not match these patterns.
+THREE_PART_VERSION_RE = re.compile(r"(?<![\w.])v?\d+\.\d+\.\d+\b")
+YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+COUNT_RE = re.compile(r"(?<![\w.-])\d[\d,]*\s+(?:[A-Za-z-]+\s+)?"
+                      r"(?:techniques|verifiers|recipes|tests|lessons|tools|harnesses)\b", re.I)
+STALE_WORDS_RE = re.compile(r"\b(?:currently|today|as of)\b", re.I)
+# A tool version quoted as evidence says what a fact was checked on, so it stays: for example a line
+# in docs/harnesses.md naming the OpenCode version a limit was checked against.
+VERSION_EVIDENCE_RE = re.compile(r"\b(?:verified on|checked against|on\s+[A-Z][\w-]*\s+v\d+\.\d+\.\d+)\b", re.I)
+README_WORD_CEILING = 1790  # about a tenth above the README when set; raise it deliberately
+
+
+def _stale_value_findings(text, rel, allow_version_evidence=False):
+    findings = []
+    for lineno, line in enumerate((text or "").splitlines(), 1):
+        evidence = allow_version_evidence and VERSION_EVIDENCE_RE.search(line)
+        for name, pattern in (("three-part version", THREE_PART_VERSION_RE), ("year", YEAR_RE),
+                              ("count", COUNT_RE), ("stale word", STALE_WORDS_RE)):
+            if name == "three-part version" and evidence:
+                continue
+            for m in pattern.finditer(line):
+                findings.append("%s:%d: %s %r" % (rel, lineno, name, m.group(0)))
+    return findings
+
 
 class PublishableTree(unittest.TestCase):
     def test_no_home_paths(self):
@@ -114,6 +142,39 @@ class ReadmeIsHonest(SisiCase):
                 if re.match(r"^[a-z]+:", target):
                     continue
                 self.assertTrue(os.path.exists(os.path.join(base, target)), "%s -> %s" % (doc, target))
+
+
+class NoStaleValues(unittest.TestCase):
+    def test_readme_has_no_stale_values(self):
+        text = open(os.path.join(REPO, "README.md"), encoding="utf-8").read()
+        self.assertEqual(_stale_value_findings(text, "README.md"), [],
+                         "hardcoded values that will go stale in the README")
+
+    def test_docs_have_no_stale_values(self):
+        rels = ["CONTRIBUTING.md", "SECURITY.md"]
+        rels += [os.path.join("docs", n) for n in sorted(os.listdir(os.path.join(REPO, "docs")))
+                 if n.endswith(".md")]
+        findings = []
+        for rel in rels:
+            findings += _stale_value_findings(_text(rel), rel, allow_version_evidence=True)
+        self.assertEqual(findings, [], "hardcoded values that will go stale in the docs")
+
+    def test_readme_word_count_stays_under_ceiling(self):
+        words = len(open(os.path.join(REPO, "README.md"), encoding="utf-8").read().split())
+        self.assertLessEqual(words, README_WORD_CEILING,
+                             "README has %d words, ceiling %d; cut or raise it deliberately"
+                             % (words, README_WORD_CEILING))
+
+    def test_the_stale_scan_can_fail(self):
+        bad = _stale_value_findings(
+            "Version 0.1.0 had 140 verification techniques and 20 recipes in 2026; today it grows.",
+            "sample")
+        self.assertGreaterEqual(len(bad), 5, bad)
+        self.assertTrue(_stale_value_findings("checked on Foo v1.2.3", "sample"))
+        allowed = "Python 3.9 or newer; rung 1, rung 2, rung 3, rung 4, rung 5, rung 6."
+        self.assertEqual(_stale_value_findings(allowed, "sample"), [])
+        evidence = "no delivery could be confirmed on Foo v1.2.3 in headless runs"
+        self.assertEqual(_stale_value_findings(evidence, "sample", allow_version_evidence=True), [])
 
 
 if __name__ == "__main__":

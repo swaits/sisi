@@ -537,7 +537,22 @@ def new_lesson(con, f, cwd, fp):
     return lid
 
 
-def _append_note(kind_file, target, r, draft=False):
+def notes_chars(con):
+    """Characters counted toward the learned-notes limit: length(change) of active, strength-1,
+    still-loose learned notes only. Folded lessons (into a rule, entry, draft or enforced check),
+    tool backlog lessons and strengthened lessons do not count: folding is what reduces this."""
+    try:
+        return con.execute(
+            "SELECT COALESCE(sum(length(change)),0) FROM lessons WHERE status IN ('open','applied') "
+            "AND COALESCE(strength,1)=1 AND folded_into IS NULL AND COALESCE(effect,'')='learned-note'"
+        ).fetchone()[0]
+    except Exception:
+        return con.execute(
+            "SELECT COALESCE(sum(length(change)),0) FROM lessons WHERE status IN ('open','applied') "
+            "AND COALESCE(strength,1)=1 AND folded_into IS NULL").fetchone()[0]
+
+
+def _append_note(kind_file, target, r, draft=False, note_text=None):
     d = paths.notes_dir()
     os.makedirs(d, exist_ok=True)
     p = os.path.join(d, kind_file)
@@ -548,7 +563,8 @@ def _append_note(kind_file, target, r, draft=False):
             if draft:
                 f.write("No recipe with this id exists yet. These notes are shown by `sisi done for` when their "
                         "words match, until a cycle turns them into a recipe or folds them elsewhere.\n\n")
-        f.write("- %s: %s (aim: %s; seen %d times; lesson %d)\n" % (store.now()[:10], " ".join(r["change"].split()), r["aim"], r["count"], r["id"]))
+        text = note_text if note_text is not None else r["change"]
+        f.write("- %s: %s (aim: %s; seen %d times; lesson %d)\n" % (store.now()[:10], " ".join(text.split()), r["aim"], r["count"], r["id"]))
     return p
 
 

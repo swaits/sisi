@@ -19,6 +19,12 @@ import contextlib, hashlib, json, os, re, sys, tempfile, time
 from . import paths
 
 MAX_LINES = 120
+# Character budget as well as lines: the base rulebook renders to 6,525 characters in 120 lines.
+# Wrapping games (fewer, longer lines) must not load more text into every session, so the honest
+# measure is characters. 7,200 allows modest headroom (about 10%) for a short replacement while
+# still refusing any real growth.
+MAX_CHARS = 7200
+HOUSE_WIDTH = 100
 KINDS = ("rule", "verifier", "recipe")
 ID_TAIL = re.compile(r"\s*\{#([A-Za-z0-9][A-Za-z0-9_-]*)\}\s*$")
 NUM = re.compile(r"^\d+\.\s+")
@@ -86,6 +92,30 @@ def parse_rule_file(text, rid=None):
 
 def rule_text(r):
     return "## %s\n\n%s\n" % (r["title"], r["body"])
+
+
+def wrap_rule_body(body, width=HOUSE_WIDTH):
+    """Re-wrap rule prose to the house width, preserving paragraphs, bullets and code fences."""
+    import textwrap
+    out, in_fence = [], False
+    for line in (body or "").split("\n"):
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence or not line.strip():
+            out.append(line)
+            continue
+        stripped = line.lstrip()
+        indent = ""
+        if stripped.startswith(("- ", "* ")):
+            indent = "  "
+        elif re.match(r"^\d+\.\s", stripped):
+            indent = "   "
+        wrapped = textwrap.wrap(line, width=width, subsequent_indent=indent,
+                                break_long_words=False, break_on_hyphens=False)
+        out.extend(wrapped or [""])
+    return "\n".join(out).strip("\n")
 
 
 def _read(p):
@@ -196,10 +226,11 @@ def build_canon(strict=False):
     from . import pdata
     text = render()
     lines, chars = size(text)
-    over = lines > MAX_LINES
+    over = lines > MAX_LINES or chars > MAX_CHARS
     if over and strict:
-        raise OverlayError("the rulebook would be %d lines; the budget is %d. Shorten or replace another rule first "
-                           "(`sisi canon cost` shows the size)" % (lines, MAX_LINES))
+        raise OverlayError("the rulebook would be %d lines and %d characters; the budgets are %d lines and %d "
+                           "characters. Shorten or replace another rule first (`sisi canon cost` shows the size)"
+                           % (lines, chars, MAX_LINES, MAX_CHARS))
     pdata.ensure()
     p = paths.generated()
     os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -240,6 +271,7 @@ def cost():
     except OSError:
         lines = chars = None
     return {"rulebook_lines": lines, "rulebook_chars": chars, "rulebook_budget_lines": MAX_LINES,
+            "rulebook_budget_chars": MAX_CHARS,
             "lessons_block_max_chars": retro.LIMIT, "lessons_block_max_lines": 1 + 8}
 
 
@@ -247,8 +279,8 @@ def cost_line(c=None):
     c = c or cost()
     if c["rulebook_lines"] is None:
         return "rulebook not generated yet (run `sisi build-canon`); lessons block at most %d characters" % c["lessons_block_max_chars"]
-    return "rulebook %d lines (budget %d), %d characters; session-start lessons block at most %d characters, %d lines" % (
-        c["rulebook_lines"], c["rulebook_budget_lines"], c["rulebook_chars"], c["lessons_block_max_chars"], c["lessons_block_max_lines"])
+    return "rulebook %d lines (budget %d), %d characters (budget %d); session-start lessons block at most %d characters, %d lines" % (
+        c["rulebook_lines"], c["rulebook_budget_lines"], c["rulebook_chars"], c.get("rulebook_budget_chars", MAX_CHARS), c["lessons_block_max_chars"], c["lessons_block_max_lines"])
 
 
 # ---- library overlay (verifiers, recipes) ---------------------------------------

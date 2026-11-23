@@ -156,7 +156,7 @@ default the agent is proceeding on. Work that does not depend on it continues. `
 queue. An answer that differs from the default re-opens only the nodes that used it.
 
 **Delegation records.** A person who already delegates work to cheaper models may keep a ledger of outcomes.
-The design folds such a ledger and its routing table into the shared store. Today sisi only reads an optional
+The design folds such a ledger and its routing table into the shared store. Built so far, sisi only reads an optional
 ledger file, to match delegations with sessions when it builds the task set.
 
 ## Part 3: learning that compounds
@@ -220,7 +220,7 @@ that favours flat-rate plans first, then the cheaper models.
 
 Other things the loop would improve, besides rules: recipes are tightened whenever a bug gets past a passing
 set of checks; techniques are ranked by how often they catch real failures; checks that never fail are flagged
-(`sisi checks` does this today); new models are scored on the task set before routing changes.
+(`sisi checks` does this); new models are scored on the task set before routing changes.
 
 **Owning the instruction surface.** `sisi audit` lists every source of instructions each tool loads
 (instruction files, plugins, skills) and reports where they contradict the rulebook. Contradictions the loop
@@ -255,7 +255,7 @@ replaced, the person's version stays and the item is queued for re-testing again
 Personal data carries a format version, and `sisi update` migrates it after taking a backup.
 
 One folder means one thing to back up or copy to another machine (`sisi export`, `sisi import`). Results and
-session records stay in scratch for now and are included in the export. Nothing personal is ever placed in the
+session records stay in scratch and are included in the export. Nothing personal is ever placed in the
 product, so the product can be published.
 
 Any agent in any tool reads through the files or the CLI and writes through the CLI:
@@ -325,7 +325,7 @@ resumes without redoing closed nodes (to be model-checked, then tested).
 
 ## Decisions
 
-1. Delegation tooling is folded into sisi in the design; only the optional ledger read exists today.
+1. Delegation tooling is folded into sisi in the design; only the optional ledger read is built.
 2. The end-of-turn gate is on by default. Each check has a time limit, and after three send-backs in a row the
    agent is let through with the result marked unverified. One setting turns the gate off.
 3. Session text may be read by any provider the user already uses as a worker, never by a model whose id marks it

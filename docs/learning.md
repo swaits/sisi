@@ -47,17 +47,17 @@ what "done" means, verifying, or being sent back by the gate.
 5. **Recurring lessons get stronger.** Each lesson has a strength: 1 (a note), 2 (a candidate rule),
    3 (enforced). A recurrence after at least two showings since the last promotion moves it up one
    step — each step needs its own fresh evidence. A strength-2 lesson
-   becomes a real rule only through consolidation (below), because the rulebook has a hard budget of
-   120 lines and must not grow. A strength-3 lesson needs a check the gate can run; a folded lesson
+   becomes a real rule only through consolidation (below), because the rulebook has hard budgets of
+   120 lines and 7,200 characters and must not grow. A strength-3 lesson needs a check the gate can run; a folded lesson
    shown 20 times with no recurrence is retired from the notes (it stays in history); a lesson that
    still recurs at strength 3 is withdrawn, and the same wording will not be learned again.
 6. **Consolidation happens in a cycle**, run by whichever agent is working — see below.
 
 ## The cycle (`sisi cycle`)
 
-Consolidation is due when 5 or more lessons have been recorded since the last cycle, or a lesson is
-waiting to move up a step, or the learned notes pass their size limit, or more than 30 lessons are
-still loose (or their one-line headings pass the 1,500-character budget) — the loose list stays short
+Consolidation is due when enough lessons have been recorded since the last cycle, or a lesson is
+waiting to move up a step, or the learned notes or the loose lessons pass their limits (`sisi cycle
+due` states the live reason and its limit) — the loose list stays short
 by construction, because the brief's first instruction is to fold lessons into the recipe or entry
 for their kind of work, or lift several into one rule, so they leave it. That is a counter check, not a
 schedule: it runs at session start, at the end of every turn in the gate, and in the output of
@@ -71,24 +71,47 @@ lessons that say the same thing; lift specific lessons into one general rule; fo
 entry it belongs to; say which existing rule text gets shorter so the book does not grow; write checks
 for strength-3 lessons). The agent answers with one JSON file:
 
+The brief names the scratch path to write it to, lists every valid rule, recipe and verifier id
+(with each recipe's one-line applies-to and the rule number-to-id map), shows full lesson text when
+it fits its stated text budget (otherwise it says to run `sisi lessons show ID`), and puts the full
+format behind `sisi cycle help`. `sisi cycle check FILE` (or `--dry-run`) validates and prints
+exactly what would change, changing nothing.
+
 ```json
 {"version": 1, "base": "<base version from the brief>", "summary": "one line",
- "rules": [{"id": "rule-id", "title": "Title", "body": "text, ending with Why: ...", "action": "add|replace"}],
+ "rules": [{"id": "rule-id", "title": "Title", "body": "text, ending with Why: ...", "action": "add|replace",
+            "shortens": "rule-id: what is removed (required when the book would grow in characters)"}],
  "disable_rules": ["rule-id"],
- "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep",
-            "into": "rule or entry id", "merged_into": 4,
-            "when": "at least 5 terms (optional; sets the lesson's when-terms)"}],
+ "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-when|create-entry|keep-as-draft",
+            "into": "rule/entry id or [ids]", "merged_into": 4, "note": "split text (optional)",
+            "when": "at least 5 terms (optional)", "entry_kind": "recipe|verifier", "entry_text": "full file (create-entry)",
+            "reason": "why it stays a draft (keep-as-draft)"}],
  "enforced": [{"lesson": 3, "type": "command", "cmd": "...", "expect": {"exit": 0}, "timeout_s": 30},
               {"lesson": 4, "type": "contract-requirement", "when": "parser",
                "require_kind": "parsing", "max_rung": 2}]}
 ```
 
+`fold-into-entry` appends a dated field-note bullet (the lesson's change, or `note`) to
+`notes/<id>.md` and marks the lesson applied; `into` may be a list, and two notes for one lesson
+with different `note` text split a compound lesson. `create-entry` creates a personal recipe or
+verifier entry in the overlay, lint-checked; `keep-as-draft` keeps it as a draft with a reason.
+`set-when` only sets when-terms. Merge only lessons requesting the same change, into the older or
+more general one, which keeps its text and count; the other becomes superseded and needs no action.
+Tool lessons cannot be done in a cycle: they stay in `sisi backlog`, except merging a duplicate.
+Retire only what is fully folded and quiet (folded, at least 20 listed/read, no recurrences after
+first listing); folding in this cycle does not make it quiet. The learned-notes limit counts only
+`length(change)` of active strength-1 loose learned notes: folded lessons no longer count, which
+is why folding (or merging, retiring, withdrawing, enforcing) reduces it.
+
 `sisi cycle apply FILE` checks the file before writing anything: every lesson id exists, the base
 version is still current, changed rules keep their id and their Why, named `sisi` commands and
-enforced programs exist, and the resulting rulebook is inside the budget and no longer than before
-unless a rule was replaced. The base version plus the personal-data lock means two sessions
-consolidating at once cannot overwrite each other: the second apply is refused and told to read a
-fresh brief. A successful apply is one commit in your personal repository, with before-and-after
+enforced programs exist, and the resulting rulebook is inside both budgets (120 lines and 7,200
+characters) and no longer in characters than before unless `shortens` names what was removed.
+Rules are re-wrapped to 100 characters on apply. The base version covers only what a cycle may
+change (lesson content and status, rules, notes, enforced checks), not listed/read counters, and
+lessons recorded since the brief are left for the next cycle; a stale refusal names exactly what
+changed. The base version plus the personal-data lock means two sessions consolidating at once
+cannot overwrite each other: the second apply is refused and told to read a fresh brief. A successful apply is one commit in your personal repository, with before-and-after
 measurements. `sisi cycle revert` undoes the newest applied cycle exactly (the changed files byte for
 byte, and the lesson rows it touched). `sisi cycle status` shows each cycle with what happened since:
 deliveries, send-backs each, median time, and recurrences of the lessons it touched. A cycle whose

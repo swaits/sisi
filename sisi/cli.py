@@ -22,7 +22,7 @@ HELP = """sisi: shared rulebook and enforced definitions of done for every AI co
   sisi update                        fast-forward the product clone, then back up, migrate and rebuild personal data
   sisi export [PATH] | import PATH   one tar.gz of personal data, results and session records; restore it
   sisi build-canon                   regenerate the effective rulebook (base rules + your overlay)
-  sisi canon cost                    size of what is always loaded: rulebook lines and characters, lessons block maximum
+  sisi canon cost                    size of what is always loaded: rulebook lines and characters against both budgets, lessons block maximum
   sisi overlay list|diff|add-rule|replace-rule|disable-rule|enable-rule|add-verifier|...|revert COMMIT
                                      learned changes to rules, verifiers and recipes; each one a commit in your personal repo
   sisi audit                         inventory of standing instructions per tool
@@ -36,9 +36,11 @@ HELP = """sisi: shared rulebook and enforced definitions of done for every AI co
   sisi lessons [filters] | show ID | set ID --status S | apply ID | export [FILE] | import FILE
                                      the shared lessons from retros (--aim --kind --status --repo --top --json)
   sisi backlog                       tool lessons: changes to sisi itself, most seen first
-  sisi cycle [due|apply FILE|revert [ID]|status]
+  sisi cycle [due|apply FILE|check FILE|--dry-run FILE|revert [ID]|status|help]
                                      consolidate lessons into rules, entries and enforced checks (no
-                                     scheduler: due-ness is a counter checked during normal use)
+                                     scheduler: due-ness is a counter checked during normal use);
+                                     check/--dry-run prints what would change, changing nothing;
+                                     help prints the full cycle file format
   sisi improve                       is it getting better? lessons, recurrence, send-backs, time, rulebook size
   sisi note TEXT                     (older; prefer retro) record something that went wrong
   sisi propose TEXT                  (older; prefer retro) suggest a rule change

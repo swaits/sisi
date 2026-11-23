@@ -980,5 +980,249 @@ class ImproveFromUseTests(LearningCase):
         self.assertEqual(self.lesson(lid)["strength"], 3)
 
 
+RECIPE_TEXT = """---
+id: curated-record-change
+title: Editing a curated record
+applies_to: Editing a sourced record in a curated dataset.
+---
+
+## Done means
+- The record is edited and its source is cited.
+
+## Checks
+- Show the edited record matches its source.
+
+## Common false finishes
+- Editing without checking the source.
+"""
+
+
+class CycleGapTests(LearningCase):
+    def test_gap01_brief_full_text_and_show_hint(self):
+        lid = self.mk(change="Parser readiness probes beat fixed sleeps for servers always",
+                      moment="the parser server waited at step 4")
+        out = cycle.brief_text()
+        self.assertIn("Parser readiness probes beat fixed sleeps", out)
+        self.assertIn("sisi lessons show ID", out)  # reading instruction present
+        old = cycle.BRIEF_TEXT_BUDGET
+        cycle.BRIEF_TEXT_BUDGET = 10
+        try:
+            out2 = cycle.brief_text()
+        finally:
+            cycle.BRIEF_TEXT_BUDGET = old
+        self.assertIn("`sisi lessons show %d`" % lid, out2)
+        self.assertIn("text budget", out2)
+
+    def test_gap02_reading_does_not_stale_base_and_stale_is_precise(self):
+        lid = self.mk()
+        base = cycle.base_version()
+        self.sisi("lessons", "show", str(lid))  # a read: counters only
+        retro.record_shown([lid], "done-for", "s")
+        doc = self.cycle_doc(notes=[{"lesson": lid, "action": "keep"}])
+        # cycle_doc recomputes base; rebuild with the original base
+        d = {"version": 1, "base": base, "summary": "x", "notes": [{"lesson": lid, "action": "keep"}]}
+        p = os.path.join(self.tmp, "g2.json")
+        with open(p, "w") as f:
+            json.dump(d, f)
+        self.assertEqual(self.sisi("cycle", "apply", p).returncode, 0)
+        # now a real change stales a fresh brief, precisely
+        lid2 = self.mk(change="Second parser readiness lesson for stale check", moment="second wait at step 2")
+        base2 = cycle.base_version()
+        con = retro.connect()
+        con.execute("UPDATE lessons SET status='retired' WHERE id=?", (lid2,))
+        con.commit(); con.close()
+        d2 = {"version": 1, "base": base2, "summary": "x", "notes": [{"lesson": lid2, "action": "keep"}]}
+        p2 = os.path.join(self.tmp, "g2b.json")
+        with open(p2, "w") as f:
+            json.dump(d2, f)
+        r = self.sisi("cycle", "apply", p2)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("lesson #%d changed" % lid2, r.stdout)
+        self.assertNotIn("likely another cycle", r.stdout)
+
+    def test_gap03_new_lesson_does_not_block_apply(self):
+        lid = self.mk()
+        base = cycle.base_version()
+        self.mk(change="Brand new parser lesson arriving mid cycle", moment="new wait at step 5")
+        d = {"version": 1, "base": base, "summary": "x", "notes": [{"lesson": lid, "action": "keep"}]}
+        p = os.path.join(self.tmp, "g3.json")
+        with open(p, "w") as f:
+            json.dump(d, f)
+        self.assertEqual(self.sisi("cycle", "apply", p).returncode, 0)
+
+    def test_gap04_create_entry_and_keep_as_draft(self):
+        lid = self.mk(change_kind="recipe", target="curated-record-change",
+                      change="Add a recipe 'curated-record-change' for editing a sourced record in a curated dataset")
+        doc = self.cycle_doc(notes=[{"lesson": lid, "action": "create-entry", "into": "curated-record-change",
+                                     "entry_kind": "recipe", "entry_text": RECIPE_TEXT}])
+        r = self.sisi("cycle", "apply", doc)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(os.path.exists(paths.overlay_dir("done", "curated-record-change.md")))
+        from sisi import verifiers as V
+        self.assertIn("curated-record-change", [e["id"] for e in V.load_recipes()])
+        lid2 = self.mk(change="A draft-only parser readiness lesson", moment="draft wait at step 2")
+        bad = self.sisi("cycle", "apply", self.cycle_doc(
+            notes=[{"lesson": lid2, "action": "keep-as-draft"}]))
+        self.assertEqual(bad.returncode, 1)
+        self.assertIn("needs a reason", bad.stdout)
+        self.assertIn("create-entry", cycle.brief_text())
+        self.assertIn("keep-as-draft", cycle.HELP_TEXT)
+
+    def test_gap05_fold_into_entry_appends_field_note(self):
+        lid = self.mk(change="Parser recipes need a readiness probe before server work",
+                      moment="server wait at step 3")
+        doc = self.cycle_doc(notes=[{"lesson": lid, "action": "fold-into-entry", "into": "parser-or-codec"}])
+        self.assertEqual(self.sisi("cycle", "apply", doc).returncode, 0)
+        text = open(os.path.join(self.notes, "parser-or-codec.md")).read()
+        self.assertIn("readiness probe", text)
+        self.assertIn("lesson %d" % lid, text)
+        self.assertIn("field-note bullet", cycle.HELP_TEXT)
+
+    def test_gap06_into_list_and_split(self):
+        self.put("prove/other.md", vfile("other"))
+        lid = self.mk(change="Compound parser lesson about probes and fuzz corpus seeding",
+                      moment="compound wait at step 3")
+        doc = self.cycle_doc(notes=[
+            {"lesson": lid, "action": "fold-into-entry", "into": "parser-or-codec", "note": "Use a readiness probe before parser server work"},
+            {"lesson": lid, "action": "fold-into-entry", "into": "fuzz", "note": "Seed the fuzz corpus from golden files"}])
+        r = self.sisi("cycle", "apply", doc)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("readiness probe", open(os.path.join(self.notes, "parser-or-codec.md")).read())
+        self.assertIn("Seed the fuzz corpus", open(os.path.join(self.notes, "fuzz.md")).read())
+        lid2 = self.mk(change="Multi target parser readiness lesson", moment="multi wait at step 2")
+        doc2 = self.cycle_doc(notes=[{"lesson": lid2, "action": "fold-into-entry", "into": ["parser-or-codec", "fuzz"]}])
+        self.assertEqual(self.sisi("cycle", "apply", doc2).returncode, 0)
+
+    def test_gap07_unknown_id_suggests_closest_and_brief_lists_ids(self):
+        lid = self.mk()
+        r = self.sisi("cycle", "apply", self.cycle_doc(
+            notes=[{"lesson": lid, "action": "fold-into-entry", "into": "parser-or-code"}]))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("Closest valid", r.stdout)
+        self.assertIn("parser-or-codec", r.stdout)
+        out = cycle.brief_text()
+        self.assertIn("parser-or-codec", out)
+        self.assertIn("fuzz", out)
+
+    def test_gap08_brief_gives_recipe_applies_to(self):
+        out = cycle.brief_text()
+        self.assertIn("applies-to", out)
+        # a real recipe's applies_to line from the library
+        from sisi import verifiers as V
+        rec = [e for e in V.load_recipes() if e["id"] == "parser-or-codec"][0]
+        self.assertIn(rec["applies_to"][:40], out)
+
+    def test_gap09_tool_lesson_refused_in_cycle(self):
+        lid = self.mk(change_kind="tool", change="Make sisi cycle print faster for large stores")
+        r = self.sisi("cycle", "apply", self.cycle_doc(
+            notes=[{"lesson": lid, "action": "fold-into-entry", "into": "fuzz"}]))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("tool lessons cannot be done in a cycle", r.stdout)
+        self.assertIn("sisi backlog", cycle.brief_text())
+
+    def test_gap10_merge_keeps_survivor_text_and_count(self):
+        a = self.mk(change="Parser readiness probes beat fixed sleeps for servers", moment="merge a at step 1")
+        b = self.mk(change="Fixed sleeps waste time for parser servers", moment="merge b at step 2")
+        before = self.lesson(a)
+        doc = self.cycle_doc(notes=[{"lesson": b, "action": "merge", "merged_into": a}])
+        self.assertEqual(self.sisi("cycle", "apply", doc).returncode, 0)
+        after = self.lesson(a)
+        self.assertEqual((after["change"], after["count"]), (before["change"], before["count"]))
+        self.assertEqual(self.lesson(b)["status"], "superseded")
+        self.assertIn("SAME change", cycle.HELP_TEXT)
+        self.assertIn("Superseded", cycle.HELP_TEXT)
+
+    def test_gap11_retire_definition_in_brief_and_help(self):
+        self.assertIn("fully folded and quiet", cycle.brief_text())
+        self.assertIn("20", cycle.HELP_TEXT)
+        self.assertIn("does not make it quiet", cycle.HELP_TEXT)
+
+    def test_gap12_set_when_only(self):
+        lid = self.mk()
+        doc = self.cycle_doc(notes=[{"lesson": lid, "action": "set-when", "when": PARSER_WHEN}])
+        self.assertEqual(self.sisi("cycle", "apply", doc).returncode, 0)
+        l = self.lesson(lid)
+        self.assertIn("readiness probe", l["when_terms"])
+        self.assertEqual(l["status"], "open")
+
+    def test_gap14_shortens_required_when_book_grows(self):
+        pre, base = overlay.base_rules()
+        title = next(r["title"] for r in base if r["id"] == "know-done")
+        long_body = ("Before work, write a contract. " * 40) + "\n\nWhy: a request says what is wanted."
+        doc = self.cycle_doc(rules=[{"id": "know-done", "title": title, "body": long_body, "action": "replace"}])
+        r = self.sisi("cycle", "apply", doc)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("shortens", r.stdout)
+        doc2 = self.cycle_doc(rules=[{"id": "know-done", "title": title, "body": long_body, "action": "replace",
+                                      "shortens": "know-done: the old preamble is removed"}])
+        # with shortens it may still fail the hard char budget, but not for missing shortens
+        r2 = self.sisi("cycle", "check", doc2)
+        if r2.returncode != 0:
+            self.assertNotIn("add `shortens`", r2.stdout)
+
+    def test_gap15_char_budget_rewrap_and_canon_cost(self):
+        self.sisi("build-canon")
+        self.assertIn("characters (budget %d)" % overlay.MAX_CHARS, self.sisi("canon", "cost").stdout)
+        pre, base = overlay.base_rules()
+        title = next(r["title"] for r in base if r["id"] == "know-done")
+        body = ("Before non-trivial work write a contract listing the checks that decide success "
+                "and draft it yourself from the request and the project in front of you today.\n\n"
+                "Why: a request says what is wanted, rarely how success is measured.")
+        doc = self.cycle_doc(rules=[{"id": "know-done", "title": title, "body": body, "action": "replace"}])
+        self.assertEqual(self.sisi("cycle", "apply", doc).returncode, 0)
+        gen = open(paths.generated()).read()
+        section = gen.split("Know how you will know you are done")[1].split("## 2.")[0]
+        self.assertTrue(all(len(l) <= 101 for l in section.splitlines()), [l for l in section.splitlines() if len(l) > 101][:3])
+        self.assertTrue(all(len(l) <= 101 for l in open(paths.overlay_dir("rules", "know-done.md")).read().splitlines()))
+
+    def test_gap16_rule_numbers_map_to_ids(self):
+        out = cycle.brief_text()
+        self.assertIn("1. know-done", out)
+        self.assertIn("rule 5", out)
+
+    def test_gap17_enforced_help_fields_and_examples(self):
+        out = self.sisi("cycle", "help").stdout
+        self.assertIn("contract-requirement", out)
+        self.assertIn("require_kind", out)
+        self.assertIn("max_rung", out)
+        self.assertIn("below strength 3", out)
+        self.assertIn("timeout_s", out)
+
+    def test_gap18_notes_chars_exclude_folded(self):
+        ids = [self.mk(change="Loose parser readiness lesson number %d with enough text to count here" % i,
+                       moment="loose wait %d at step 2" % i) for i in range(3)]
+        before = cycle.due_state()["notes_chars"]
+        self.assertGreater(before, 0)
+        doc = self.cycle_doc(notes=[{"lesson": ids[0], "action": "fold-into-entry", "into": "parser-or-codec"}])
+        self.assertEqual(self.sisi("cycle", "apply", doc).returncode, 0)
+        after = cycle.due_state()["notes_chars"]
+        self.assertLess(after, before)
+        self.assertIn("do not count", cycle.brief_text())
+
+    def test_gap19_brief_names_cycle_file_path(self):
+        out = cycle.brief_text()
+        self.assertIn(cycle.cycle_file_path(), out)
+        self.assertIn("sisi cycle check FILE", out)
+
+    def test_gap20_help_is_detailed_and_brief_points_to_it(self):
+        self.assertIn("sisi cycle help", cycle.brief_text())
+        out = self.sisi("cycle", "help").stdout
+        self.assertIn("create-entry", out)
+        self.assertIn("fold-into-entry", out)
+
+    def test_also_cycle_check_dry_run_changes_nothing(self):
+        lid = self.mk()
+        before = self.overlay_bytes()
+        doc = self.cycle_doc(notes=[{"lesson": lid, "action": "retire"}])
+        for args in (("cycle", "check", doc), ("cycle", "--dry-run", doc)):
+            r = self.sisi(*args)
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertIn("nothing was changed", r.stdout)
+            self.assertIn("retire", r.stdout)
+        self.assertEqual(self.overlay_bytes(), before)
+        self.assertEqual(self.lesson(lid)["status"], "open")
+        self.assertEqual(cycle.cycle_records(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
