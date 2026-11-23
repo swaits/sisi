@@ -22,10 +22,6 @@ def check_rule_text(text, rid=None):
     return r
 
 
-def traces_for_lesson(lesson_id):
-    return []  # the per-lesson trace regime is retired; provenance lives on the learning record
-
-
 def trace_lines(kind, entry_id):
     return []
 

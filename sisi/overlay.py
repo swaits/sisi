@@ -28,7 +28,6 @@ from . import paths
 # games must not load more text. A learning round still may not grow the book without shortening.
 MAX_LINES = 200
 MAX_CHARS = 12000
-HOUSE_WIDTH = 100
 KINDS = ("rule", "verifier", "recipe")
 ID_TAIL = re.compile(r"\s*\{#([A-Za-z0-9][A-Za-z0-9_-]*)\}\s*$")
 NUM = re.compile(r"^\d+\.\s+")
@@ -96,30 +95,6 @@ def parse_rule_file(text, rid=None):
 
 def rule_text(r):
     return "## %s\n\n%s\n" % (r["title"], r["body"])
-
-
-def wrap_rule_body(body, width=HOUSE_WIDTH):
-    """Re-wrap rule prose to the house width, preserving paragraphs, bullets and code fences."""
-    import textwrap
-    out, in_fence = [], False
-    for line in (body or "").split("\n"):
-        if line.strip().startswith("```"):
-            in_fence = not in_fence
-            out.append(line)
-            continue
-        if in_fence or not line.strip():
-            out.append(line)
-            continue
-        stripped = line.lstrip()
-        indent = ""
-        if stripped.startswith(("- ", "* ")):
-            indent = "  "
-        elif re.match(r"^\d+\.\s", stripped):
-            indent = "   "
-        wrapped = textwrap.wrap(line, width=width, subsequent_indent=indent,
-                                break_long_words=False, break_on_hyphens=False)
-        out.extend(wrapped or [""])
-    return "\n".join(out).strip("\n")
 
 
 def _read(p):
