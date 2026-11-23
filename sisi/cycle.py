@@ -1241,7 +1241,7 @@ def park_rule_change(action, reasons):
     return pid
 
 
-def _waiting():
+def _owner_waiting():
     """Everything that waits for the owner, of all three kinds, as dicts with "id", "lines" (the full action) and
     "apply" (yes -> (exit code, text)): a learning change (P-N), a learned driver (drv-NAME), an allowance
     probe (probe-PROVIDER). One list, one ask."""
@@ -1275,7 +1275,7 @@ def waiting_count():
 
 
 def cmd_approve(argv):
-    waiting = _waiting()
+    waiting = _owner_waiting()
     if not argv:
         if not waiting:
             print("nothing waits for a decision")

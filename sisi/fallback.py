@@ -88,10 +88,12 @@ def handle(m, sid, cwd, text, own_model=None, worker=None, run_id=None, record=T
     """A failure message arrived. Classify it; record the worker down (when it can be identified and `record`);
     mark its pending run superseded; remember it in the meter for the question-dialog check; return the fallback
     text, or None when the text is not an unavailability. Never raises past the caller's guard."""
-    if workers.classify_failure(text) is None:
-        return None
     from . import orchestration
     worker = worker or workers.identify_worker(text)
+    cand = workers.resolve_worker(worker, workers._cached_candidates()[0]) if worker else None
+    failure = workers.failure_for(text, cand)  # with the worker's provider's phrases and its learned driver's
+    if failure is None:
+        return None
     info = {"worker": worker, "ts": time.time(), "kind": kind, "difficulty": difficulty}
     run, marked = None, None
     if run_id:
@@ -106,7 +108,7 @@ def handle(m, sid, cwd, text, own_model=None, worker=None, run_id=None, record=T
         due = workers.read_availability().get(str(worker).lower()) or {}
         info.update(until=due.get("retry_at"), reason=("%s: %s" % (due.get("reason"), (due.get("note") or "")[:60])) if due else None)
     if not info.get("reason"):
-        reason, note, _ = workers.classify_failure(text)
+        reason, note, _ = failure
         info["reason"] = "%s: %s" % (reason, note[:60])
     if run_id:
         workers.append_record({"kind": "run-end", "run_id": run_id, "ts": round(time.time()), "status": "superseded",
@@ -117,7 +119,7 @@ def handle(m, sid, cwd, text, own_model=None, worker=None, run_id=None, record=T
         for part in re.split(r"[/\s]+", str(n or "").lower()):
             if len(part) >= 4:
                 names.add(part)
-    names.update(("fallback", "fall back", "unavailable") + _REASON_WORDS.get(workers.classify_failure(text)[0], ()))
+    names.update(("fallback", "fall back", "unavailable") + _REASON_WORDS.get(failure[0], ()))
     m["unavail_names"] = sorted(names)
     orchestration._event(m, sid, "unavailable", worker=worker, run=run_id)
     return fallback_text(info, cwd, own_model)

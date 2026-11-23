@@ -180,15 +180,29 @@ def _orchestrate():
                           if _has("workers", "retry_context") and _has("routing", "retry_choice") else None,
                           "the before-tool hook answers one refusal at a time, in a fixed order: workers are exempt, then the contract "
                           "guard, then the delegation guard, then the direct-work budget (sisi/watch.py)"
-                          if meter and _guard_scope() else None],
+                          if meter and _guard_scope() else None,
+                          "a worker learned by use (a command-line tool's driver, a provider and model the host lists) is unproven: "
+                          "offered routine work only unless the owner vouched, its result carries the check-it line, and a learned "
+                          "command runs without a shell after a smoke task (sisi/discovery.py, sisi/routing.py)"
+                          if _has("discovery", "annotate", "prove") and _has("routing", "vouch_level") else None,
+                          "a learned tool that switches off approvals, and an allowance probe, wait for the owner's own decision: the same "
+                          "typed word at the terminal as a learning change, refused to an agent by the before-tool hook, every decision "
+                          "and refused attempt recorded (sisi/cycle.py, sisi/watch.py, sisi/discovery.py)"
+                          if _has("discovery", "waiting_decisions") and _has("cycle", "cmd_approve") else None,
+                          "a provider's own failure phrases and its allowance probe decide whether a failure is a limit or a login "
+                          "problem and when it is back; only that provider is marked down (sisi/discovery.py, sisi/workers.py)"
+                          if _has("discovery", "provider_failure", "limit_until") else None],
                 measured=["the delegation ledger and `sisi delegate judge`, `sisi route` recommends the worker from that record (sisi/routing.py, sisi/workers.py)"
                           if _has("routing", "choose") and _has("workers", "cmd_delegate") else None,
                           "the unit record and `sisi status` show direct calls and characters, refusals, extensions with their reasons, "
                           "delegations started, judged and unjudged, and the share of tool calls delegated (sisi/orchestration.py, sisi/scorecard.py)"
                           if _has("orchestration", "telemetry") else None,
                           "`sisi workers` shows how often the router was overridden and how the overrides turned out; a model discovery "
-                          "has not seen before is named once at session start as unproven (sisi/workers.py)"
-                          if _has("workers", "override_line", "new_worker_line") else None],
+                          "has not seen before, and a new command-line tool, are named once at session start (sisi/workers.py, sisi/discovery.py)"
+                          if _has("workers", "override_line", "new_worker_line") else None,
+                          "the owner's vouch for a worker is shown by `sisi workers` and `sisi route --explain` as its own kind of "
+                          "evidence, never as a judged record (sisi/discovery.py, sisi/routing.py)"
+                          if _has("discovery", "vouch_lines") else None],
                 judgement=["who gets the task, how much to check what comes back, the quality of a brief"])
 
 

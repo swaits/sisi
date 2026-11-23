@@ -100,15 +100,13 @@ present; nothing here names one. Read on demand: `sisi delegate guide`.
   worker: find current prices and software-engineering benchmark standing,
   then record them. Treat a newly appeared model as unproven: low-stakes
   tasks first, checked one level more carefully, until its record is thick.
-- Workers appear after sisi is installed. A new command-line tool is named once at session
-  start (`sisi workers learn NAME` prints the brief for the cheap worker that learns it);
-  what the host can reach is learned from its own capability listing and delegation calls.
-  Either way a new worker is unproven: routine work only, a free or flat one tried more
-  often, every result checked with at least the tests or a read of the diff, until its
-  judged record decides.
-- One tool can carry several providers, each with its own plan, allowance and failure phrases
-  (`sisi workers plan|allowance|signature`). The owner can vouch for a worker he checked himself
-  (`sisi workers vouch`): capable up to that difficulty on his word until its own record decides.
+- Workers appear after sisi is installed: a new command-line tool is named once at session start
+  (`sisi workers learn NAME` prints the brief for the cheap worker that learns it), and the host's
+  own listing teaches the providers and models it reaches. A new worker is unproven: routine work
+  only, checked with at least the tests or a read of the diff, until its judged record decides.
+- A tool can carry several providers, each with a plan, an allowance and failure phrases (`sisi
+  workers plan|allowance|signature`). The owner can vouch for a worker (`sisi workers vouch`). A
+  learned tool that switches off approvals, and an allowance probe, wait for the owner's `sisi approve`.
 - Orchestration legwork is delegable like any other legwork: discovery,
   price and benchmark research, routing lookups, first-pass review, and
   summarising the record can all go to a fast, cheap worker. The judgement

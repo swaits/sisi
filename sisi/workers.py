@@ -161,6 +161,13 @@ def classify_failure(text, returncode=0, extra=None):
 _ISO_TIME = r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
 
 
+def failure_for(text, cand=None, returncode=0):
+    """classify_failure with what is known of the worker: its provider's own recorded phrases first (a provider's
+    error code can be a login problem and not a limit), then the built-in phrases and a learned driver's own."""
+    driver = _D.driver_for(cand.get("tool")) if cand else None
+    return (_D.provider_failure(cand, text) if cand else None) or classify_failure(text, returncode, _D.extra_signatures(driver))
+
+
 def parse_reset(text, now=None):
     """The epoch second a limit message says the worker is back at (an ISO date-time or date, best after the
     word "reset"), or None when it names none or only a past one."""
@@ -540,12 +547,14 @@ def mark_unavailable(worker, text, now=None):
     when the text shows only the model is. The time it is back is parsed from the message when it gives one,
     else the usual widening wait. Returns {"worker", "keys", "reason", "note", "until"} or None when the text
     is no such failure. Never a quality judgement."""
-    failure = classify_failure(text)
-    if failure is None or not worker:
+    if not worker:
+        return None
+    cand = resolve_worker(worker, _cached_candidates()[0]) or {"worker": worker, "model": worker, "tool": None}
+    failure = failure_for(text, cand)
+    if failure is None:
         return None
     reason, note, retry = failure
     now = time.time() if now is None else now
-    cand = resolve_worker(worker, _cached_candidates()[0]) or {"worker": worker, "model": worker, "tool": None}
     model = str(cand.get("model") or "")
     if _MODEL_ONLY.search(text or ""):
         keys = [cand["worker"]]
@@ -556,7 +565,10 @@ def mark_unavailable(worker, text, now=None):
     else:
         keys = [cand["worker"]]
     until = parse_reset(text, now)
-    avail = record_down(keys, reason, note, now=now, retry_after_s=None if until else retry, until_ts=until)
+    if until is None and reason == "limit":
+        until = _D.limit_until(cand)  # the provider's own allowance probe says when it is back
+    avail = record_down(keys, reason, note, now=now, retry_after_s=None if until else retry, until_ts=until,
+                        provider=_provider_to_mark(cand))
     shown = avail.get(str(keys[-1]).lower()) or {}
     return {"worker": cand["worker"], "keys": keys, "reason": reason, "note": note,
             "until": until if until is not None else shown.get("retry_at")}
@@ -1121,6 +1133,15 @@ def same_model(a, b):
     return a == b or a in b or b in a
 
 
+def same_worker(chosen, routed, provider_named=False):
+    """Do a delegation's worker and the router's recommendation name one worker? As same_model, except that a
+    model of the same name under another provider is another worker when the call names its provider."""
+    if provider_named and "/" in str(routed) and "/" in str(chosen) \
+            and str(chosen).split("/", 1)[0].lower() != str(routed).split("/", 1)[0].lower():
+        return False
+    return same_model(chosen, routed)
+
+
 def _own_workers(candidates, own_model):
     return [c["worker"] for c in candidates
             if own_model and any(same_model(own_model, x) for x in
@@ -1134,12 +1155,13 @@ def recommend(kind, difficulty, cwd=None, own_model=None):
     other worker is usable."""
     records = read_records()
     candidates, _tools = _cached_candidates(records)
+    _D.apply_allowances(candidates, cached_only=True)  # a hook never asks a provider; the last reading stands
     candidates, _cold, _x = routable_candidates(candidates, records)
     prefs = effective_prefs(kind, difficulty, cwd or os.getcwd())
     candidates, _limited = apply_limits(candidates, prefs)
     result = routing.choose(candidates, records, read_availability(), kind, difficulty, now=time.time(),
                             exclude=_own_workers(candidates, own_model), avoid=prefs["avoid"], prefer=prefs["prefer"],
-                            floors=route_floors())
+                            floors=route_floors(), explore_free_every=explore_free_every())
     choice = result["choice"]
     if choice is None:
         return None, None, 0
@@ -1366,6 +1388,13 @@ def _down_provider(cand):
     return prov if prov and prov != str(cand.get("tool") or "").lower() else None
 
 
+def _provider_to_mark(cand):
+    """The provider a failure of this worker marks down: its own (a tool that carries several, or a host's), or
+    the part of its model before a slash."""
+    model = str(cand.get("model") or "")
+    return _down_provider(cand) or (model.split("/", 1)[0] if "/" in model else None)
+
+
 def _down_keys(cand, reason):
     keys = [cand["worker"]]
     model = str(cand.get("model") or "")
@@ -1452,15 +1481,14 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
                          % (cand["worker"], timeout, transcript))
             return None, None, notes
         _append_transcript(transcript, cand["worker"], cmd, out, err, rc)
-        failure = (_D.provider_failure(cand, out + "\n" + err)
-                   or classify_failure(out + "\n" + err, rc, _D.extra_signatures(driver)))
+        failure = failure_for(out + "\n" + err, cand, rc)
         if failure is not None:
             reason, note, retry = failure
             until = parse_reset(out + "\n" + err)  # the time the message itself names, when it names one
             if until is None and reason == "limit":
                 until = _D.limit_until(cand)  # else the provider's allowance probe, when one is defined
             record_down(_down_keys(cand, reason), reason, note, retry_after_s=None if until else retry, until_ts=until,
-                        provider=_down_provider(cand) or (str(cand.get("model")).split("/", 1)[0] if "/" in str(cand.get("model")) else None))
+                        provider=_provider_to_mark(cand))
             mark_discovery_stale()
             notes.append("%s is unavailable (%s: %s); trying the next choice" % (cand["worker"], reason, note))
             cand = None
@@ -1812,6 +1840,8 @@ def _route_retry(args, ctx, kind, difficulty, candidates, records, prefs):
         return None
     print(pick["worker"])
     print("mechanism: %s" % mechanism_for(pick))
+    for line in _D.unproven_lines(pick):
+        print(line)
     if res["step"] == "same":
         print(RETRY_BRIEF_LINE)
     else:

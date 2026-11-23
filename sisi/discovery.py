@@ -1021,6 +1021,9 @@ def annotate(cands, records, tools):
         if t.get("host"):
             c["host_native"] = True
             c["host_mechanism"] = host_mechanism(t, c["worker"])
+            bare = host_route(t, c["worker"])[1]
+            if bare and bare not in c["aliases"]:  # a failure notice names the model as the host's tool does, without the provider
+                c["aliases"] = list(c.get("aliases") or []) + [bare]
     return cands
 
 
@@ -1552,9 +1555,11 @@ def routing_provider(c):
     return routing.provider_of(c.get("worker"))
 
 
-def apply_allowances(cands, now=None, force=False):
+def apply_allowances(cands, now=None, force=False, cached_only=False):
     """Read each defined probe (when its cached reading is old), set the candidates' allowance, and mark a provider
-    whose allowance is spent as down until the reset it reports. Returns the set of providers that are spent now."""
+    whose allowance is spent as down until the reset it reports. Returns the set of providers that are spent now.
+    With `cached_only` (a hook) nothing is asked of a provider and nothing is recorded: the last reading, however
+    old, only sets the candidates' allowance."""
     probes = _probes()
     spent = set()
     if not probes:
@@ -1562,6 +1567,13 @@ def apply_allowances(cands, now=None, force=False):
     from . import workers
     now = time.time() if now is None else now
     for prov, d in probes.items():
+        if cached_only:
+            reading = _load(allowance_cache()).get(prov)
+            st = allowance_state(reading) if isinstance(reading, dict) and reading.get("ok") else None
+            for c in cands:
+                if st and routing_provider(c) == prov:
+                    c["allowance_pct_left"] = 0.0 if st["exhausted"] else st["pct"]
+            continue
         reading = read_allowance(prov, d, now, force)
         st = allowance_state(reading) if reading.get("ok") else None
         if st is None:

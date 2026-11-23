@@ -645,10 +645,13 @@ def _before_delegation(payload, hd, tool, inp, host, sid, sess, m, c, cwd):
         return {"deny": route_text()}
     import uuid
     run_id = uuid.uuid4().hex[:8]
-    worker = model or own or "(inherited)"
+    provider = _dig(inp, spec.get("provider")) if spec.get("provider") else None
+    provider = provider.strip() if isinstance(provider, str) else ""
+    # a delegation that names a provider (the host's cross-provider tool) is the worker `provider/model`, as discovery names it
+    worker = ("%s/%s" % (provider, model) if provider and model and "/" not in model else model) or own or "(inherited)"
     against = None
     if route and route.get("worker"):
-        against = not workers.same_model(worker, route["worker"])
+        against = not workers.same_worker(worker, route["worker"], bool(provider))
     try:
         workers.append_record({"kind": "run", "id": run_id, "ts": round(now),
                                "type": (route or {}).get("kind"), "difficulty": (route or {}).get("difficulty"),

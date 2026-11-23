@@ -125,7 +125,8 @@ the budget and every other check run first, and a refusal applies nothing. If ap
   again is refused, and so is a second change to a rule that has one waiting. If the owner refuses, the
   learning is rejected, not proposed again.
 - **`sisi approve`** with no arguments lists every waiting change in full: the command, the pattern and
-  profile, the rule text as a diff, why it needs the owner, and the replay result. A decision needs the word
+  profile, the rule text as a diff, why it needs the owner, and the replay result. The same listing, word and
+  record serve a learned tool that switches off approvals (`drv-NAME`) and an allowance probe (`probe-PROVIDER`). A decision needs the word
   `sisi approve ID --yes|--no` prints typed back at the controlling terminal device (never standard input), and
   the before-tool hook refuses any shell command of an agent that invokes it; a process with no controlling
   terminal is refused unless the user config sets `learning.agent_relayed_approval`. Every decision, and every
