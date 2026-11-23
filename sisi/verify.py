@@ -435,7 +435,8 @@ def cmd_verify(args, cwd=None, out=print):
     saved = time_saved(results)
     from . import unit as _unit
     standing = _unit.latest_results(c, _unit._unit_results(c, project, c.get("started")))
-    unproven = [{"id": r["id"], "status": r["status"], "reason": r.get("reason")} for r in _unit.never_run(standing)]
+    unproven = [{"id": r["id"], "status": r["status"], "reason": r.get("reason")}
+                for r in _unit.never_run(standing) if r["status"] != "failed"]  # failures are reported as failures
     if c.get("status") == "paused":
         _unit.resume(c, path)  # work resumed: the wait is over
     if as_json:
