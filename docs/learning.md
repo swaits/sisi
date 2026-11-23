@@ -166,8 +166,7 @@ learnings in scope that target that entry.
 ## Seams for other parts of sisi
 
 - `learning.findings_for_unit(project, unit_id)` — the findings a unit record stores.
-- `learning.learning_report()` — the text `sisi status --learning` prints. It replaces
-  `sisi improve`, `sisi backlog` and `sisi lessons digest`, which are deleted.
+- `learning.learning_report()` — the text `sisi status --learning` prints, the one learning report.
 - `cycle.enforced_results(contract, project, ...)` — what `sisi verify` runs, filtered by project.
 - `cycle.risk_patterns(cwd)` — the learned risk patterns that apply in a project (`risk.load_patterns`).
 - `cycle.routing_adjustments(project)` — the learned routing adjustments that apply in a project.
