@@ -1,0 +1,14 @@
+{
+  "_about": "How a session's FIRST user message says it is a delegated worker (sisi/workerid.py). Each phrase is matched case-insensitively, with white space collapsed, inside the first `window` characters of that one message only; the brief template's own first line always counts too. A phrase later in a long message, or in a later message, never counts: a session a person started is a main thread.",
+  "window": 400,
+  "openings": [
+    "you are a worker",
+    "you are a subagent",
+    "you are a sub-agent",
+    "you are a delegate",
+    "do this task yourself",
+    "do the task yourself",
+    "do not delegate"
+  ],
+  "head_bytes": 1048576
+}
