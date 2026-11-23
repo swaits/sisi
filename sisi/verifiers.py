@@ -394,13 +394,10 @@ def _print_lessons(query, extra="", targets=()):
 
 
 def _print_cycle_notice():
-    try:
-        from . import cycle
-        line = cycle.due_notice()
-        if line:
-            print(line)
-    except Exception:
-        pass
+    from . import cycle
+    line = cycle.due_notice()
+    if line:
+        print(line)
 
 
 def cmd_show(args):

@@ -110,7 +110,7 @@ def is_subagent_session():
     if sess.get("subagent"):
         return True
     for sh in reversed(sess.get("shells") or []):
-        if isinstance(sh, dict) and "retro" in str(sh.get("cmd") or ""):
+        if isinstance(sh, dict) and sh.get("retro"):
             return bool(sh.get("subagent"))
     return False
 
@@ -474,7 +474,7 @@ def new_record(finding, cause, impact, disposition, project, unit,
         "provenance": [{"unit": unit, "project": pk, "ts": now(), "kind": "origin"}],
         "terms": derive_terms(finding, cause, change or ""),
         "owner_statement": bool(owner_statement), "candidate": bool(subagent),
-        "entered_via": entered_via, "recurrences_after_promotion": 0,
+        "recurrences_after_promotion": 0,
         "flagged_not_working": False, "promoted_at": now() if owner_statement else None,
         "mechanism_ref": None, "replay": replay, "created": now(),
     }
@@ -741,9 +741,9 @@ def pending_notice():
     if not n:
         return ""
     return ("sisi: %d learning change(s) wait for the owner's decision. Ask the owner through the host's "
-            "question dialog (`sisi approve` lists each change in full; show him what it would do) and give "
-            "him the command to run himself in a terminal: `sisi approve ID --yes` or `--no`. "
-            "Do not run it for him." % n)
+            "question dialog (`sisi approve` lists each change in full; show the owner what it would do) and give "
+            "the owner the command to run in a terminal: `sisi approve ID --yes` or `--no`. "
+            "Do not run it for the owner." % n)
 
 
 # ---- owner statements (one path: learn writes, oracle prints) ---------------------

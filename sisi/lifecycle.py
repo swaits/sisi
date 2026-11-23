@@ -355,7 +355,7 @@ def migrate_learnings():
                            "detail": "migrated from the old lesson store; never replay-validated"},
             "status": status, "version": 1, "confidence": "low", "provenance": prov,
             "terms": L.derive_terms(old.get("moment") or "", old.get("cause") or "", old.get("change") or ""),
-            "owner_statement": False, "candidate": False, "entered_via": "migration",
+            "owner_statement": False, "candidate": False,
             "recurrences_after_promotion": 0, "flagged_not_working": False,
             "promoted_at": None, "mechanism_ref": old.get("folded_into"),
             "replay": None, "created": old.get("created") or L.now()}
@@ -391,7 +391,7 @@ def migrate_learnings():
             "provenance": [{"unit": "owner", "project": proj, "ts": r.get("ts") or "", "kind": "origin"}],
             "terms": L.derive_terms(text), "owner_statement": True, "candidate": False,
             "statement_origin": "migrated from the old statement file",
-            "entered_via": "migration", "recurrences_after_promotion": 0,
+            "recurrences_after_promotion": 0,
             "flagged_not_working": False, "promoted_at": r.get("ts") or L.now(),
             "mechanism_ref": None, "replay": None, "created": r.get("ts") or L.now()}
         rows.append(rec)

@@ -109,12 +109,13 @@ def _session(sid, d, cwd):
 
 
 def note_shell(sess, cmd, payload):
-    """Record, for the learning loop, who ran this shell command: whether its hook payload came
-    from a subagent (an agent id or a subagent transcript path). `sisi retro` reads this from the
-    session record to quarantine what a subagent records; it never trusts the caller's environment."""
+    """Record, for the learning loop, who ran this shell command: whether it names a retro, and whether
+    its hook payload came from a subagent (an agent id or a subagent transcript path). `sisi retro`
+    reads this from the session record to quarantine what a subagent records; it never trusts the
+    caller's environment. The command text itself is not kept."""
     from . import workers
     shells = sess.setdefault("shells", [])
-    shells.append({"cmd": (cmd or "")[:200], "subagent": bool(workers.is_subagent_payload(payload)),
+    shells.append({"retro": "retro" in (cmd or ""), "subagent": bool(workers.is_subagent_payload(payload)),
                    "ts": time.time()})
     del shells[:-8]
 

@@ -751,8 +751,8 @@ class Approval(Base):
         line = L.pending_notice()
         self.assertIn("question dialog", line)
         self.assertIn("sisi approve", line)
-        self.assertIn("yourself" if "yourself" in line else "himself", line)
-        self.assertIn("Do not run it for him", line)
+        self.assertIn("command to run in a terminal", line)
+        self.assertIn("Do not run it for the owner", line)
         from sisi import cycle
         self.assertIn(line, cycle.due_notice())
 
@@ -1032,8 +1032,6 @@ class Cycle(Base):
                    "--cause", "the suite runs everything serially", "--impact", "time",
                    "--disposition", "promote", "--change", "run independent checks in parallel",
                    "--mechanism", "infrastructure", "--expect", "faster runs", "--validate", "time the suite")
-        self.earn("L-0002", finding="another unrelated slowness appeared in the test run today",
-                  cause="the suite runs everything serially")  # so a rule is not simply parked for scope
         big = "## Huge {#huge-rule}\n\n" + "\n".join("line %d of the rule" % i for i in range(400)) + "\n\nWhy: no.\n"
         with open(L.learnings_path()) as f:
             before = f.read()

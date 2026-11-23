@@ -199,20 +199,18 @@ def proposed(rows=None):
 
 
 def due_notice(session=None):
-    """Session-start lines: a cycle is due, and/or a decision waits for the owner."""
-    try:
-        n = len(proposed())
-        fl = len(L.flagged())
-        lines = []
-        if n >= DUE_AFTER or fl:
-            lines.append("sisi: a learning cycle is due (%d proposed learning(s)%s; `sisi cycle` prints the brief)"
-                         % (n, ", %d flagged not working" % fl if fl else ""))
-        pend = L.pending_notice()
-        if pend:
-            lines.append(pend)
-        return "\n".join(lines)
-    except Exception:
-        return ""
+    """Session-start lines: a cycle is due, and/or a decision waits for the owner. The callers
+    (tick, the gate) catch and log a failure; it is not hidden here."""
+    n = len(proposed())
+    fl = len(L.flagged())
+    lines = []
+    if n >= DUE_AFTER or fl:
+        lines.append("sisi: a learning cycle is due (%d proposed learning(s)%s; `sisi cycle` prints the brief)"
+                     % (n, ", %d flagged not working" % fl if fl else ""))
+    pend = L.pending_notice()
+    if pend:
+        lines.append(pend)
+    return "\n".join(lines)
 
 
 def brief_text():
@@ -586,9 +584,14 @@ def _transact(label, fn):
         lines, touched, added = fn()
     except BaseException:
         if before:
-            changed = _changed(before, "HEAD")
-            _restore_files(before, changed)
-            pdata.commit("cycle aborted: store restored", changed or None)
+            changed = set(_changed(before, "HEAD"))
+            changed |= {x for x in pdata.git("diff", "--name-only", "HEAD", check=False).stdout.splitlines() if x}
+            changed |= {x for x in pdata.git("ls-files", "--others", "--exclude-standard", "--", "overlay",
+                                             check=False).stdout.splitlines() if x}
+            changed = sorted(changed)
+            if changed:
+                _restore_files(before, changed)
+                pdata.commit("cycle aborted: store restored", changed)
             try:
                 overlay.build_canon()
             except Exception:
@@ -692,7 +695,8 @@ def revert_cycle(cid=None):
     gone = set(rec.get("pending_added") or [])
     if gone:
         L.save_pending([i for i in L.load_pending() if i.get("id") not in gone], "revert %s: parked changes dropped" % rec["id"])
-    pdata.commit("revert %s" % rec["id"], files or None)
+    if files:
+        pdata.commit("revert %s" % rec["id"], files)
     rec["reverted"] = L.now()
     pdata.write_text("cycles/%s.json" % rec["id"], json.dumps(rec, indent=2, sort_keys=True) + "\n")
     pdata.commit("revert %s recorded" % rec["id"], ["cycles/%s.json" % rec["id"]])
@@ -722,7 +726,7 @@ def relay_allowed():
 
 
 def describe_pending(item):
-    """The full action, in words and text, so the owner can see exactly what he approves."""
+    """The full action, in words and text, so the owner can see exactly what is approved."""
     a = item.get("action") or {}
     rec = L.get(L.load_learnings(), item.get("learning") or "")
     out = ["%s: %s" % (item["id"], (a.get("action") if a.get("action") != "promote" else
@@ -858,7 +862,7 @@ def cmd_approve(argv):
                 print("\n".join(describe_pending(item)), file=sys.stderr)
             print("sisi approve: refused. A decision must be made by the owner in a terminal: this was run "
                   "without one (an agent, a script, a pipe). Show the owner what it does (the listing above) "
-                  "and give him the command to type himself. To allow an agent to relay a decision, set "
+                  "and give the owner the command to type. To allow an agent to relay a decision, set "
                   "learning.agent_relayed_approval in the user config (off by default).", file=sys.stderr)
             return 2
         relayed = True

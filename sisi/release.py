@@ -521,7 +521,7 @@ def _export_core(path=None):
         pr = r.get("proposed") or {}
         lines += ["## Learning %s (%s%s)" % (r["id"], pr.get("mechanism") or "policy",
                                               ", target " + pr["target"] if pr.get("target") else ""), ""]
-        if r.get("title"):
+        if r.get("title") and r["title"] != pr.get("description"):
             lines += [str(r["title"]), ""]
         lines += [str(pr.get("description") or ""), ""]
         if r.get("expected_effect"):

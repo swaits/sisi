@@ -86,7 +86,11 @@ the user store (a learning cycle applied to the copy, not to the real store): it
 sample of dev cases plus every counterexample under the current policy and the candidate
 and prints the comparison, before anyone is asked to approve the change [11.6]. The
 learning loop calls the same code as `sisi.evaluate.compare_for_candidate(dir, sample)`,
-and calls `sisi.evaluate.validate_check(case)` before promoting a command check.
+and calls `sisi.evaluate.validate_command(repo, before, after, cmd)` before promoting a command
+check: `validated` only if the command ran and failed at `before` and ran and passed at `after`
+(program present at both commits; not 126/127, a timeout or a signal), `before` an ancestor of
+`after`, in a repository on the trust list. A stored case is replayed the same way by
+`validate_check(case)`.
 
 ## Independent judging
 
