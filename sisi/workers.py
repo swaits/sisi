@@ -615,6 +615,14 @@ def build_candidates(disc=None, records=None):
         w = r.get("worker")
         if not w or str(w).lower() in alias_set or r.get("kind") not in ("attempt", "run"):
             continue
+        if "/" not in str(w):
+            # No provider prefix: the host tool's own subagent model. It needs no discovered
+            # command-line tool and is usable unless marked down (routing checks that).
+            c = add(None, str(w), usable=True)
+            if c is not None:
+                c["host_native"] = True
+                alias_set.add(str(w).lower())
+            continue
         tool = _guess_tool(w, disc_tools)
         installed = any(t["name"] == tool and t.get("installed", True) for t in disc_tools) if tool else False
         c = add(tool, r.get("model") or str(w),
@@ -751,6 +759,8 @@ def mechanism_for(cand, host=None):
     """How to start the chosen worker: the host's own subagents first, its cross-provider
     delegation when the config says it has one (workers.host_cross_provider), else sisi itself."""
     host = host_tool() if host is None else host
+    if cand.get("host_native"):
+        return "use the host's own subagent tool with model %s" % (cand.get("model") or cand["worker"])
     if host and cand.get("tool") == host:
         return "use the host's own subagent mechanism (the worker belongs to the host tool)"
     if host and workers_cfg().get("host_cross_provider"):
