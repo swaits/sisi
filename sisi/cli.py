@@ -31,7 +31,7 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
   sisi overlay list|diff|add-rule|replace-rule|disable-rule|enable-rule|add-verifier|...|revert COMMIT
                                      learned changes to rules, verifiers and recipes; each one a commit in your personal repo
   sisi audit                         inventory of standing instructions per tool
-  sisi retro --aim A --moment M --cause C --change-kind K --change X --when "csv, tsv, spreadsheet, tabular data, import, parse, delimited file" [--target ID] [--same-as ID | --new] [--short "one plain sentence"] [--topic "1-3 lower-case words"]
+  sisi retro --scope everywhere|project --aim A --moment M --cause C --change-kind K --change X --when "csv, tsv, spreadsheet, tabular data, import, parse, delimited file" [--target ID] [--same-as ID | --new] [--short "one plain sentence"] [--topic "1-3 lower-case words"]
              (or --json - with the same keys on stdin)
                                      end of every piece of work: HOW it could have gone better; --when (at least
                                      5 terms, synonyms included) is how a later agent with different words finds it;
@@ -53,17 +53,32 @@ A shared rulebook and enforced definitions of done for every AI coding CLI.
   sisi improve                       is it getting better? lessons, recurrence, send-backs, time, rulebook size
   sisi note TEXT                     (older; prefer retro) record something that went wrong
   sisi propose TEXT                  (older; prefer retro) suggest a rule change
-  sisi learn TEXT                    record a human-stated preference (quarantined until verified)
+  sisi learn --scope everywhere|project TEXT
+                                     record a human-stated preference (quarantined until verified);
+                                     --scope is required: everywhere for how all work should be done,
+                                     project for a fact about this project (handed over to it)
+  sisi handover [--all] | done ID --where PATH [--quote FRAGMENT]
+                                     project items waiting to be filed in this project's own docs or
+                                     work list; done confirms one is filed (the named file must contain
+                                     its key text) and removes it from the pile
   sisi oracle                        print what the human wants (oracle.md in the personal folder)
   sisi status                        verification statistics from the store
   sisi time [--json]                 time from request to verified result: 7 days against the 7 before, slowest checks
   sisi verifiers [WORDS] [--lang L] [--kind K] [--rung N] [--section S] [--installed] [--json]
                                      list ways to know work is correct, by section
-  sisi verifiers show ID             one entry in full, and whether its tool is installed here
+  sisi verifiers show ID [--trace]   one entry in full, and whether its tool is installed here; --trace also prints where each folded lesson lives in it
   sisi verifiers for "<claim>"       best-matching verifiers for a claim or piece of work
   sisi verifiers doctor | lint       which tools are installed; validate the library
-  sisi done [ID]                     recipes: which checks make a kind of work done
+  sisi done [ID] [--trace]           recipes: which checks make a kind of work done; --trace also prints where each folded lesson lives in the recipe
   sisi done for "<work>"             best-matching recipe
+  sisi workers [--refresh]           the agent tools and models found here, what is usable now and why not, allowance and price where known, and delegations waiting for a judgement
+  sisi route --kind K --difficulty N [--review-of W] [--explain]
+                                     the most affordable usable worker for this kind and difficulty, by the judged record alone; --explain says why, and why the rest were passed over
+  sisi delegate --kind K --difficulty N --brief FILE [--worker W] [--review-of W] [--cwd DIR]
+                                     run one brief on the chosen worker unattended; prints only its final report, the transcript path, and the judge command
+  sisi delegate judge ID --outcome accepted|rejected --check none|diffstat|tests|read|review [--minutes N]
+                                     record your judgement of a delegation run, so the next choice learns from it
+  sisi delegate amend ID             mark a judged delegation that later proved wrong
   sisi version | --version           print the product version (the VERSION file in the product folder)
   sisi help                          this text
 
@@ -425,8 +440,14 @@ def main(argv):
     if cmd == "audit":
         from . import audit
         return audit.main(args)
-    if cmd in ("note", "propose", "learn"):
-        return cmd_store({"note": "notes", "propose": "proposals", "learn": "quarantine"}[cmd], args)
+    if cmd == "learn":
+        from . import scope
+        return scope.cmd_learn(args)
+    if cmd == "handover":
+        from . import handover
+        return handover.main(args)
+    if cmd in ("note", "propose"):
+        return cmd_store({"note": "notes", "propose": "proposals"}[cmd], args)
     if cmd == "retro":
         from . import retro
         return retro.cmd_retro(args)
@@ -455,6 +476,15 @@ def main(argv):
     if cmd == "done":
         from . import verifiers
         return verifiers.done_main(args)
+    if cmd == "workers":
+        from . import workers
+        return workers.cmd_workers(args)
+    if cmd == "route":
+        from . import workers
+        return workers.cmd_route(args)
+    if cmd == "delegate":
+        from . import workers
+        return workers.cmd_delegate(args)
     rc = _learn_cli(cmd, args)
     if rc is not None:
         return rc

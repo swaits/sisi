@@ -103,7 +103,8 @@ def _folded_lessons(rule_id):
         con = retro.connect()
         try:
             return [dict(r) for r in con.execute(
-                "SELECT * FROM lessons WHERE folded_into=? ORDER BY id", (rule_id,))]
+                "SELECT * FROM lessons WHERE folded_into=? OR folded_into=? ORDER BY id",
+                (rule_id, "rule:" + rule_id))]
         finally:
             con.close()
     except Exception:
@@ -156,12 +157,16 @@ def _detail(n, rule):
             print("  - #%d (%s, seen %d times): %s (full text: `sisi lessons show %d`)"
                   % (r["id"], date or "undated", r["count"] or 0,
                      retro.heading_text(r, 140), r["id"]))
-        examples = [r for r in lessons if (r.get("moment") or "").strip()]
-        if examples:
-            print("\nExamples (what actually happened):")
-            for r in examples[:3]:
-                print("  - %s (lesson %d; `sisi lessons show %d`)"
-                      % (retro.word_cut(r["moment"], 160), r["id"], r["id"]))
+            try:
+                from . import documents as _docs
+                for _key, _t in _docs.traces_for_lesson(r["id"]):
+                    if _t.get("fragment"):
+                        print("    carried in %s by: %r" % (_key, _t["fragment"]))
+            except Exception:
+                pass
+            if (r.get("moment") or "").strip():
+                print("    Where this came from (historical example): %s"
+                      % retro.word_cut(r["moment"], 160))
     else:
         print("\nLessons folded into this rule: none yet.")
     return 0

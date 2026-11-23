@@ -66,10 +66,13 @@ class LearningCase(LibCase):
                 con.close()
             notes = list(doc.get("notes") or [])
             covered = {e.get("lesson") for e in notes if isinstance(e, dict) and e.get("action") == "set-short"}
+            scoped = {e.get("lesson") for e in notes if isinstance(e, dict) and e.get("action") == "set-scope"}
             exempt = {e.get("lesson") for e in notes if isinstance(e, dict)
                       and e.get("action") in ("retire", "withdraw", "merge")}
             extra = []
             for r in rows:
+                if r["id"] not in scoped and r["id"] not in exempt:
+                    extra.append({"lesson": r["id"], "action": "set-scope", "scope": "everywhere"})
                 if r["id"] in covered or r["id"] in exempt:
                     continue
                 if (r.get("short") or "").strip() and (r.get("topic") or "").strip():
@@ -82,6 +85,21 @@ class LearningCase(LibCase):
                 extra.append(e)
             if extra:
                 doc["notes"] = notes + extra
+        except Exception:
+            pass
+        # A cycle file must also answer for every document the brief lists for whole-document
+        # review: mark them reviewed here (tests of rewriting itself live in test_documents).
+        try:
+            from sisi import documents as _docs
+            _con = retro.connect()
+            try:
+                _have = {e.get("doc") for e in doc.get("documents") or [] if isinstance(e, dict)}
+                _rev = [{"doc": d["doc"], "action": "reviewed", "reason": "test helper: structure left as it is"}
+                        for d in _docs.required_documents(_con) if d["doc"] not in _have]
+            finally:
+                _con.close()
+            if _rev:
+                doc["documents"] = list(doc.get("documents") or []) + _rev
         except Exception:
             pass
         p = os.path.join(self.tmp, "cycle.json")
@@ -475,8 +493,9 @@ class CycleApplyTests(LearningCase):
         b = self.mk(change="Session two lesson about widget caching", moment="s2 wait at step 2")
         base = cycle.base_version()  # both sessions read the same brief
         _ss = lambda lid: {"lesson": lid, "action": "set-short", "short": "Use a readiness probe, not a sleep.", "topic": "testing"}
-        doc1 = {"version": 1, "base": base, "summary": "one", "notes": [{"lesson": a, "action": "keep"}, _ss(a), _ss(b)]}
-        doc2 = {"version": 1, "base": base, "summary": "two", "notes": [{"lesson": b, "action": "keep"}, _ss(a), _ss(b)]}
+        _sc = lambda lid: {"lesson": lid, "action": "set-scope", "scope": "everywhere"}
+        doc1 = {"version": 1, "base": base, "summary": "one", "notes": [{"lesson": a, "action": "keep"}, _ss(a), _ss(b), _sc(a), _sc(b)]}
+        doc2 = {"version": 1, "base": base, "summary": "two", "notes": [{"lesson": b, "action": "keep"}, _ss(a), _ss(b), _sc(a), _sc(b)]}
         paths_ = []
         for i, d in enumerate((doc1, doc2)):
             p = os.path.join(self.tmp, "two-%d.json" % i)
@@ -758,7 +777,7 @@ class MatchingCorpusTests(LearningCase):
         self.assertEqual(wrong, [], "part one must stay empty for should-not requests")
 
     def test_csv_lesson_reaches_the_next_agent_three_ways(self):
-        r = self.sisi("retro", "--new", "--aim", "verified",
+        r = self.sisi("retro", "--new", "--scope", "everywhere", "--aim", "verified",
                       "--moment", "The CSV importer test passed but 'python3 import.py big.csv' crashed on a quoted comma in row 4011",
                       "--cause", "the importer was only tested with three hand-written rows",
                       "--change-kind", "rule", "--when", CSV_WHEN,
@@ -827,13 +846,13 @@ class MatchingCorpusTests(LearningCase):
         self.assertIn("#%d" % lid, out)
 
     def test_unconfirmed_duplicate_sighting_is_recorded(self):
-        first = self.sisi("retro", "--new", "--aim", "verified",
+        first = self.sisi("retro", "--new", "--scope", "everywhere", "--aim", "verified",
                           "--moment", "the parser server waited 90 seconds in step 4 of the nightly job",
                           "--cause", "no readiness probe existed before the browser step",
                           "--change-kind", "rule", "--when", PARSER_WHEN, "--change", PARSER_CHANGE)
         self.assertEqual(first.returncode, 0, first.stdout)
         lid = int(first.stdout.split("lesson #")[1].split(",")[0])
-        dup = self.sisi("retro", "--aim", "verified",
+        dup = self.sisi("retro", "--scope", "everywhere", "--aim", "verified",
                         "--moment", "again the parser server waited 90 seconds in step 9 of the nightly job",
                         "--cause", "still no readiness probe before the browser step at all",
                         "--change-kind", "rule", "--when", PARSER_WHEN,
@@ -844,7 +863,7 @@ class MatchingCorpusTests(LearningCase):
         self.assertEqual(retro.sightings_count(con, lid), 1)
         con.close()
         self.assertIn("1 unconfirmed sighting(s)", self.sisi("lessons", "show", str(lid)).stdout)
-        as_new = self.sisi("retro", "--new", "--aim", "verified",
+        as_new = self.sisi("retro", "--new", "--scope", "everywhere", "--aim", "verified",
                            "--moment", "again the parser server waited 90 seconds in step 9 of the nightly job",
                            "--cause", "still no readiness probe before the browser step at all",
                            "--change-kind", "rule", "--when", PARSER_WHEN,
@@ -968,7 +987,7 @@ class ImproveFromUseTests(LearningCase):
     def test_sisi_improves_from_use_end_to_end(self):
         """The purpose itself: a lesson from session A reaches session B doing the same kind of work,
         its showing is recorded, and recurrence after fresh showings strengthens it until a cycle is due."""
-        a = self.sisi("retro", "--new", "--aim", "verified",
+        a = self.sisi("retro", "--new", "--scope", "everywhere", "--aim", "verified",
                       "--moment", "The CSV importer test passed but 'python3 import.py big.csv' crashed on a quoted comma in row 4011",
                       "--cause", "the importer was only tested with three hand-written rows",
                       "--change-kind", "rule", "--when", CSV_WHEN,
@@ -1051,6 +1070,7 @@ class CycleGapTests(LearningCase):
         doc = self.cycle_doc(notes=[{"lesson": lid, "action": "keep"}])
         # cycle_doc recomputes base; rebuild with the original base
         d = {"version": 1, "base": base, "summary": "x", "notes": [{"lesson": lid, "action": "keep"},
+             {"lesson": lid, "action": "set-scope", "scope": "everywhere"},
              {"lesson": lid, "action": "set-short", "short": "Use a readiness probe, not a sleep.", "topic": "testing"}]}
         p = os.path.join(self.tmp, "g2.json")
         with open(p, "w") as f:
@@ -1076,6 +1096,7 @@ class CycleGapTests(LearningCase):
         base = cycle.base_version()
         self.mk(change="Brand new parser lesson arriving mid cycle", moment="new wait at step 5")
         d = {"version": 1, "base": base, "summary": "x", "notes": [{"lesson": lid, "action": "keep"},
+             {"lesson": lid, "action": "set-scope", "scope": "everywhere"},
              {"lesson": lid, "action": "set-short", "short": "Use a readiness probe, not a sleep.", "topic": "testing"}]}
         p = os.path.join(self.tmp, "g3.json")
         with open(p, "w") as f:

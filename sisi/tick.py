@@ -95,6 +95,14 @@ def main(args=()):
         if payload.get("source", "startup") == "startup" or not store.load_session(sid):
             rec = {"session_id": sid, "cwd": cwd, "started": store.now(), "tool": store.tool(),
                    "source": payload.get("source"), "blocks": 0}
+            if isinstance(payload.get("model"), str) and payload["model"]:
+                rec["model"] = payload["model"]
+            try:
+                from . import workers as _W
+                if _W.is_subagent_payload(payload):
+                    rec["subagent"] = True
+            except Exception:
+                pass
             if isinstance(payload.get("transcript_path"), str):
                 rec["transcript_path"] = payload["transcript_path"]
                 # Attribution starts here: the gate reads only transcript bytes after this offset.
@@ -124,6 +132,22 @@ def main(args=()):
         if line:
             sys.stdout.write("sisi: %s\n" % line)
         _export_session(sid)
+        try:
+            sess = rec or store.load_session(sid)
+            model = payload.get("model") if isinstance(payload.get("model"), str) else sess.get("model")
+            if model and sess.get("model") != model:
+                sess["model"] = model
+                store.save_session(sid, sess)
+            if model and not sess.get("orch_line_shown"):
+                from . import workers as _W
+                lines = _W.session_lines(model, payload)
+                for ln in lines:
+                    sys.stdout.write(ln + "\n")
+                if lines:
+                    sess["orch_line_shown"] = True
+                    store.save_session(sid, sess)
+        except Exception as e:
+            store.log_error("tick-workers", e)
         try:
             from . import cycle
             note = cycle.due_notice(session=sid if isinstance(sid, str) else None)

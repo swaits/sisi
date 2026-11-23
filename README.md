@@ -31,7 +31,8 @@ Whether it is due is checked during normal use, so nothing is scheduled; see
 [docs/learning.md](docs/learning.md). `sisi lessons digest` prints what has been learned in plain
 words, grouped by topic. Where a tool allows it, the matching recipe and lessons are also delivered
 the moment a request arrives (`sisi prompt`), and each rule names the command that explains it
-(`sisi rule`).
+(`sisi rule`). Delegated work is routed the same way, by measured results rather than a fixed
+list of models: `sisi workers` and `sisi delegate`; see [docs/workers.md](docs/workers.md).
 
 Improvement needs a way to tell success from failure:
 

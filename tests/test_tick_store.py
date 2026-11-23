@@ -83,8 +83,9 @@ class StoreTests(SisiCase):
 
     def test_note_propose_learn_append_with_context(self):
         for cmd, fn in (("note", "notes.jsonl"), ("propose", "proposals.jsonl"), ("learn", "learn-quarantine.jsonl")):
-            self.assertEqual(self.sisi(cmd, "first", "entry", env={"SISI_TOOL": "codex", "SISI_SESSION_ID": "s9"}).returncode, 0)
-            self.sisi(cmd, "second")
+            extra = ["--scope", "everywhere"] if cmd == "learn" else []
+            self.assertEqual(self.sisi(cmd, *(extra + ["first", "entry"]), env={"SISI_TOOL": "codex", "SISI_SESSION_ID": "s9"}).returncode, 0)
+            self.sisi(cmd, *(extra + ["second"]))
             recs = self.read(fn)
             self.assertEqual([r["text"] for r in recs], ["first entry", "second"])
             self.assertEqual(recs[0]["cwd"], self.proj)

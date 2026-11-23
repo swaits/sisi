@@ -52,8 +52,29 @@ class ShortCase(LibCase):
     def cycle_doc(self, notes=None, **parts):
         doc = {"version": 1, "base": cycle.base_version(), "summary": "test cycle"}
         if notes is not None:
+            notes = list(notes)
+            have = {e.get("lesson") for e in notes if isinstance(e, dict) and e.get("action") == "set-scope"}
+            for e in list(notes):
+                if isinstance(e, dict) and isinstance(e.get("lesson"), int) and e["lesson"] not in have:
+                    notes.append({"lesson": e["lesson"], "action": "set-scope", "scope": "everywhere"})
+                    have.add(e["lesson"])
             doc["notes"] = notes
         doc.update(parts)
+        # A cycle file must also answer for every document the brief lists for whole-document
+        # review: mark them reviewed here (tests of rewriting itself live in test_documents).
+        try:
+            from sisi import documents as _docs
+            _con = retro.connect()
+            try:
+                _have = {e.get("doc") for e in doc.get("documents") or [] if isinstance(e, dict)}
+                _rev = [{"doc": d["doc"], "action": "reviewed", "reason": "test helper: structure left as it is"}
+                        for d in _docs.required_documents(_con) if d["doc"] not in _have]
+            finally:
+                _con.close()
+            if _rev:
+                doc["documents"] = list(doc.get("documents") or []) + _rev
+        except Exception:
+            pass
         p = os.path.join(self.tmp, "cycle.json")
         with open(p, "w") as f:
             json.dump(doc, f)
@@ -165,7 +186,7 @@ class DigestTests(ShortCase):
         self.assertLess(out.index("## asking questions"), out.index("## Not yet summarized"))
         self.assertIn("Use a readiness probe, not a sleep.", out)
         self.assertIn("in the rulebook", out)
-        self.assertIn("attached to fuzz work", out)
+        self.assertIn("attached to Fuzz work", out)
         self.assertIn("loose note", out)
         self.assertIn("change to sisi itself, not built yet", out)
         self.assertIn("seen 3 times", out)
@@ -190,7 +211,7 @@ class DigestTests(ShortCase):
 
     def test_digest_shows_what_you_said_first(self):
         self.seed_digest()
-        self.assertEqual(self.sisi("learn", "Always", "show", "the", "options.").returncode, 0)
+        self.assertEqual(self.sisi("learn", "--scope", "everywhere", "Always", "show", "the", "options.").returncode, 0)
         out = self.sisi("lessons", "digest").stdout
         self.assertIn("## What you said", out)
         self.assertIn("Always show the options.", out)
@@ -292,7 +313,9 @@ class BulletTests(ShortCase):
         # restore base: the previous cycle changed the lesson, so clear via a fresh cycle file
         doc2 = {"version": 1, "base": cycle.base_version(), "summary": "second",
                 "notes": [{"lesson": lid, "action": "set-short",
-                           "short": "Prefer probes over sleeps.", "topic": "testing"}]}
+                           "short": "Prefer probes over sleeps.", "topic": "testing"}],
+                "documents": [{"doc": "recipe:parser-or-codec", "action": "reviewed",
+                               "reason": "this round only rewrites the short line"}]}
         p2 = self.cycle_path(doc2)
         r = self.sisi("cycle", "apply", p2)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

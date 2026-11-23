@@ -115,6 +115,14 @@ def _commit(msg, pathspecs):
         if not ok:  # a pathspec that matches nothing makes git add refuse them all: add what exists one by one
             for s in pathspecs:
                 git("add", "-A", "--", s, check=False)
+        # A pathspec whose files were all deleted before ever being tracked (an emptied notes
+        # folder, say) matches nothing in the index either, and git commit refuses it: commit
+        # only the pathspecs that actually staged something.
+        staged = git("diff", "--cached", "--name-only", check=False).stdout.splitlines()
+        pathspecs = [s for s in pathspecs
+                     if any(f == s or f.startswith(s.rstrip("/") + "/") for f in staged)]
+        if not pathspecs:
+            return None
         spec = ["--"] + list(pathspecs)
     else:
         git("add", "-A")

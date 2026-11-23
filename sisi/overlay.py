@@ -4,6 +4,8 @@ Files, all under <personal>/overlay/:
   rules/<id>.md          a rule: `## Title` then the body. Same id as a base rule = replaces it; new id = adds one.
   rules/disabled.txt     ids of rules switched off (one per line)
   rules/order.txt        order of added rules (ids, one per line); base rules keep the base order
+  rules/full-order.txt   whole-book reading order from a whole-document round (ids; numbers follow it)
+  traces/                where each folded lesson lives in a rewritten document (never agent-loaded)
   verifiers/<section>/<id>.md   a verifier in the library's own format (replaces the product's of that id, or adds)
   verifiers/disabled.txt        ids of verifiers switched off
   done/<id>.md           a recipe in the library's own format (replace or add)
@@ -187,6 +189,13 @@ def effective():
     for i in dict.fromkeys(order + rest):
         if i not in off:
             out.append(dict(over[i], origin="added"))
+    # A whole-document round may reorder the whole book: rules/full-order.txt then names every
+    # rule in reading order. Ids stay stable; numbers follow this order, and anything stored
+    # refers to rules by id (`rule:<id>`), never by number.
+    full = _lines(paths.overlay_dir("rules", "full-order.txt"))
+    if full:
+        rank = {i: n for n, i in enumerate(full)}
+        out.sort(key=lambda r: rank.get(r["id"], len(rank)))
     return pre, out
 
 

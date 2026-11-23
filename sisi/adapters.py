@@ -366,9 +366,26 @@ def _header_of(content):
     return content.split(b"\n", 1)[0].rstrip(b"\r")
 
 
-def _is_generated(data, content):
-    """Ours only when the first line is exactly the header line the generator writes."""
-    return data is not None and _header_of(data) == _header_of(content)
+GENERATED_MARKER = b"sisi:generated"
+
+
+def _is_generated(data, content, p=None):
+    """Ours when the first line is exactly the current header, or carries the stable
+    `sisi:generated` marker in its first line (what earlier sisi versions wrote; their
+    header wording differed), or the recorded install manifest's sha for this path
+    matches the file's bytes. A marker anywhere else in the file proves nothing."""
+    if data is None:
+        return False
+    if _header_of(data) == _header_of(content) or GENERATED_MARKER in _header_of(data):
+        return True
+    if p is not None:
+        try:
+            ent = wiring._mload().get("files", {}).get(p) or {}
+            sha = ent.get("sha256")
+            return bool(sha) and hashlib.sha256(data).hexdigest() == sha
+        except Exception:
+            return False
+    return False
 
 
 def generated_state(p, content):
@@ -376,7 +393,7 @@ def generated_state(p, content):
     data, err = wiring._read_file(p)
     if err or data is None:
         return "absent"
-    if not _is_generated(data, content):
+    if not _is_generated(data, content, p):
         return "foreign"
     return "current" if data == content else "stale"
 
@@ -392,7 +409,7 @@ def write_generated(m, p, content, notes, label):
     if err:
         notes.append("%s: %s; not touched" % (label, err))
         return False
-    if data is not None and not _is_generated(data, content):
+    if data is not None and not _is_generated(data, content, p):
         notes.append("%s: %s exists and is not ours; not touched" % (label, p))
         return False
     if data == content:
@@ -411,7 +428,7 @@ def remove_generated(m, p, notes, label, content):
     if err:
         notes.append("%s: %s not touched (%s)" % (label, p, err))
         return
-    if data is None or not _is_generated(data, content):
+    if data is None or not _is_generated(data, content, p):
         return
     ent = m["files"].get(p)
     known = (ent.get("sha256") if ent else None) or hashlib.sha256(content).hexdigest()
@@ -420,10 +437,12 @@ def remove_generated(m, p, notes, label, content):
         return
     if ent is not None and ent["backup"]:
         orig = wiring._read(os.path.join(wiring._idir(), "backups", ent["backup"]))
-        if orig is not None:
+        if orig is not None and not _is_generated(orig, content, p):
             wiring._write(p, orig)
             notes.append("%s: restored %s" % (label, p))
             return
+        # a backup that is itself a sisi-generated file (an older version) is not restored:
+        # uninstall removes the generated file rather than resurrecting the old one
     if os.path.islink(p):
         notes.append("%s: %s is a symlink; left alone" % (label, p))
         return
@@ -435,7 +454,7 @@ def plan_generated_ops(p, content):
     data, err = wiring._read_file(p)
     if err:
         return [{"kind": "skip", "reason": err + "; not touched", "fatal": False}]
-    if data is not None and not _is_generated(data, content):
+    if data is not None and not _is_generated(data, content, p):
         return [{"kind": "skip", "reason": "%s exists and is not ours; not touched" % p, "fatal": False}]
     if data == content:
         return []

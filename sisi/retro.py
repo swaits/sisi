@@ -96,7 +96,8 @@ def db_path():
 NEW_LESSON_COLS = (("strength", "INTEGER DEFAULT 1"), ("triggers", "TEXT"), ("effect", "TEXT"),
                    ("applied_at", "TEXT"), ("folded_into", "TEXT"), ("needs_cycle", "INTEGER DEFAULT 0"),
                    ("check_json", "TEXT"), ("change_fp", "TEXT"), ("promoted_shown", "INTEGER DEFAULT 0"),
-                   ("when_terms", "TEXT"), ("short", "TEXT"), ("topic", "TEXT"))
+                   ("when_terms", "TEXT"), ("short", "TEXT"), ("topic", "TEXT"),
+                   ("scope", "TEXT"), ("project", "TEXT"))
 
 
 def connect():
@@ -154,7 +155,7 @@ def _backfill(con):
 # ---- the committed dump ------------------------------------------------------
 LESSON_COLS = ("id", "created", "aim", "change_kind", "target", "moment", "cause", "change", "status", "count", "last_seen",
                "strength", "triggers", "effect", "applied_at", "folded_into", "needs_cycle", "check_json", "change_fp",
-               "promoted_shown", "when_terms", "short", "topic")
+               "promoted_shown", "when_terms", "short", "topic", "scope", "project")
 OCC_COLS = ("id", "lesson_id", "ts", "session", "tool", "cwd", "repo", "moment", "fp", "delivery_s")
 IMP_COLS = ("id", "lesson_id", "ts", "session", "place", "occ_count")
 SIGHT_COLS = ("id", "lesson_id", "ts", "session", "moment")
@@ -553,8 +554,29 @@ def sightings_count(con, lesson_id):
         return 0
 
 
+def _round_open(lesson_id):
+    """A learning round is open for this lesson when a brief snapshot on record still shows it
+    active. Automatic retirement is deferred then, so reading lessons during a round (which
+    counts showings) can never stale the round's base."""
+    try:
+        d = os.path.join(paths.state(), "cycle-bases")
+        for name in os.listdir(d):
+            if not name.endswith(".json"):
+                continue
+            with open(os.path.join(d, name), encoding="utf-8") as f:
+                snap = json.load(f)
+            v = (snap.get("lessons") or {}).get(str(lesson_id)) or {}
+            if v.get("status") in ACTIVE:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _maybe_retire(con, lesson_id):
     """Shown 20 times with no recurrence since first shown, and folded into a rule or an entry: leave the notes."""
+    if _round_open(lesson_id):
+        return  # deferred while a learning round is open; reading must not stale it
     r = con.execute("SELECT * FROM lessons WHERE id=?", (lesson_id,)).fetchone()
     if r and r["status"] in ACTIVE and r["folded_into"] and shown_count(con, lesson_id) >= RETIRE_SHOWS \
             and recurrences_after_shown(con, r) == 0:
@@ -598,8 +620,11 @@ def new_lesson(con, f, cwd, fp):
     topic = (f.get("topic") or "").strip() or None
     # tolerate stores predating short/topic: only insert columns that exist
     cols = [r[1] for r in con.execute("PRAGMA table_info(lessons)")]
-    extra_cols = [c for c in ("short", "topic") if c in cols]
-    extra_vals = [short if c == "short" else topic for c in extra_cols]
+    extra_cols = [c for c in ("short", "topic", "scope", "project") if c in cols]
+    _scope_vals = {"short": short, "topic": topic,
+                   "scope": (f.get("scope") or "unscoped"),
+                   "project": (f.get("project") or None)}
+    extra_vals = [_scope_vals[c] for c in extra_cols]
     base_cols = ("created, aim, change_kind, target, moment, cause, change, status, count, last_seen,"
                  " strength, triggers, change_fp, when_terms")
     all_cols = base_cols + (", " + ", ".join(extra_cols) if extra_cols else "")
@@ -622,7 +647,8 @@ def notes_chars(con):
     try:
         return con.execute(
             "SELECT COALESCE(sum(length(change)),0) FROM lessons WHERE status IN ('open','applied') "
-            "AND COALESCE(strength,1)=1 AND folded_into IS NULL AND COALESCE(effect,'')='learned-note'"
+            "AND COALESCE(strength,1)=1 AND folded_into IS NULL AND COALESCE(effect,'')='learned-note' "
+            "AND COALESCE(scope,'unscoped')<>'project' AND change_kind<>'tool'"
         ).fetchone()[0]
     except Exception:
         return con.execute(
@@ -723,6 +749,11 @@ def apply_effect(con, lesson_id):
     r = con.execute("SELECT * FROM lessons WHERE id=?", (lesson_id,)).fetchone()
     if not r or r["status"] not in ACTIVE or r["applied_at"]:
         return r["effect"] if r else None
+    if _get(r, "scope") == "project":
+        # project facts never write into the shared recipe/verifier notes
+        con.execute("UPDATE lessons SET effect='learned-note', applied_at=? WHERE id=?",
+                    (store.now(), lesson_id))
+        return "learned-note"
     eff = effect_for(r["change_kind"], r["target"], r["change"])
     folded = None
     if eff == "field-note":
@@ -854,8 +885,14 @@ LIMIT = 1200
 
 
 def tick_block(cwd, n=8, session=None):
+    notice = ""
+    try:
+        from . import handover
+        notice = handover.notice(cwd)
+    except Exception:
+        notice = ""
     if not os.path.exists(db_path()):
-        return ""
+        return notice
     con = connect()
     try:
         ensure_effects(con)
@@ -865,9 +902,12 @@ def tick_block(cwd, n=8, session=None):
             FROM lessons l WHERE l.status IN ('open','applied')
             ORDER BY COALESCE(l.strength,1) DESC, here DESC, l.count DESC, l.last_seen DESC LIMIT 60""", (repo,)))
         out, total, ids = [], len(HEADER) + 1, []
+        from . import scope as _scope
         for r in rows:
             if len(out) >= n:
                 break
+            if not _scope.row_visible(r, cwd):
+                continue
             src = _get(r, "short") or r["change"]
             t = safe_line(src, repo)
             if not t:
@@ -882,7 +922,8 @@ def tick_block(cwd, n=8, session=None):
         con.close()
     if out:
         record_shown(ids, "tick", session)
-    return (HEADER + "\n" + "\n".join(out)) if out else ""
+    block = (HEADER + "\n" + "\n".join(out)) if out else ""
+    return "\n".join(x for x in (notice, block) if x)
 
 
 # ---- delivery at the moment it matters --------------------------------------
@@ -925,6 +966,8 @@ def _score_all(query, extra="", con=None):
     finally:
         if own:
             con.close()
+    from . import scope as _scope
+    rows = [r for r in rows if _scope.row_visible(r, os.getcwd())]
     q, qx = _stems(query), _stems(extra)
     if not (q or qx) or not rows:
         return []
@@ -1129,7 +1172,7 @@ def backlog_rows(con=None):
         con = connect()
     try:
         return [dict(r) for r in con.execute(
-            "SELECT * FROM lessons WHERE change_kind='tool' AND status IN ('open','applied') "
+            "SELECT * FROM lessons WHERE change_kind='tool' AND status='open' "
             "ORDER BY count DESC, created ASC, id ASC")]
     finally:
         if own:
@@ -1141,7 +1184,7 @@ def _parse(argv):
     f, flags, i = {}, set(), 0
     names = {"--aim": "aim", "--moment": "moment", "--cause": "cause", "--change-kind": "change_kind",
              "--change": "change", "--target": "target", "--same-as": "same_as", "--when": "when",
-             "--short": "short", "--topic": "topic"}
+             "--short": "short", "--topic": "topic", "--scope": "scope", "--project": "project"}
     while i < len(argv):
         a = argv[i]
         if a in names:
@@ -1181,7 +1224,7 @@ def cmd_retro(argv, stdin=None):
             if k == "new":
                 if v:
                     flags.add("new")
-            elif isinstance(v, (str, int)) and k in ("aim", "moment", "cause", "change_kind", "change", "target", "same_as", "when", "short", "topic"):
+            elif isinstance(v, (str, int)) and k in ("aim", "moment", "cause", "change_kind", "change", "target", "same_as", "when", "short", "topic", "scope", "project"):
                 f.setdefault(k, str(v))
     for k in list(f):
         f[k] = f[k].strip()
@@ -1193,6 +1236,20 @@ def cmd_retro(argv, stdin=None):
             print("  - " + e)
         print("Answer how it could have gone better, concretely: see `sisi help` and canon rule 7.")
         return 2
+    if not same:
+        from . import scope as _scope
+        sc = f.get("scope")
+        if sc not in _scope.SCOPES:
+            print(_scope.MISSING_SCOPE)
+            return 2
+        if sc == "everywhere":
+            reason = _scope.universal_refusal(
+                [f.get("change"), f.get("short"), f.get("when")], os.getcwd(), kind=f.get("change_kind"))
+            if reason:
+                print(_scope.refusal_text(reason))
+                return 2
+        else:
+            f["project"] = _scope.project_id(os.getcwd())
     cwd = os.getcwd()
     con = connect()
     try:
@@ -1242,9 +1299,18 @@ def cmd_retro(argv, stdin=None):
         count = row["count"]
         applied = bool(applied) or (row["effect"] == "field-note" and count == 1)
         needs_short = not (_get(row, "short") and str(_get(row, "short")).strip()) or not (_get(row, "topic") and str(_get(row, "topic")).strip())
+        handed = None
+        if not same and f.get("scope") == "project":
+            from . import handover
+            handed = handover.move_lesson(con, lid, f.get("project"))
+            con.commit()
     finally:
         con.close()
     sync("lessons: retro recorded for lesson #%d" % lid)
+    if handed:
+        print("recorded for this project: lesson #%d is in the handover pile (%s), not in the global "
+              "lessons; `sisi handover` here lists it in full" % (lid, handed.get("hid")))
+        return 0
     print("recorded: lesson #%d, seen %d time%s%s" % (lid, count, "" if count == 1 else "s", "; applied to notes/" if applied else ""))
     if needs_short:
         print("sisi: this lesson has no short line yet; the next learning round will write one (run `sisi cycle --now` to start it now).")
@@ -1264,10 +1330,23 @@ def _lesson_line(r):
                                                   heading_text(r, 100))
 
 
+def _entry_title(entry_id):
+    """The human title of a recipe/verifier entry, or the id in plain words."""
+    try:
+        from . import verifiers as V
+        for e in list(V.load_recipes()) + list(V.load_verifiers()):
+            if e.get("id") == entry_id and e.get("title"):
+                return e["title"]
+    except Exception:
+        pass
+    return str(entry_id).replace("-", " ")
+
+
 def plain_state(r):
     """A lesson's state in plain words for the human digest (no internal labels)."""
     if _get(r, "change_kind") == "tool":
-        return "change to sisi itself, not built yet"
+        return "change to sisi itself, built" if _get(r, "status") == "applied" \
+            else "change to sisi itself, not built yet"
     folded = _get(r, "folded_into") or ""
     if folded.startswith("rule:") or folded == "enforced" or _get(r, "check_json"):
         return "in the rulebook"
@@ -1276,11 +1355,11 @@ def plain_state(r):
         if first.startswith("draft:"):
             first = first[6:]
         if first:
-            return "attached to %s work" % first
+            return "attached to %s work" % _entry_title(first)
     if _get(r, "effect") == "field-note":
         target = _get(r, "target")
         if target:
-            return "attached to %s work" % target
+            return "attached to %s work" % _entry_title(target)
     return "loose note"
 
 
@@ -1301,10 +1380,22 @@ def digest_lines(include_all=False, con=None):
     try:
         for rec in store.read("quarantine"):
             t = " ".join(str(rec.get("text") or "").split())
-            if t:
+            if t and rec.get("scope") != "project":
                 said.append(t)
     except Exception:
         said = []
+    # any project-scoped rows still in the store (recorded before handover, not yet moved)
+    # are not global lessons: the digest names only how many wait to be filed, per project
+    from . import scope as _scope, handover as _ho
+    waiting = dict(_ho.counts_by_project())
+    uni_rows = []
+    for r in rows:
+        if _scope.row_scope(r) == "project":
+            pid = r.get("project") or ""
+            waiting[pid] = waiting.get(pid, 0) + 1
+        else:
+            uni_rows.append(r)
+    rows = uni_rows
     summarized = [r for r in rows if (r.get("short") or "").strip() and (r.get("topic") or "").strip()]
     _summ_ids = {r["id"] for r in summarized}
     pending = [r for r in rows if r["id"] not in _summ_ids]
@@ -1339,6 +1430,12 @@ def digest_lines(include_all=False, con=None):
                 line += "; seen %d times" % r["count"]
             out.append(line + ")")
         out.append("")
+    if waiting:
+        out.append("## Waiting to be filed in their projects")
+        for pid in sorted(waiting):
+            out.append("- %d item(s) waiting to be filed in %s (run `sisi handover` inside that project)"
+                       % (waiting[pid], _scope.project_label(pid) if pid else "an unknown project"))
+        out.append("")
     out.append("To see one lesson in full, run `sisi lessons show ID` with the lesson number in place of ID.")
     return out
 
@@ -1369,11 +1466,31 @@ def cmd_lessons(argv):
                 r["strength"] or 1, r["effect"] or "-", r["folded_into"] or "-",
                 listed_count(con, r["id"]), read_count(con, r["id"]),
                 recurrences_after_shown(con, r), sightings_count(con, r["id"])))
-            print("moment: %s\ncause : %s\nchange: %s" % (r["moment"], r["cause"], r["change"]))
+            from . import scope as _scope
+            _sc = _scope.row_scope(r)
+            print("scope : %s%s" % (_sc, (" (%s)" % _get(r, "project")) if _sc == "project" else
+                                    " (not yet scoped; a learning round will ask)" if _sc == "unscoped" else ""))
+            print("change: %s" % r["change"])
             print("short : %s" % (_get(r, "short") or "- (none yet; a learning cycle can write one)"))
             print("topic : %s" % (_get(r, "topic") or "-"))
             print("when  : %s" % (r["when_terms"] or "- (none recorded; a cycle can add terms)"))
-            print("\noccurrences:")
+            try:
+                from . import documents as _docs
+                for _key, _t in _docs.traces_for_lesson(r["id"]):
+                    _disp = _t.get("disposition") or "carried"
+                    if _disp == "moved":
+                        print("lives : moved to %s as %r" % (_t.get("to"), _t.get("fragment")))
+                    elif _disp == "merged":
+                        print("lives : in %s, merged with lesson #%s as %r" % (_key, _t.get("merged_with"), _t.get("fragment")))
+                    elif _disp == "retired":
+                        print("lives : retired from %s (%s)" % (_key, _t.get("reason")))
+                    else:
+                        print("lives : in %s as %r" % (_key, _t.get("fragment")))
+            except Exception:
+                pass
+            print("\nWhere this came from (historical example)")
+            print("moment: %s\ncause : %s" % (r["moment"], r["cause"]))
+            print("occurrences:")
             for o in con.execute("SELECT * FROM occurrences WHERE lesson_id=? ORDER BY id", (r["id"],)):
                 print("  %s  session %s  tool %s  repo %s\n    %s" % (o["ts"], o["session"] or "?", o["tool"] or "?", o["repo"], o["moment"]))
             record_shown([r["id"]], "lessons-show")  # opening a lesson in full counts as showing it
@@ -1531,7 +1648,20 @@ def cmd_backlog(argv):
     if not rows:
         print("the backlog is empty: no open tool lessons")
         return 0
+    cap = 1500  # the backlog's own heading cap, separate from the loose-lessons budget
+    total, printed = 0, 0
+    print("sisi backlog: %d tool lesson(s), most seen first (its own cap is %d heading characters; "
+          "built ones leave the list with `sisi lessons set ID --status applied`)" % (len(rows), cap))
     for r in rows:
-        print("#%-4d x%-3d s%d shown %-3d %s" % (r["id"], r["count"], r["strength"] or 1, shown[r["id"]],
-                                                heading_text(r, 110)))
+        line = "#%-4d x%-3d s%d shown %-3d %s" % (r["id"], r["count"], r["strength"] or 1, shown[r["id"]],
+                                                 heading_text(r, 110))
+        if total + len(line) + 1 > cap and printed:
+            break
+        print(line)
+        total += len(line) + 1
+        printed += 1
+    if printed < len(rows):
+        print("- ... and %d more not listed (backlog headings take %d characters, cap %d; "
+              "`sisi lessons --kind tool` lists them all)" % (len(rows) - printed,
+                                                               sum(len(heading_text(r, 110)) + 8 for r in rows), cap))
     return 0

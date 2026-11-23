@@ -316,14 +316,21 @@ def _print_drafts(query):
 
 
 def cmd_show(args):
+    trace = "--trace" in args
+    args = [a for a in args if a != "--trace"]
     if not args:
-        print("usage: sisi verifiers show ID")
+        print("usage: sisi verifiers show ID [--trace]")
         return 1
     e = _find(usable(load_verifiers()), args[0])
     if not e:
         print("no verifier with id %r (see `sisi verifiers`)" % args[0])
         return 1
     _show(e, True)
+    if trace:
+        from . import documents as _docs
+        print("")
+        for line in _docs.trace_lines("verifier", e["id"]):
+            print(line)
     _print_lessons("%s %s %s" % (e["id"], e["title"], e["answers"]), "verifiers-show")
     return 0
 
@@ -548,6 +555,8 @@ def main(args):
 
 # ---- done recipes ----------------------------------------------------------
 def done_main(args):
+    trace = "--trace" in args
+    args = [a for a in args if a != "--trace"]
     rs = usable(load_recipes())
     if args and args[0] == "for":
         desc = " ".join(args[1:]).strip()
@@ -590,6 +599,11 @@ def done_main(args):
         print("== %s: %s ==%s\napplies to: %s\n" % (r["id"], r["title"], origin_tag(r), r["applies_to"]))
         print(r["body"].strip("\n"))
         _print_notes(r["id"])
+        if trace:
+            from . import documents as _docs
+            print("")
+            for line in _docs.trace_lines("recipe", r["id"]):
+                print(line)
         _print_lessons("%s %s %s" % (r["id"].replace("-", " "), r["title"], r["applies_to"]),
                        "done-show", loose=True, targets=(r["id"],))
         return 0

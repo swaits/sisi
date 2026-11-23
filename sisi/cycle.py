@@ -15,14 +15,16 @@ A cycle file (what the agent writes, what `sisi cycle apply` checks) is one JSON
               "when": "csv, tsv, spreadsheet, tabular data, import, parse (optional; sets the lesson's when-terms)"}],
    "enforced": [{"lesson": 3, "type": "command", "cmd": "...", "expect": {"exit": 0}, "timeout_s": 30},
                 {"lesson": 4, "type": "contract-requirement", "when": "parser",
-                 "require_kind": "parsing", "max_rung": 2}]}
+                 "require_kind": "parsing", "max_rung": 2}],
+   "documents": [{"doc": "recipe:<id>", "action": "rewrite|reviewed", "text": "...", "trace": [...]}],
+   "rule_order": ["every rule id once"]}
 Every part is optional except version and base. Apply is one commit in the personal repository under
 the personal-data lock; a stale base (another cycle or lesson landed since the brief) refuses cleanly.
 Each applied cycle records the exact bytes it changed, so revert restores them byte for byte.
 """
 import base64, difflib, hashlib, json, os, re, shlex, shutil, time
 
-from . import overlay, paths, pdata, retro, store
+from . import documents, overlay, paths, pdata, retro, store
 
 
 class CycleError(Exception):
@@ -30,7 +32,7 @@ class CycleError(Exception):
 
 
 ACTIONS = ("merge", "fold-into-rule", "fold-into-entry", "retire", "withdraw", "keep",
-           "set-when", "create-entry", "keep-as-draft", "set-short")
+           "set-when", "create-entry", "keep-as-draft", "set-short", "set-scope")
 # Total characters of lesson text (change+moment+cause) the brief prints in full. Over this,
 # lessons are truncated and the brief says to run `sisi lessons show ID` for the full text.
 BRIEF_TEXT_BUDGET = 6000
@@ -107,13 +109,18 @@ def due_state(con=None):
             return {"due": False, "reasons": [], "counter": [0, 0]}
     try:
         last = retro.get_meta(con, "last_cycle_ts") or ""
-        since = con.execute("SELECT count(*) FROM lessons WHERE created>?", (last,)).fetchone()[0]
+        # only what a round can act on counts: tool lessons (backlog, closed when built) and
+        # project-scoped items (handed over to their project) never make a cycle due
+        since = con.execute("SELECT count(*) FROM lessons WHERE created>? AND change_kind<>'tool' "
+                            "AND COALESCE(scope,'unscoped')<>'project'", (last,)).fetchone()[0]
         pending = con.execute(
-            "SELECT count(*) FROM lessons WHERE status IN ('open','applied') AND "
+            "SELECT count(*) FROM lessons WHERE status IN ('open','applied') AND change_kind<>'tool' "
+            "AND COALESCE(scope,'unscoped')<>'project' AND "
             "(COALESCE(needs_cycle,0)=1 OR (COALESCE(strength,1)>=3 AND check_json IS NULL))").fetchone()[0]
         notes_chars = retro.notes_chars(con)
         loose = [dict(r) for r in con.execute(
-            "SELECT * FROM lessons WHERE status IN ('open','applied') AND folded_into IS NULL ORDER BY id")]
+            "SELECT * FROM lessons WHERE status IN ('open','applied') AND folded_into IS NULL "
+            "AND change_kind<>'tool' AND COALESCE(scope,'unscoped')<>'project' ORDER BY id")]
         headings_chars = sum(len(retro.loose_heading(r)) + 1 for r in loose)
         counter = [con.execute("SELECT COALESCE(max(id),0) FROM lessons").fetchone()[0],
                    con.execute("SELECT COALESCE(max(id),0) FROM occurrences").fetchone()[0]]
@@ -193,7 +200,8 @@ def _announce_save(data):
 # occurrence counters (count, last_seen) and new lessons do NOT count: reading a lesson or a
 # lesson arriving must never stale a brief (gaps 2 and 3).
 _RELEVANT = ("aim", "change_kind", "target", "moment", "cause", "change", "status", "strength",
-             "folded_into", "effect", "when_terms", "check_json", "needs_cycle", "short", "topic")
+             "folded_into", "effect", "when_terms", "check_json", "needs_cycle", "short", "topic",
+             "scope", "project")
 
 
 def _snapshot(con):
@@ -217,8 +225,20 @@ def _snapshot(con):
         cyc = sorted(os.listdir(cycles_dir()))
     except OSError:
         cyc = []
+    learn_unscoped = []
+    try:
+        for rec in store.read("quarantine"):
+            if rec.get("scope") not in ("everywhere", "project") and (rec.get("text") or "").strip():
+                learn_unscoped.append({"text": rec.get("text"), "cwd": rec.get("cwd")})
+    except Exception:
+        pass
+    try:
+        docs_required = documents.required_documents(con)
+    except Exception:
+        docs_required = []
     return {"lessons": lessons, "files": files, "rules": rules, "enforced": enf,
-            "last_cycle_ts": retro.get_meta(con, "last_cycle_ts") or "", "cycles": cyc}
+            "last_cycle_ts": retro.get_meta(con, "last_cycle_ts") or "", "cycles": cyc,
+            "learn_unscoped": learn_unscoped, "documents": docs_required}
 
 
 def _save_snapshot(base, snap):
@@ -322,6 +342,11 @@ def cycle_records():
 def _scan_files():
     """{data-relative path: bytes} for overlay/ and notes/ (everything a cycle may touch)."""
     out = {}
+    for rel in ("handover.json", "learn-quarantine.jsonl"):
+        p = paths.data_file(rel)
+        if os.path.exists(p):
+            with open(p, "rb") as f:
+                out[rel] = f.read()
     for root in ("overlay", os.path.relpath(paths.notes_dir(), paths.data())
                  if paths.notes_dir().startswith(paths.data() + os.sep) else None):
         if not root:
@@ -422,15 +447,31 @@ Shape (all but version/base optional; full detail: `sisi cycle help`):
    "rules": [{"id": "rule-id", "title": "Title", "body": "text ending with Why: ...", "action": "add|replace",
               "shortens": "rule-id: what text is removed/shortened (required when the rulebook would grow in characters)"}],
    "disable_rules": ["rule-id"],
-   "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-when|create-entry|keep-as-draft|set-short",
+   "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-when|create-entry|keep-as-draft|set-short|set-scope",
               "into": "id or [ids] (folds; entry folds append a field note)", "merged_into": 4,
               "note": "text to append instead of the lesson change (for splitting one lesson)",
               "when": "at least 5 terms (sets when-terms; alone with action set-when)",
               "short": "one plain sentence, at most 140 characters (set-short)", "topic": "1 to 3 lower-case words, at most 30 characters (set-short)",
               "entry_kind": "recipe|verifier", "entry_text": "full file text (create-entry)",
+              "scope": "everywhere|project (set-scope)", "project": "project id (set-scope to project)",
               "reason": "why it stays a draft (keep-as-draft)"}],
+   "learn": [{"text": "<the exact learn statement>", "action": "set-scope", "scope": "everywhere|project",
+              "project": "project id (when project)"}],
    "enforced": [{"lesson": 3, "type": "command", "cmd": "...", "expect": {"exit": 0}, "timeout_s": 30},
-                {"lesson": 4, "type": "contract-requirement", "when": "parser", "require_kind": "parsing", "max_rung": 2}]}"""
+                {"lesson": 4, "type": "contract-requirement", "when": "parser", "require_kind": "parsing", "max_rung": 2}],
+   "documents": [{"doc": "recipe:<id>|verifier:<id>|rulebook", "action": "rewrite", "text": "<full new text>",
+                  "trace": [{"lesson": 3, "fragment": "exact sentence in the new text"},
+                            {"lesson": 4, "disposition": "moved", "to": "recipe:<id>", "fragment": "..."},
+                            {"lesson": 5, "disposition": "merged", "merged_with": 3, "fragment": "..."},
+                            {"lesson": 6, "disposition": "retired", "reason": "..."}],
+                  "rule_merges": [{"from": "old-rule-id", "into": "surviving-rule-id"}],
+                  "shortens": "what existing rule text gets shorter (rulebook, when it would grow)"},
+                 {"doc": "verifier:<id>", "action": "reviewed", "reason": "why its structure is already right"}],
+   "rule_order": ["every rule id exactly once, in reading order (numbers follow it; ids stay stable)"]}
+Every document the brief lists under whole-document review needs one documents entry; a rewrite
+must trace every lesson folded into it, and nothing folded may be lost.
+A file containing only the required set-short/set-scope entries (for lessons and learn statements) is
+acceptable when nothing else is ready to fold: that is a cleanup-only round, and it is a good round."""
 
 HELP_TEXT = """sisi cycle help: the full cycle file format (the brief is the short form)
 
@@ -444,7 +485,11 @@ File: write ONE JSON file at the scratch path the brief prints, then:
   sisi cycle --now          same: start a round on demand, even when none is due
 
 Top level: {"version": 1 (required), "base": "<from the brief, required>", "summary": "one line",
-  "rules": [...], "disable_rules": [...], "notes": [...], "enforced": [...]} - all else optional.
+  "rules": [...], "disable_rules": [...], "notes": [...], "learn": [...], "enforced": [...],
+  "documents": [...], "rule_order": [...]} - all else optional, except the documents entries the
+  brief requires (below).
+  A file containing only the required set-short/set-scope entries is acceptable when nothing else
+  is ready to fold (a cleanup-only round).
 The file covers only the lessons listed in its brief. Lessons recorded since the brief are left
 for the next cycle and do not make the apply fail. Reading (`sisi lessons show ID`, `sisi done`,
 `sisi verifiers show`) never stales the base: it covers only lesson content/status, rules, notes
@@ -497,6 +542,16 @@ Notes - one object per decision; the same lesson may appear several times (split
                   be combined with other actions on the same lesson. When the lesson is already
                   folded into an entry, its default field-note bullet is rewritten to the short
                   form; a bullet that came from an explicit `note` is left alone.
+  set-scope       {"lesson": A, "action": "set-scope", "scope": "everywhere|project",
+                  "project": "<project id, required when project>"} - decides where a lesson
+                  belongs. everywhere requires its delivered text (change, short, when) to be
+                  universal: naming the project it came from is refused, though its moment and
+                  cause (its history) may name it freely. project moves the lesson out of the
+                  global store into that project's handover pile (`sisi handover` there); it is
+                  never folded into the rulebook or the general recipe/technique notes. Every
+                  unscoped lesson in the brief needs one; lessons this file retires, withdraws or
+                  merges away are exempt. Project-scoped lessons cannot be folded into a rule or
+                  an entry, created into an entry, or enforced in a cycle.
   keep            {"lesson": A, "action": "keep"} - leave it; clears its waiting flag.
   retire          leave the active notes. Only when fully folded and quiet: folded into a rule,
                   entry or enforced check, listed/read at least 20 times, and 0 recurrences after
@@ -507,6 +562,15 @@ Notes - one object per decision; the same lesson may appear several times (split
                   re-learned. Tool lessons: cannot be done in a cycle (they are changes to sisi
                   itself) - leave them in `sisi backlog` untouched, except merging a duplicate.
 
+Learn statements - the equivalent for `sisi learn` statements ("learn" at the top level):
+  {"text": "<the exact statement>", "action": "set-scope", "scope": "everywhere|project",
+   "project": "<project id, when project>"} - every unscoped statement in the brief needs one.
+  project moves it to that project's handover pile, out of the global store. Decide by what the
+  statement is about: how the owner wants all work done is universal (for example "always ask
+  questions as options with a recommendation" or "never set up scheduled jobs or timers"), while
+  a fact about one product's design is project (for example "this product's settings page keeps
+  advanced options behind one toggle" or "this app uses the left control key for search").
+
 Enforced checks - write none for lessons below strength 3. One per strength-3 NEEDS A CHECK:
   command: {"lesson": 3, "type": "command", "cmd": "program + args that exist here",
     "expect": {"exit": 0} (integer exit code required; runs only in trusted projects),
@@ -516,6 +580,40 @@ Enforced checks - write none for lessons below strength 3. One per strength-3 NE
     "require_kind": "general|concurrency|parsing|money|state-machine|migration|ui",
     "max_rung": 2 (optional, 1-6: the required check must be at this rung or stronger)}
   Complete examples are the two objects above.
+
+Documents - every round ends with a whole-document edit. The things agents read are documents:
+  the rulebook ("rulebook"), each recipe ("recipe:<id>") and each technique ("verifier:<id>").
+  The brief prints, for every document that has appended field notes, whose personal copy no
+  longer matches the product text it was made from (a re-merge), or that has had no
+  whole-document review for the configured number of rounds, its full current text and the
+  lessons folded into it. Existing field-note files are listed this way until rewritten; until
+  then they keep being shown as before.
+  {"doc", "action": "reviewed", "reason"} - the structure is already right; say why in one line.
+  {"doc", "action": "rewrite", "text", "trace"} - the full new text, written as a proper
+  document by the editorial standard in the brief: one instruction per bullet or sentence; most
+  important first; related instructions under one heading; no duplicates; imperative, concrete,
+  plain words; each rule keeps its Why; exceptions beside what they qualify; no history.
+  A folded lesson becomes part of the document's own text where it belongs (in a recipe: Done
+  means, Checks, or Common false finishes), never a dated appended bullet. The personal version
+  lives in the overlay and records the product hash it was derived from.
+  trace: one entry per lesson folded into the document or already traced into it. Nothing may
+  be lost: {"lesson", "fragment"} - the exact sentence or bullet in the new text that carries
+  it (whitespace-normalised; it must occur); {"lesson", "disposition": "moved", "to", "fragment"}
+  - it lives in that other document now, as that fragment there; {"lesson", "disposition":
+  "merged", "merged_with", "fragment"} - both lessons point at the same fragment; {"lesson",
+  "disposition": "retired", "reason"} - only under the retirement rule for retire above.
+  The trace map is stored beside the document, not in the text agents load; `sisi lessons
+  show ID`, `sisi rule N` and `sisi done ID --trace` print where a lesson lives.
+  A rewrite is refused when: the rulebook would pass its line or character budget; a rule lacks
+  its heading with id, its Why, or its generated More line; a recipe or technique fails the
+  library lint; a line stays over the house width after wrapping; a bullet over the configured
+  length ends more than one sentence; or the text holds a dated journal-style bullet. For the
+  rulebook, every existing rule id must survive or be named in "rule_merges"
+  ({"from", "into"}) with the survivor present, and any growth needs "shortens" as for rules.
+  "rule_order" (top level, or the order of a rulebook rewrite) reorders the book: it names
+  every rule id exactly once; ids stay stable, numbers follow the order, and stored data
+  refers to rules by id, never by number. `sisi cycle status` shows, per rewritten document,
+  recurrences of its lessons before and after the rewrite, and flags a rewrite followed by more.
 
 Learned-notes limit: counts length(change) of active strength-1 loose learned notes only
 (limit 4000 characters). It still counts `change`, not `short`: it is about lesson content not
@@ -559,6 +657,23 @@ def brief_text():
         missing_short = [r for r in rows if r["status"] in retro.ACTIVE
                          and (not str(r.get("short") or "").strip() or not str(r.get("topic") or "").strip())]
         topics_in_use = _topics_in_use(con)
+        unscoped = [r for r in rows if r["status"] in retro.ACTIVE
+                    and retro._get(r, "scope") in (None, "", "unscoped")]
+        unscoped_repos = {}
+        for r in unscoped:
+            o = con.execute("SELECT repo, cwd FROM occurrences WHERE lesson_id=? ORDER BY id LIMIT 1", (r["id"],)).fetchone()
+            unscoped_repos[r["id"]] = (o[0] or o[1]) if o else None
+        try:
+            docs_required = documents.required_documents(con)
+            docs_folded = {d["doc"]: documents.folded_lesson_ids(con, d["kind"], d["id"])
+                           for d in docs_required}
+        except Exception:
+            docs_required, docs_folded = [], {}
+        from . import scope as _scope_mod
+        learn_unscoped = []
+        for _lrec in store.read("quarantine"):
+            if _lrec.get("scope") not in _scope_mod.SCOPES and (_lrec.get("text") or "").strip():
+                learn_unscoped.append(_lrec)
     finally:
         con.close()
     from . import verifiers as V
@@ -657,6 +772,67 @@ def brief_text():
             "Topics already in use: " + (", ".join(topics_in_use) if topics_in_use else "(none yet)"),
             "Lessons lacking a short line or topic: " +
             (", ".join("#%d" % r["id"] for r in missing_short) if missing_short else "(none)"), ""]
+    if unscoped or learn_unscoped:
+        out += ["", "Scope cleanup (backfill): every item below was recorded before scopes existed. "
+                "Give each a set-scope (lessons: {\"lesson\": A, \"action\": \"set-scope\", \"scope\": "
+                "\"everywhere|project\", \"project\": \"<id, when project>\"}; learn statements: a "
+                "\"learn\" entry, see `sisi cycle help`). Scoping to a project moves the item out of "
+                "the global store into that project's handover pile. A lesson whose instruction is "
+                "universal stays global even when its history (moment, cause) names a project. A file "
+                "containing only the required set-short/set-scope entries is acceptable when nothing "
+                "else is ready to fold (a cleanup-only round; `sisi cycle --now` starts one now).",
+                "For learn statements: how the owner wants all work done is universal (\"always ask "
+                "questions as options with a recommendation\"; \"never set up scheduled jobs\"); a fact "
+                "about one product's design is project (\"this product's settings page keeps advanced "
+                "options behind one toggle\"; \"this app uses the left control key for search\")."]
+        for r in unscoped:
+            out.append("  lesson #%d recorded in %s: %s" % (r["id"], unscoped_repos.get(r["id"]) or "(unknown repository)",
+                                                            " ".join(str(r.get("change") or "").split())[:120]))
+        for rec in learn_unscoped:
+            pid = ""
+            try:
+                if rec.get("cwd"):
+                    pid = " (project id there: %s)" % _scope_mod.project_id(rec["cwd"])
+            except Exception:
+                pass
+            out.append("  learn statement recorded in %s%s: %r" % (rec.get("cwd") or "(unknown repository)", pid,
+                                                                   " ".join(str(rec["text"]).split())[:120]))
+        out.append("")
+    out += ["", "Documents for whole-document review (every round ends with a whole-document edit):",
+            "Editorial standard - "
+            + " ".join(documents.EDITORIAL_STANDARD),
+            "For each document below your file needs a documents entry: a rewrite (the full new "
+            "text, with each folded lesson integrated where it belongs and a trace entry giving "
+            "the exact fragment that carries it - or a moved/merged/retired disposition), or a "
+            "reviewed entry with a one-line reason why its structure is already right. "
+            "`sisi cycle check` refuses a file that skips a listed document, a rewrite that "
+            "leaves a lesson untraced, and any text that fails the structure checks (budgets, "
+            "headings and Why, the library lint, the %d-character house width after wrapping, "
+            "run-on bullets, dated journal bullets). A document is listed when it has appended "
+            "field notes, when its personal copy no longer matches the product text it was made "
+            "from (re-merge it), or when it has had no whole-document review for %d rounds."
+            % (overlay.HOUSE_WIDTH, documents.review_every_rounds())]
+    if not docs_required:
+        out.append("  (none this round)")
+    _rows_by_id = {r["id"]: r for r in rows}
+    for _d in docs_required:
+        out.append("")
+        out.append("Document %s - %s" % (_d["doc"], "; ".join(_d["reasons"])))
+        for _lid in docs_folded.get(_d["doc"], []):
+            _r = _rows_by_id.get(_lid)
+            if _r:
+                out.append("  lesson #%d folded here: %s (full text: sisi lessons show %d)"
+                           % (_lid, " ".join(str(_r.get("change") or "").split()), _lid))
+                if _r.get("short"):
+                    out.append("    short: %s" % " ".join(str(_r["short"]).split()))
+        if _d["kind"] != "rulebook":
+            _notes = retro.notes_for(_d["id"])
+            if _notes:
+                out.append("  appended field notes (integrate these, do not copy the dates):")
+                out += ["  " + _l for _l in _notes.splitlines()]
+        out.append("  ----- %s: current text -----" % _d["doc"])
+        out += documents.effective_text(_d["kind"], _d["id"]).rstrip("\n").split("\n")
+        out.append("  ----- end of %s -----" % _d["doc"])
     out += ["Do this, in order:",
             "1. Fold each loose lesson into the recipe/entry whose applies-to (above) fits its kind of "
             "work, or lift several into one general rule. fold-into-entry appends a field note (see help). "
@@ -665,7 +841,8 @@ def brief_text():
             "2. Merge only lessons requesting the same change (not just the same topic), into the older "
             "or more general one; the survivor keeps its text and occurrence count. Superseded, retired "
             "and withdrawn lessons need no action.",
-            "3. Tool lessons (kind tool) cannot be done in a cycle: leave them in `sisi backlog` untouched, except merging a duplicate.",
+            "3. Tool lessons (kind tool) cannot be done in a cycle: leave them in `sisi backlog` untouched, except merging a duplicate. When a tool lesson's change has been built, close it outside the cycle file with `sisi lessons set ID --status applied`; it then leaves the backlog and the digest stops calling it not built yet.",
+            "3b. Project-scoped lessons cannot be folded into the rulebook or the general recipe/technique notes in a cycle, and unscoped items each need a set-scope above (scoping to a project moves the item to that project's handover pile).",
             "4. Rules: keep id and Why, format per help; name in `shortens` which existing rule text gets shorter or is replaced whenever a rule is added or the book would grow in characters.",
             "5. For each NEEDS A CHECK lesson write one enforced check (help has fields and examples); none below strength 3.",
             "6. For every lesson listed above as lacking a short line or topic, add a set-short (it may sit "
@@ -673,6 +850,10 @@ def brief_text():
             "7. Retire only what is fully folded and quiet (folded, at least 20 listed/read, 0 recurrences "
             "after first listed) - folding now does not make it quiet, so fold and keep, retire next cycle. "
             "Withdraw what made things worse. set-when only sets when-terms. Keep the rest.",
+            "8. End with the whole-document edit above: for every listed document, rewrite it as a "
+            "proper document by the editorial standard (lessons integrated into its own sections, "
+            "each traced to the fragment that carries it) or mark it reviewed with a reason. "
+            "Nothing folded may be lost: moved, merged and retired lessons are named as such.",
             "Every changed rule keeps its id and ends with its Why. Never ask the human anything.", "", FORMAT_DOC]
     return "\n".join(out) + "\n"
 
@@ -707,6 +888,13 @@ def _lesson_ids_in(doc):
                 for k in ("lesson", "merged_into"):
                     if isinstance(e.get(k), int):
                         ids.add(e[k])
+    for e in doc.get("documents") or []:
+        if isinstance(e, dict):
+            for t in e.get("trace") or []:
+                if isinstance(t, dict):
+                    for k in ("lesson", "merged_with"):
+                        if isinstance(t.get(k), int):
+                            ids.add(t[k])
     return ids
 
 
@@ -786,16 +974,79 @@ def static_validate(doc, con):
         if rid not in base_rule_ids | over_ids:
             errs.append("no rule %s to disable.%s" % (rid, _suggest(rid, base_rule_ids | over_ids)))
     kinds = {}
+    scopes = {}
     try:
         kinds = {r[0]: r[1] for r in con.execute("SELECT id, change_kind FROM lessons")}
+        scopes = {r[0]: (r[1] or "unscoped") for r in con.execute("SELECT id, scope FROM lessons")}
     except Exception:
         pass
+    from . import scope as _scmod
+    for e in doc.get("notes") or []:
+        if not isinstance(e, dict):
+            continue
+        lid, act = e.get("lesson"), e.get("action")
+        if scopes.get(lid) == "project" and act in ("fold-into-rule", "fold-into-entry", "create-entry"):
+            errs.append("lesson %s: project-scoped items can never be folded into the rulebook or the "
+                        "general recipe/technique notes in a cycle" % lid)
+        if act == "set-scope":
+            if e.get("scope") not in _scmod.SCOPES:
+                errs.append("lesson %s: set-scope needs scope everywhere|project" % lid)
+            elif e["scope"] == "project" and not (e.get("project") or "").strip():
+                errs.append("lesson %s: set-scope to project needs \"project\" naming the project id" % lid)
+            elif e["scope"] == "everywhere" and isinstance(lid, int) and lid in kinds:
+                try:
+                    row = con.execute("SELECT * FROM lessons WHERE id=?", (lid,)).fetchone()
+                    occ = con.execute("SELECT repo FROM occurrences WHERE lesson_id=? ORDER BY id LIMIT 1", (lid,)).fetchone()
+                    origin = occ[0] if occ and occ[0] and os.path.isdir(occ[0]) else os.getcwd()
+                    reason = _scmod.universal_refusal(
+                        [e.get("short") or (row["change"] if row else ""), row["change"] if row else "",
+                         e.get("when") or (row["when_terms"] if row else "")], origin, kind=kinds.get(lid))
+                    if reason:
+                        errs.append("lesson %s: cannot set-scope everywhere: %s; rewrite it in general "
+                                    "terms or scope it to its project" % (lid, reason))
+                except Exception:
+                    pass
+    for e in doc.get("enforced") or []:
+        if isinstance(e, dict) and scopes.get(e.get("lesson")) == "project":
+            errs.append("lesson %s: project-scoped items can never be folded into the rulebook or the "
+                        "general recipe/technique notes in a cycle" % e.get("lesson"))
+    learn_recs = []
+    try:
+        learn_recs = store.read("quarantine")
+    except Exception:
+        pass
+    unscoped_learn = [r for r in learn_recs if r.get("scope") not in _scmod.SCOPES and (r.get("text") or "").strip()]
+    covered_learn = set()
+    for e in doc.get("learn") or []:
+        if not isinstance(e, dict) or e.get("action") != "set-scope":
+            errs.append("each learn entry needs action set-scope: %r" % (e,))
+            continue
+        covered_learn.add(e.get("text"))
+        if e.get("scope") not in _scmod.SCOPES:
+            errs.append("learn %r: set-scope needs scope everywhere|project" % (e.get("text"),))
+        elif e["scope"] == "project" and not (e.get("project") or "").strip():
+            errs.append("learn %r: set-scope to project needs \"project\" naming the project id" % (e.get("text"),))
+        elif not any(r.get("text") == e.get("text") for r in unscoped_learn):
+            errs.append("learn %r: no unscoped learn statement with that exact text" % (e.get("text"),))
+        elif e["scope"] == "everywhere":
+            origin = next((r.get("cwd") for r in unscoped_learn if r.get("text") == e.get("text")), None)
+            if origin and os.path.isdir(origin):
+                reason = _scmod.universal_refusal([e.get("text")], origin)
+                if reason:
+                    errs.append("learn %r: cannot set-scope everywhere: %s" % (e.get("text"), reason))
+    if isinstance(doc, dict) and doc.get("base"):
+        old = _load_snapshot(doc["base"])
+        if old and isinstance(old.get("learn_unscoped"), list):
+            for rec in old["learn_unscoped"]:
+                if rec.get("text") and rec["text"] not in covered_learn:
+                    errs.append("learn statement %r: missing set-scope - add {\"text\": ..., \"action\": "
+                                "\"set-scope\", \"scope\": \"everywhere|project\"}" % (rec["text"],))
     for e in doc.get("notes") or []:
         if not isinstance(e, dict) or e.get("action") not in ACTIONS:
             errs.append("each note needs an action in %s: %r" % (", ".join(ACTIONS), e))
             continue
         lid = e.get("lesson")
-        if kinds.get(lid) == "tool" and e["action"] not in ("merge", "keep", "keep-as-draft", "set-when", "set-short"):
+        if kinds.get(lid) == "tool" and e["action"] not in ("merge", "keep", "keep-as-draft", "set-when", "set-short", "set-scope"):
             errs.append("lesson %s: tool lessons cannot be done in a cycle (they change sisi itself); "
                         "leave them in `sisi backlog` untouched, except merging a duplicate" % lid)
         if e["action"] == "set-short":
@@ -888,6 +1139,39 @@ def static_validate(doc, con):
                 errs.append("lesson %d: missing set-short (%s) - the brief listed this lesson as needing "
                             "a short line; add {\"lesson\": %d, \"action\": \"set-short\", \"short\": \"...\", \"topic\": \"...\"}"
                             % (lid, " and ".join(need), lid))
+    # Every active lesson that was unscoped in the brief needs a set-scope here (same exemption
+    # as set-short: lessons this file retires, withdraws or merges away are exempt).
+    if isinstance(doc, dict) and doc.get("base"):
+        old = _load_snapshot(doc["base"])
+        if old and isinstance(old.get("lessons"), dict):
+            notes_list = [e for e in doc.get("notes") or [] if isinstance(e, dict)]
+            scoped_ids = {e.get("lesson") for e in notes_list if e.get("action") == "set-scope"}
+            exempt = {e.get("lesson") for e in notes_list if e.get("action") in ("retire", "withdraw", "merge")}
+            for lid_s, v in old["lessons"].items():
+                if not isinstance(v, dict) or v.get("status") not in retro.ACTIVE:
+                    continue
+                if v.get("scope") not in (None, "", "unscoped"):
+                    continue
+                try:
+                    lid = int(lid_s)
+                except ValueError:
+                    continue
+                if lid in exempt or lid in scoped_ids:
+                    continue
+                errs.append("lesson %d: missing set-scope - the brief listed this lesson as unscoped; add "
+                            "{\"lesson\": %d, \"action\": \"set-scope\", \"scope\": \"everywhere|project\"}"
+                            % (lid, lid))
+    # Whole-document entries: every document the brief listed needs a rewrite or a reviewed
+    # entry, and a rewrite must trace every lesson folded into it (see sisi.documents).
+    required_docs = None
+    if isinstance(doc, dict) and doc.get("base"):
+        old = _load_snapshot(doc["base"])
+        if old and isinstance(old.get("documents"), list):
+            required_docs = old["documents"]
+    try:
+        errs.extend(documents.validate_documents(doc, con, required_docs))
+    except Exception as ex:
+        errs.append("documents: %s" % ex)
     return errs
 
 
@@ -961,6 +1245,9 @@ def _apply_writes(doc, con):
             if sets:
                 con.execute("UPDATE lessons SET %s WHERE id=?" % ", ".join(sets), vals + [lid])
             retro.rewrite_notes_for_lesson(con, lid)
+        elif act == "set-scope":
+            con.execute("UPDATE lessons SET scope=?, project=? WHERE id=?",
+                        (e.get("scope"), (e.get("project") or None) if e.get("scope") == "project" else None, lid))
         elif act == "keep-as-draft":
             con.execute("UPDATE lessons SET needs_cycle=0 WHERE id=?", (lid,))
         elif act == "set-when":
@@ -971,7 +1258,43 @@ def _apply_writes(doc, con):
             con.execute("UPDATE lessons SET status='withdrawn', needs_cycle=0 WHERE id=?", (lid,))
         else:  # keep
             con.execute("UPDATE lessons SET needs_cycle=0 WHERE id=?", (lid,))
-    return sorted(touched)
+    # project-scoped lessons leave the global store for their project's handover pile
+    from . import handover as _ho
+    for e in doc.get("notes") or []:
+        if isinstance(e, dict) and e.get("action") == "set-scope" and e.get("scope") == "project":
+            _ho.move_lesson(con, e["lesson"], e.get("project"))
+    docs_changed = documents.apply_documents(doc, con, touched)
+    _apply_learn(doc)
+    return sorted(touched), docs_changed
+
+
+def _apply_learn(doc):
+    """Apply the learn set-scope entries: everywhere stamps the statement; project moves it
+    out of the global store into that project's handover pile."""
+    entries = [e for e in doc.get("learn") or [] if isinstance(e, dict)]
+    if not entries:
+        return
+    from . import handover as _ho
+    recs = store.read("quarantine")
+    by_text = {e.get("text"): e for e in entries}
+    kept = []
+    for rec in recs:
+        e = by_text.get(rec.get("text"))
+        if e is None or rec.get("scope") in ("everywhere", "project"):
+            kept.append(rec)
+        elif e.get("scope") == "project":
+            _ho.move_learn(rec, e.get("project"))
+        else:
+            rec = dict(rec, scope="everywhere")
+            rec.pop("project", None)
+            kept.append(rec)
+    p = store.file_path("quarantine")
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    tmp = p + ".tmp%d" % os.getpid()
+    with open(tmp, "w", encoding="utf-8") as f:
+        for rec in kept:
+            f.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
+    os.replace(tmp, p)
 
 
 def apply_file(path):
@@ -996,7 +1319,7 @@ def apply_file(path):
             before_chars = before_m.get("rulebook_chars")
             prev_last = retro.get_meta(con, "last_cycle_ts")
             try:
-                touched = _apply_writes(doc, con)
+                touched, docs_changed = _apply_writes(doc, con)
                 # create-entry files must pass the existing library lint
                 from . import verifiers as _V
                 for e in doc.get("notes") or []:
@@ -1008,8 +1331,11 @@ def apply_file(path):
                                                    % (into, "; ".join(bad)))
                 con.commit()
                 built = overlay.build_canon()
-                has_replace = any(e.get("action") == "replace" for e in doc.get("rules") or [])
-                has_shortens = any(e.get("shortens") for e in doc.get("rules") or []) or bool(doc.get("disable_rules"))
+                _doc_entries = [e for e in doc.get("documents") or [] if isinstance(e, dict)]
+                has_replace = any(e.get("action") == "replace" for e in doc.get("rules") or []) or \
+                    any(e.get("doc") == "rulebook" and e.get("action") == "rewrite" for e in _doc_entries)
+                has_shortens = any(e.get("shortens") for e in doc.get("rules") or []) or bool(doc.get("disable_rules")) or \
+                    any(e.get("shortens") for e in _doc_entries) or bool(doc.get("rule_order"))
                 if before_chars is not None and built["chars"] > before_chars and not has_shortens:
                     raise CycleError("the rulebook would grow from %d to %d characters (and %d to %d lines). "
                                      "A cycle must not increase the characters unless its rules name in "
@@ -1034,15 +1360,21 @@ def apply_file(path):
                     cid = "cycle-%04d" % (int(cid.split("-")[1]) + 1)
                 ts = store.now()
                 rec = {"id": cid, "ts": ts, "summary": doc.get("summary") or "", "base": doc["base"],
-                       "touched": touched, "before": before_m, "after": measures(con),
+                       "touched": touched, "documents_changed": sorted(docs_changed),
+                       "document_lessons": docs_changed,
+                       "before": before_m, "after": measures(con),
                        "lessons_before": [before_rows[i] for i in touched if i in before_rows],
                        "changed_files": changed, "prev_last_cycle_ts": prev_last, "reverted": None}
                 os.makedirs(cycles_dir(), exist_ok=True)
                 pdata.write_text(os.path.join("cycles", cid + ".json"), json.dumps(rec, indent=1, sort_keys=True) + "\n")
                 retro.set_meta(con, "last_cycle_ts", ts)
                 con.commit()
+                try:
+                    os.unlink(os.path.join(paths.state(), "cycle-bases", doc["base"] + ".json"))
+                except OSError:
+                    pass  # the round is closed now; its snapshot no longer defers retirement
                 retro.export_jsonl()
-                specs = ["overlay", "lessons.jsonl", "cycles"]
+                specs = ["overlay", "lessons.jsonl", "cycles", "handover.json", "learn-quarantine.jsonl"]
                 if paths.notes_dir().startswith(paths.data() + os.sep):
                     specs.append(os.path.relpath(paths.notes_dir(), paths.data()))
                 if pdata._commit("cycle %s: %s" % (cid, rec["summary"] or "consolidation"), specs) is None \
@@ -1054,9 +1386,7 @@ def apply_file(path):
                                     for rel, b in _scan_files().items() if before_files.get(rel) != b} |
                                    {rel: base64.b64encode(b).decode() for rel, b in before_files.items()})
                 for row in before_rows.values():
-                    cols = [c for c in retro.LESSON_COLS if c != "id"]
-                    con.execute("UPDATE lessons SET %s WHERE id=?" % ",".join(c + "=?" for c in cols),
-                                [row.get(c) for c in cols] + [row["id"]])
+                    _restore_lesson_row(con, row)
                 if prev_last is None:
                     con.execute("DELETE FROM meta WHERE key='last_cycle_ts'")
                 else:
@@ -1070,6 +1400,20 @@ def apply_file(path):
                 raise
     finally:
         con.close()
+
+
+def _restore_lesson_row(con, row):
+    """Put a lesson row back exactly, recreating it when the cycle moved it to the handover pile."""
+    cols = [c for c in retro.LESSON_COLS if c in row]
+    have = [r[1] for r in con.execute("PRAGMA table_info(lessons)")]
+    cols = [c for c in cols if c in have]
+    if con.execute("SELECT 1 FROM lessons WHERE id=?", (row["id"],)).fetchone():
+        sets = [c for c in cols if c != "id"]
+        con.execute("UPDATE lessons SET %s WHERE id=?" % ",".join(c + "=?" for c in sets),
+                    [row.get(c) for c in sets] + [row["id"]])
+    else:
+        con.execute("INSERT INTO lessons(%s) VALUES(%s)" % (",".join(cols), ",".join("?" * len(cols))),
+                    [row.get(c) for c in cols])
 
 
 def revert_cycle(cid=None):
@@ -1088,9 +1432,7 @@ def revert_cycle(cid=None):
         with pdata.lock():
             _restore_changed(rec.get("changed_files") or {})
             for row in rec.get("lessons_before") or []:
-                cols = [c for c in retro.LESSON_COLS if c != "id" and c in row]
-                con.execute("UPDATE lessons SET %s WHERE id=?" % ",".join(c + "=?" for c in cols),
-                            [row.get(c) for c in cols] + [row["id"]])
+                _restore_lesson_row(con, row)
             prev = rec.get("prev_last_cycle_ts")
             if prev is None:
                 con.execute("DELETE FROM meta WHERE key='last_cycle_ts'")
@@ -1102,7 +1444,7 @@ def revert_cycle(cid=None):
             rec = dict(rec, reverted=store.now())
             pdata.write_text(os.path.join("cycles", rec["id"] + ".json"),
                              json.dumps(rec, indent=1, sort_keys=True) + "\n")
-            specs = ["overlay", "lessons.jsonl", "cycles"]
+            specs = ["overlay", "lessons.jsonl", "cycles", "handover.json", "learn-quarantine.jsonl"]
             if paths.notes_dir().startswith(paths.data() + os.sep):
                 specs.append(os.path.relpath(paths.notes_dir(), paths.data()))
             pdata._commit("cycle revert %s" % rec["id"], specs)
@@ -1115,6 +1457,36 @@ def revert_cycle(cid=None):
 def _fmt_med(m):
     from . import delivery
     return delivery.fmt_s(m) if m is not None else "-"
+
+
+def _doc_recurrences(rec):
+    """{doc: (before, after)} -- recurrences (sightings past each lesson's first) of the lessons
+    a rewritten document carries, before and after the rewrite landed."""
+    out = {}
+    per_doc = rec.get("document_lessons") or {}
+    if not per_doc:
+        return out
+    con = _connect_if()
+    if con is None:
+        return out
+    ts = rec.get("ts") or ""
+    try:
+        for key, ids in sorted(per_doc.items()):
+            before = after = 0
+            for lid in ids or []:
+                occ = [r[0] for r in con.execute(
+                    "SELECT ts FROM occurrences WHERE lesson_id=? ORDER BY id", (lid,))]
+                for i, t in enumerate(occ):
+                    if i == 0:
+                        continue  # the first sighting made the lesson; later ones are recurrences
+                    if t < ts:
+                        before += 1
+                    else:
+                        after += 1
+            out[key] = (before, after)
+    finally:
+        con.close()
+    return out
 
 
 def status_lines():
@@ -1130,6 +1502,11 @@ def status_lines():
         out.append("  since: %d deliveries, %s send-backs each, median %s, %d recurrence(s) of touched lessons"
                    % (a["deliveries"], a["send_backs_per_delivery"], _fmt_med(a["median_seconds"]),
                       a["recurrences_of_touched"]))
+        for key, (before, after) in sorted(_doc_recurrences(r).items()):
+            flag = " MORE RECURRENCES AFTER THE REWRITE - revert or repair" \
+                if not r.get("reverted") and after > before else ""
+            out.append("  document %s rewritten: %d recurrence(s) of its lessons before, %d after%s"
+                       % (key, before, after, flag))
     return out
 
 
@@ -1260,12 +1637,46 @@ def check_file(path):
                 extra += " short=%r" % e["short"][:60]
             if e.get("topic"):
                 extra += " topic=%r" % e["topic"][:60]
+            if e.get("scope"):
+                extra += " scope=%s%s" % (e["scope"], (" project=%s" % e["project"]) if e.get("project") else "")
             out.append("  lesson %s: %s%s" % (e.get("lesson"), e.get("action"), extra))
+        for e in doc.get("learn") or []:
+            out.append("  learn %r: set-scope %s%s" % (str(e.get("text"))[:60], e.get("scope"),
+                                                        (" project=%s" % e["project"]) if e.get("project") else ""))
         for e in doc.get("enforced") or []:
             out.append("  lesson %s: enforced %s %s" % (e.get("lesson"), e.get("type"),
                          e.get("cmd") or ("when=%s require_kind=%s" % (e.get("when"), e.get("require_kind")))))
+        for e in doc.get("documents") or []:
+            if e.get("action") == "rewrite":
+                traced = ", ".join("#%s" % t.get("lesson") for t in e.get("trace") or []
+                                   if isinstance(t, dict)) or "-"
+                out.append("  document %s: rewrite (%d characters; lessons traced: %s)"
+                           % (e.get("doc"), len(e.get("text") or ""), traced))
+            else:
+                out.append("  document %s: reviewed (%s)" % (e.get("doc"), e.get("reason") or ""))
+        if doc.get("rule_order"):
+            out.append("  rule order: %s" % ", ".join(doc["rule_order"]))
         # predicted rulebook size with the rules applied in memory
         try:
+            cand_doc = documents.candidate_rulebook(doc)
+            if cand_doc is not None:
+                lines, chars = overlay.size(cand_doc)
+                out.append("  rulebook: %s lines, %s characters -> %d lines, %d characters "
+                           "(budgets %d lines, %d characters)"
+                           % (before["rulebook_lines"], before.get("rulebook_chars"), lines, chars,
+                              overlay.MAX_LINES, overlay.MAX_CHARS))
+                _entries = [e for e in doc.get("documents") or [] if isinstance(e, dict)]
+                has_shortens = any(e.get("shortens") for e in doc.get("rules") or []) \
+                    or bool(doc.get("disable_rules")) or any(e.get("shortens") for e in _entries) \
+                    or bool(doc.get("rule_order"))
+                if chars > overlay.MAX_CHARS or lines > overlay.MAX_LINES:
+                    raise CycleError("the rulebook would be %d lines and %d characters; budgets are %d and %d"
+                                     % (lines, chars, overlay.MAX_LINES, overlay.MAX_CHARS))
+                if before.get("rulebook_chars") is not None and chars > before["rulebook_chars"] and not has_shortens:
+                    raise CycleError("the rulebook would grow from %d to %d characters; add `shortens` naming "
+                                     "which existing rule text gets shorter or is replaced"
+                                     % (before["rulebook_chars"], chars))
+                return out
             pre, rules = overlay.effective()
             by_id = {r["id"]: dict(r) for r in rules}
             order = [r["id"] for r in rules]
@@ -1338,8 +1749,11 @@ def cmd_cycle(args):
                 print("usage: sisi cycle apply FILE")
                 return 2
             rec = apply_file(args[1])
-            print("applied %s: %s (rulebook %s lines; committed to the personal repository)"
-                  % (rec["id"], rec["summary"] or "consolidation", rec["after"]["rulebook_lines"]))
+            print("applied %s: %s (rulebook %s lines, %s characters -> %s lines, %s characters; "
+                  "committed to the personal repository)"
+                  % (rec["id"], rec["summary"] or "consolidation",
+                     rec["before"]["rulebook_lines"], rec["before"].get("rulebook_chars"),
+                     rec["after"]["rulebook_lines"], rec["after"].get("rulebook_chars")))
             return 0
         if sub == "revert":
             rec = revert_cycle(args[1] if len(args) > 1 else None)

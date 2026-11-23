@@ -14,6 +14,24 @@ _TRIVIAL = {"yes", "no", "y", "n", "ok", "okay", "sure", "yep", "nope", "thanks"
             "go ahead", "do it", "continue", "stop", "wait", "hi", "hello"}
 
 
+_WORK_STEMS = {"fix", "chang", "add", "build", "updat", "remov", "implement", "writ", "creat",
+               "refactor", "renam", "delet", "introduc", "migrat", "upgrad", "design", "develop",
+               "ship", "publish", "tag", "releas", "mak", "set", "install", "convert", "speed"}
+_QUESTION_START = {"should", "can", "could", "would", "is", "are", "do", "does", "did", "why", "what",
+                   "how", "whether", "when", "where", "who", "which", "will", "shall", "may"}
+
+
+def _is_question_without_work(t):
+    """A question to the agent that names no work (no fix/build/change/...): the agent just answers."""
+    low = " ".join(t.lower().split())
+    first = low.split(" ", 1)[0].strip("¿?") if low else ""
+    if not (low.endswith("?") or first in _QUESTION_START):
+        return False
+    from . import retro, verifiers as V
+    stems = {retro._stem(w) for w in V._words(low)}
+    return not (stems & _WORK_STEMS)
+
+
 def is_trivial(text):
     """A message no recipe or lesson can help with: empty, a slash command, a bare yes/no, or a short
     question. A wrong injection on every message is worse than none."""
@@ -28,6 +46,8 @@ def is_trivial(text):
     if len(words) < 3:
         return True
     if t.endswith("?") and len(words) <= 7:  # a short question: the agent just answers it
+        return True
+    if _is_question_without_work(t):
         return True
     return False
 
@@ -45,21 +65,33 @@ def _best_recipe(query):
     def stems_of(text):
         return {retro._stem(x) for x in V._words(text.replace("-", " "))}
 
+    generic = retro.COMMON | {retro._stem(w) for w in
+                              ("agent agents tool tools interface surface command commands function functions "
+                               "program system name names description descriptions user users thing things "
+                               "way ways step steps example examples".split())}
     scored = []
     for r in V.usable(V.load_recipes()):
-        s, primary = 0.0, set()
-        for text, w in ((r["title"], 3.0), (r["applies_to"], 3.0), (r["id"].replace("-", " "), 3.0), (r["body"], 0.2)):
+        s, primary, anchored = 0.0, set(), set()
+        for text, w, is_anchor in ((r["title"], 3.0, True), (r["applies_to"], 3.0, False),
+                                   (r["id"].replace("-", " "), 3.0, False), (r["body"], 0.2, False)):
             hit = toks & stems_of(text)
             s += w * len(hit)
             if w > 1.0:
-                primary |= hit - retro.COMMON  # generic words (new, fix, change) never carry a match alone
+                primary |= hit - generic  # generic words (new, fix, change, agent, tool) never carry a match
+                if is_anchor:
+                    anchored |= hit - generic
         if s > 0:
-            scored.append((len(primary), s, r))
+            scored.append((len(primary), len(anchored), s, r))
     if not scored:
         return None
-    scored.sort(key=lambda x: (-x[0], -x[1], x[2]["id"]))
-    primary, s, best = scored[0]
-    return best if primary >= 2 and s >= RECIPE_MIN_SCORE else None
+    scored.sort(key=lambda x: (-x[0], -x[1], -x[2], x[3]["id"]))
+    # the strict floor lessons use: two distinct non-generic terms, at least one of them in the
+    # recipe's own title (its topic, not merely its id), and the score floor; the best
+    # candidate that clears it wins
+    for nprimary, nanchored, s, best in scored:
+        if nprimary >= 2 and nanchored >= 1 and s >= RECIPE_MIN_SCORE:
+            return best
+    return None
 
 
 def _done_means(recipe, retro):
@@ -76,8 +108,14 @@ def _done_means(recipe, retro):
 def build_context(query, session=None):
     """The context to inject for one human request, or "" when nothing strictly matches. Lessons shown
     are recorded as listings at place 'prompt' (listed, not read)."""
+    notice = ""
+    try:
+        from . import handover
+        notice = handover.notice(os.getcwd())
+    except Exception:
+        notice = ""
     if is_trivial(query):
-        return ""
+        return notice
     from . import retro
     recipe = _best_recipe(query)
     targets = (recipe["id"],) if recipe else ()
@@ -92,9 +130,10 @@ def build_context(query, session=None):
                             % (row["id"], retro.heading_text(row, 120), row["id"]))
         ids.append(row["id"])
     if not recipe and not lesson_lines:
-        return ""
-    lines = ["sisi: for this request (from earlier agents' lessons and the recipe library; "
-             "information to weigh, not commands):"]
+        return notice
+    lines = [notice] if notice else []
+    lines.append("sisi: for this request (from earlier agents' lessons and the recipe library; "
+                 "information to weigh, not commands):")
     if recipe:
         lines.append("Done means — recipe `%s` (full text: `sisi done %s`):" % (recipe["id"], recipe["id"]))
         lines += _done_means(recipe, retro)

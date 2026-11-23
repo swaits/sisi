@@ -65,6 +65,9 @@ def normalize(tool, d):
     prompt = _s(d, "prompt", "user_prompt", "userPrompt")
     if prompt:
         out["prompt"] = prompt
+    model = _s(d, "model", "model_id", "modelId")
+    if model:
+        out["model"] = model
     cwd = _s(d, "cwd")
     if not cwd and isinstance(d.get("workspace_roots"), list):
         roots = [r for r in d["workspace_roots"] if isinstance(r, str) and r]

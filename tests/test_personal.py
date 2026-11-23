@@ -551,8 +551,8 @@ class ExportImportTests(PersonalCase):
     def test_round_trip_is_lossless_for_committed_content(self):
         self.ok("overlay", "add-rule", "--id", "delta", "-", stdin=rule_file("Delta", "Body."))
         self.ok("overlay", "replace-verifier", "shellcheck", "-", stdin=self.verifier_text("shellcheck", "Mine"))
-        self.ok("learn", "never", "ask", "twice")
-        self.ok("retro", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
+        self.ok("learn", "--scope", "everywhere", "never", "ask", "twice")
+        self.ok("retro", "--scope", "everywhere", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
                 "--cause", "the test was written after the code", "--change-kind", "rule",
                 "--when", "tests, pytest, failing first, regression, test quality, red green",
                 "--change", "write the failing test first and show it fail with `pytest -k new`")
@@ -588,7 +588,7 @@ class ExportImportTests(PersonalCase):
         self.assertRegex(self.ok("verifiers", "--section", "safety").stdout, r"shellcheck .*Mine")
 
     def test_import_sets_existing_data_aside_and_rebuilds_db_from_the_dump(self):
-        self.ok("retro", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
+        self.ok("retro", "--scope", "everywhere", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
                 "--cause", "the test was written after the code", "--change-kind", "rule",
                 "--when", "tests, pytest, failing first, regression, test quality, red green",
                 "--change", "write the failing test first and show it fail with `pytest -k new`")
@@ -632,7 +632,7 @@ def LessonRows():
 
 
 class LessonDumpTests(PersonalCase):
-    RETRO = ["--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
+    RETRO = ["--scope", "everywhere", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
              "--cause", "the test was written after the code", "--change-kind", "rule",
              "--when", "tests, pytest, failing first, regression, test quality, red green",
              "--change", "write the failing test first and show it fail with `pytest -k new`"]
@@ -659,7 +659,7 @@ class LessonDumpTests(PersonalCase):
         self.assertEqual(len(self.git_log()), n + 1)
 
     def test_learn_and_note_are_personal_and_committed(self):
-        self.ok("learn", "Always", "use", "options")
+        self.ok("learn", "--scope", "everywhere", "Always", "use", "options")
         self.assertIn("learn: Always use options", self.git_log()[0])
         self.assertIn("learn-quarantine.jsonl", pdata.git("ls-files").stdout)
         self.assertFalse(os.path.exists(os.path.join(self.state, "learn-quarantine.jsonl")))
@@ -738,7 +738,7 @@ class ProductIsReadOnlyTests(PersonalCase):
         gate_in = json.dumps({"session_id": "s1", "cwd": self.proj, "stop_hook_active": False})
         cmds = [("install",), ("doctor",), ("tick", "--tool", "t"), ("build-canon",), ("status",),
                 ("overlay", "add-rule", "--id", "z", "-"), ("overlay", "diff"), ("overlay", "disable-rule", "z"),
-                ("learn", "x"), ("lessons", "export"), ("verifiers", "show", "shellcheck"),
+                ("learn", "--scope", "everywhere", "x"), ("lessons", "export"), ("verifiers", "show", "shellcheck"),
                 ("contract", "init", "--goal", "g"), ("verify",), ("migrate",), ("update",),
                 ("export", os.path.join(self.tmp, "e.tar.gz")), ("gate",), ("uninstall",)]
         for c in cmds:

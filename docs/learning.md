@@ -9,7 +9,28 @@ what "done" means, verifying, or being sent back by the gate.
 
 1. **A lesson is recorded.** At the end of each piece of work the agent answers how it could have gone
    better (`sisi retro`): the aim it fell short of, the concrete moment, why, and the change to sisi
-   that would make the next agent do it right without being told. It also names, with `--when` (at
+   that would make the next agent do it right without being told. Every lesson, and every
+   `sisi learn` statement, has a scope (`--scope everywhere|project` is required; a missing scope is
+   refused with a paragraph saying what each means). **Scope: lessons are universal, or they leave.**
+   `everywhere` is for a lesson that holds in any project, stated in general terms; `project` is for
+   a fact about this one project, and it does not stay in sisi's store: it moves to that project's
+   handover pile (below) and on into the project's own documentation or work list. A project is
+   identified by its git remote URL when it has one — normalised, so clones, an ssh or https remote,
+   and a renamed folder are the same project — else by its repository root path (a clone or rename
+   with no remote is then, unavoidably, a different project). The lesson splits in two: the
+   delivered part (`change`, `short`, `--when`; a learn statement) must be universal when scoped
+   `everywhere`, and a structural check (no model call) refuses it when that part names the current
+   project — the repository's name, a path or file name that exists in it, or its remote URL —
+   saying to rewrite it in general terms or scope it to the project (the word `sisi` alone is exempt
+   in tool lessons, which are changes to sisi itself). Its history (`moment`, `cause`, the
+   occurrence records with repository, date and tool) is the historical example of where it came
+   from and may name the project freely; only the delivered part is checked. Lessons and statements
+   recorded before scopes existed are `unscoped`: they keep being delivered as before until a
+   learning round scopes them (below), and printed headings count the short line when present.
+   `sisi lessons show ID` prints the universal lesson first, then a section headed "Where this came
+   from (historical example)" with the moment, cause and occurrences; session start, request-time
+   delivery and field notes show only the universal part plus the command that prints the example.
+   It also names, with `--when` (at
    least five comma-separated words or short phrases, required), the kinds of work the lesson applies
    to in the words a different agent would use, synonyms included — for a CSV lesson: "csv, tsv,
    spreadsheet, tabular data, import, export, parse, delimited file". This matters because word
@@ -47,8 +68,10 @@ what "done" means, verifying, or being sent back by the gate.
    "done means" list in short form plus the matching lessons' short lines, each with the command
    that prints it in full (`sisi done ID`, `sisi lessons show ID`), within a 2,000-character cap.
    A recipe counts only when at least two distinct non-generic request words hit its title,
-   applies-to or id (matched on stems, so "tag" meets "tagging"); trivial messages (a bare yes or
-   no, a slash command, a short question) and unmatched requests inject nothing at all. These
+   applies-to or id, at least one of them in its title (matched on stems, so "tag" meets
+   "tagging") — the same strict floor lessons use. A message that is a question to the agent and
+   names no work (no fix, build, change or the like), trivial messages (a bare yes or no, a slash
+   command, a short question) and unmatched requests inject nothing at all. These
    showings count as *listed* at place `prompt`. The hook never blocks a turn: any error exits
    silently. Draft recipe notes
    appear in `sisi done for` when their words match. Lesson text is always framed as information to
@@ -74,11 +97,37 @@ what "done" means, verifying, or being sent back by the gate.
    still recurs at strength 3 is withdrawn, and the same wording will not be learned again.
 6. **Consolidation happens in a cycle**, run by whichever agent is working — see below.
 
+## Project facts are handed over, not kept (`sisi handover`)
+
+Project-specific details might be recorded, with where the lesson came from as a historical
+example — but they might not live in the global store: sisi is used across many projects, so
+everything it leaves behind is at the broad or meta level, and project facts belong in that
+project's own work list and design documentation. Scoping an item `project` (at `sisi retro` /
+`sisi learn` time, or in a learning round) moves it out of the delivered global data into a
+per-project handover pile in the personal store, kept only until filed. At session start inside
+that project (and in request-time delivery there) sisi says, in plain words, how many items
+belong to this project and asks the agent to file each in the project's own design documentation
+or work list — wherever the project keeps them; if it has neither, a short section in its main
+agent instructions file or a docs file — and then confirm with `sisi handover done ID --where
+PATH`. `sisi handover` lists the waiting items in full, including the owner's quoted words and
+the date, so nothing is lost in the move. The confirmation checks that the named file exists
+inside the project and contains the item's key text (or a quoted fragment passed with `--quote`)
+before removing it from the pile, and records where it went (id, project, path, date) in a small
+filed log. After confirmation the item is gone from every global listing, digest and delivery;
+the digest shows only a count per project of items still waiting to be filed. History stays in
+the personal store's git history. The end-of-turn check is not involved: this is a
+start-of-session notice that repeats until filed.
+
 ## The cycle (`sisi cycle`)
 
 Consolidation is due when enough lessons have been recorded since the last cycle, or a lesson is
 waiting to move up a step, or the learned notes or the loose lessons pass their limits (`sisi cycle
-due` states the live reason and its limit) — the loose list stays short
+due` states the live reason and its limit). The due test counts only what a round can act on:
+tool lessons (changes to sisi itself, which a round cannot fold) and project-scoped items (handed
+over to their project) do not count toward it; tool lessons are shown by `sisi backlog` under
+their own separate heading cap, and a tool lesson whose change has been built is closed with
+`sisi lessons set ID --status applied`, which takes it off the backlog and stops the digest
+calling it "not built yet". The loose list stays short
 by construction, because the brief's first instruction is to fold lessons into the recipe or entry
 for their kind of work, or lift several into one rule, so they leave it. That is a counter check, not a
 schedule: it runs at session start, at the end of every turn in the gate, and in the output of
@@ -102,16 +151,37 @@ states the short and topic limits, and requires a `set-short` entry for each lis
 prints exactly what would change, changing nothing. A round can be started on demand even when
 none is due: `sisi cycle --now` (or plain `sisi cycle`) prints the brief either way.
 
+The brief also lists every unscoped lesson and `sisi learn` statement, with the repository each
+was recorded in where known, and requires a scope decision for each: a note
+`{"lesson": A, "action": "set-scope", "scope": "everywhere|project", "project": "<id, when
+project>"}` for a lesson, and the equivalent `{"text": "<the exact statement>", "action":
+"set-scope", ...}` in a top-level `"learn"` list for a statement (the full format is behind
+`sisi cycle help`). Scoping to a project moves the item to that project's handover pile, and
+`sisi cycle check` refuses to fold a project-scoped item into the rulebook or the general
+recipe/technique notes. A learn statement about how the owner wants all work done (how to ask
+questions, spending limits, no scheduled jobs) is universal; a statement about one product's
+design is project. A file containing only the required set-short/set-scope entries is acceptable
+when nothing else is ready to fold — a cleanup-only round, startable at once with
+`sisi cycle --now`. Reading lessons during a round cannot stale it: automatic retirement (a
+folded lesson shown 20 times) is deferred while a round is open, so `sisi lessons show` during
+the round leaves its base current. `sisi cycle apply` prints the rulebook's lines and characters
+before and after, matching what `sisi cycle check` predicted.
+
 ```json
 {"version": 1, "base": "<base version from the brief>", "summary": "one line",
  "rules": [{"id": "rule-id", "title": "Title", "body": "text, ending with Why: ...", "action": "add|replace",
             "shortens": "rule-id: what is removed (required when the book would grow in characters)"}],
  "disable_rules": ["rule-id"],
- "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-when|create-entry|keep-as-draft|set-short",
+ "notes": [{"lesson": 3, "action": "merge|fold-into-rule|fold-into-entry|retire|withdraw|keep|set-when|create-entry|keep-as-draft|set-short|set-scope",
             "into": "rule/entry id or [ids]", "merged_into": 4, "note": "split text (optional)",
             "when": "at least 5 terms (optional)", "short": "one plain sentence (set-short)", "topic": "topic words (set-short)",
-            "entry_kind": "recipe|verifier", "entry_text": "full file (create-entry)",
+            "entry_kind": "recipe|verifier", "entry_text": "full file (create-entry)", "scope": "everywhere|project (set-scope)", "project": "id (set-scope)",
             "reason": "why it stays a draft (keep-as-draft)"}],
+ "learn": [{"text": "the exact learn statement", "action": "set-scope", "scope": "everywhere|project", "project": "id, when project"}],
+ "documents": [{"doc": "recipe:<id>", "action": "rewrite", "text": "<full new text>",
+                "trace": [{"lesson": 3, "fragment": "the exact sentence in the new text that carries it"}]},
+               {"doc": "verifier:<id>", "action": "reviewed", "reason": "why its structure is already right"}],
+ "rule_order": ["every rule id exactly once, in reading order"],
  "enforced": [{"lesson": 3, "type": "command", "cmd": "...", "expect": {"exit": 0}, "timeout_s": 30},
               {"lesson": 4, "type": "contract-requirement", "when": "parser",
                "require_kind": "parsing", "max_rung": 2}]}
@@ -153,6 +223,40 @@ deliveries, send-backs each, median time, and recurrences of the lessons it touc
 deliveries got worse after at least 10 of them is flagged, and the next brief says to revert or repair
 it first.
 
+Every round ends with a whole-document edit. The things agents read are documents — the
+rulebook, each "what done means" recipe, each technique entry — and a folded lesson belongs in
+the document's own text, in the section where it fits (in a recipe: Done means, Checks, or
+Common false finishes), in the document's voice, not as one more dated bullet in a journal.
+The brief prints, for every document that has appended field notes, was folded into, has a
+personal copy whose product text has since changed, or has had no whole-document review for
+the configured number of rounds, its full current text and the lessons folded into it
+(universal part only), together with a short editorial standard: one instruction per bullet or
+sentence; most important and most often violated first; related instructions grouped under
+one heading; no duplicates; imperative, concrete, plain words; each rule keeps its reason;
+exceptions beside the instruction they qualify; no history or narrative. The cycle file then
+needs, for each listed document, a rewrite (the full new text) or a `reviewed` entry with a
+one-line reason; `sisi cycle check` refuses a file that skips one. The personal version of a
+recipe or technique lives in the overlay and shadows the product's, with the product hash it
+was derived from on record; when the product later changes, the next brief lists the document
+as needing a re-merge rather than silently keeping the stale copy. Field-note files from
+before this existed are listed the same way and keep being shown until rewritten.
+
+Nothing folded may be lost in a rewrite. For each lesson folded into a document the file gives
+the exact sentence or bullet in the new text that carries it, or an explicit disposition:
+moved to another named document (with its fragment there), merged with another lesson (both
+ids point at the same fragment), or retired under the usual retirement rule. A rewrite that
+leaves any lesson without one of these is refused. For the rulebook the same holds for rule
+ids: each survives or is merged into another id, and each keeps its Why. The trace map is
+stored beside the document, outside the text agents load; `sisi lessons show ID`,
+`sisi rule N` and `sisi done ID --trace` print where a lesson lives. Structure is checked
+mechanically: the rulebook budgets, rule headings with ids, Why paragraphs and the generated
+pointer lines, the library lint for recipes and techniques, the house width after wrapping,
+run-on bullets, and dated journal-style bullets. A round may also reorder the rulebook
+(`rule_order`): ids stay stable, numbers follow the order, and stored data refers to rules by
+id. Each rewrite is recorded on its cycle, so `sisi cycle status` shows recurrences of the
+rewritten document's lessons before and after it, and flags a rewrite followed by more.
+Reverting a round restores documents, order and trace maps along with everything else.
+
 Enforced checks live in `overlay/enforced.json` and are checked like the minimum-rung floors: a
 contract-requirement fails a contract that touches its subject without a check of the required kind;
 a command check runs in the project like a contract check, and only in projects already on the trust
@@ -179,13 +283,18 @@ sent back twice.
 
 `sisi lessons digest` is for the human, not for agents. Its first line says how much has been
 learned in one sentence, and its last line says how to see a lesson in full (`sisi lessons show
-ID`), with the lesson number on every line. Preferences recorded with `sisi learn` appear first,
+ID`), with the lesson number on every line. Universal items come first; items waiting to be
+filed in their projects appear only as a count per project (run `sisi handover` inside that
+project to see them). Preferences recorded with `sisi learn` appear first,
 in the person's own words, under "What you said" when any are stored. Short lines are grouped
 under their topic headings, ordered by how much each topic holds, most first. After every line
-comes its state in plain words — in the rulebook; attached to a kind of work; a loose note; or a
-change to sisi itself, not built yet — plus "seen N times" only when a lesson has been seen more
-than once. Lessons without a short line go last, under "Not yet summarized", cut at a word
-boundary. Retired, withdrawn and superseded lessons are left out unless `--all` is given.
+comes its state in plain words — in the rulebook; attached to a kind of work (named by the
+entry's human title, never its internal id); a loose note; a change to sisi itself, not built
+yet, or built once closed with `sisi lessons set ID --status applied` — plus "seen N times" only
+when a lesson has been seen more than once. Lessons without a short line go last, under "Not yet
+summarized", cut at a word boundary. Retired, withdrawn and superseded lessons are left out
+unless `--all` is given. `sisi rule N` lists the lessons behind a rule the same split way as
+`sisi lessons show ID`: the lesson line, then its historical example.
 
 ## Is it getting better?
 
@@ -219,6 +328,13 @@ this), so only the recording agent's when-terms can bridge them, against 24 shou
 reach 21/21 (20 of them already in part one; one — a request sharing a single when-word — reaches
 only as a heading, as designed), part-one wrong 0/24. Both sets are small and hand-written; treat
 even those figures as evidence about this mechanism on these examples, not as a promise about yours.
+
+Two more labelled sets guard the newer checks, measured the same way in `tests/test_scope.py`
+and `tests/test_prompt.py`: lesson texts labelled universal or project-bound (including
+universal lessons that merely mention common file names such as README or CHANGELOG, which
+pass, and universal changes whose moment names a project, which also pass because only the
+delivered part is checked), and long real-style multi-part requests plus plain questions for
+request-time recipe delivery (a hit is the expected recipe; any other recipe is a false match).
 
 Delivery therefore depends on the quality of the when-terms the recording agent writes. Thin or
 copy-of-the-text terms leave a lesson findable only by its own wording, exactly the failure they

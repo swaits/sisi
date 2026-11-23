@@ -156,8 +156,14 @@ default the agent is proceeding on. Work that does not depend on it continues. `
 queue. An answer that differs from the default re-opens only the nodes that used it.
 
 **Delegation records.** A person who already delegates work to cheaper models may keep a ledger of outcomes.
-The design folds such a ledger and its routing table into the shared store. Built so far, sisi only reads an optional
-ledger file, to match delegations with sessions when it builds the task set.
+The design folds such a ledger and its routing table into the shared store. Built: the worker layer
+([workers.md](workers.md)) discovers the agent tools and models installed on the machine, imports such a
+ledger once into the shared store, and routes work by pure arithmetic over the judged record — the most
+affordable usable worker that is good enough, with load spread in proportion to the allowance each plan has
+left and reviews sent to a different maker. `sisi delegate` runs one brief unattended through a per-tool
+driver and leaves the run waiting for a judgement. No model is preferred in code, and nothing refreshes on a
+schedule: discovery is re-read during normal use when the stored copy is old or after a failure. What is not
+built on top of it is the conductor above: framing, splitting and closing a tree of work.
 
 ## Part 3: learning that compounds
 
@@ -296,6 +302,13 @@ Built and covered by tests:
   into the product.
 - The data layer for learning: harvest of Claude Code transcripts, task set, ground truth, escape candidates,
   check statistics, scoreboard.
+- The worker layer: discovery of the installed agent tools and their models (`sisi workers`), the delegation
+  ledger in the shared store with a one-time lossless import of the earlier hand-kept ledger, unavailability
+  kept apart from judged quality, choice by measured results (`sisi route`), and unattended runs with
+  judgement (`sisi delegate`). The session's model is kept from hook payloads, strength comes from the record
+  plus a stored prior with source and date (no ranking shipped in code), and session start says whether the
+  session should plan and delegate or work itself. Stored price and strength tables are ready for a later
+  research refresh; that refresh, and any driver for a host with its own delegation interface, are not built.
 
 Designed, not built:
 
@@ -326,7 +339,8 @@ resumes without redoing closed nodes (to be model-checked, then tested).
 
 ## Decisions
 
-1. Delegation tooling is folded into sisi in the design; only the optional ledger read is built.
+1. Delegation tooling is folded into sisi: discovery, the ledger, the choice rule and unattended runs are
+   built (see [workers.md](workers.md)); the conductor that frames and splits whole products is not.
 2. The end-of-turn gate is on by default. Each check has a time limit, and after three send-backs in a row the
    agent is let through with the result marked unverified. One setting turns the gate off.
 3. Session text may be read by any provider the user already uses as a worker, never by a model whose id marks it

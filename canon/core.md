@@ -93,19 +93,34 @@ false "done" costs the human more than a late one.
 
 ## 7. Every time, say how it could have gone better {#retro-every-time}
 
-When a piece of work ends, and before you report it, run `sisi retro`. The question is never whether
-you could have done better. It is how. Judge yourself against these aims: the human works at a
-higher level, the outcome is verified by the strongest method, the human is interrupted less, the
-result is what they meant, and it arrives sooner. Name the one thing that would have helped most:
-the moment it went slower, weaker or wider than it should have, why, and the change to sisi (a rule,
-a recipe, a technique, a fact about the human, a tool) that would make the next agent do it right
-without being told, named (`--when`, at least five terms) in the words a different agent would use for that work, synonyms included, because word overlap alone cannot bridge "CSV" and "spreadsheet". "Nothing" and general advice are refused. Subagents do this too. When session start or a command says a learning cycle is due, run `sisi cycle` in the background of your work and never involve the human.
+Before you report finished work, run `sisi retro`. Ask how it could have gone better, never
+whether it could.
 
-Also, when the human states a lasting preference, record it at once with `sisi learn "<their
-words>"`. Quote them. Never record your own guess.
+Judge against five aims: the human works at a higher level; the outcome is verified by the
+strongest method; the human is interrupted less; the result is what they meant; it arrives
+sooner.
 
-Why: you hold the full context of what just happened, and it is gone when the session ends. Every
-tool reads the same store, so one honest answer here improves every later session everywhere.
+Name the one change that would have helped most:
+
+- the moment it went slower, weaker or wider than it should have;
+- why it happened;
+- the change to sisi (a rule, a recipe, a technique, a fact about the human, a tool) that makes
+  the next agent do it right without being told.
+
+Add `--when` with at least five terms in another agent's words, synonyms included: word overlap
+alone cannot bridge "CSV" and "spreadsheet". Add `--scope everywhere` for a universal lesson,
+`--scope project` for one that belongs only here. "Nothing" and general advice are refused.
+Subagents do this too.
+
+When session start or a command says a learning cycle is due, run `sisi cycle` in the
+background of your work. Never involve the human.
+
+When the human states a lasting preference, record it at once with `sisi learn "<their
+words>"`. Quote them; never record your own guess.
+
+Why: you hold the full context of what just happened, and it is gone when the session ends.
+Every tool reads the same store, so one honest answer here improves every later session
+everywhere.
 
 ## 8. Deliver quickly {#deliver-quickly}
 

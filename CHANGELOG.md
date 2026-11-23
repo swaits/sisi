@@ -8,12 +8,37 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- Request-time delivery no longer hands over a recipe on a weak match or for a question that names
+  no work; reading lessons can no longer stale a learning round; the due test counts only lessons a
+  round can act on.
+- `sisi install` updates extension files written by earlier versions instead of refusing them.
 - The name now expands to "sisi is still improving"; the earlier expansion is retired.
 - The always-loaded rulebook budget is raised to the largest size vendor guidance supports; growth
   still requires shortening elsewhere.
 
 ### Added
 
+- Lessons and `sisi learn` statements now carry a scope (`--scope everywhere|project`, required).
+  Universal lessons are refused when their delivered text names the current project; their history
+  may name it freely. Project-scoped items leave the shared store for a per-project handover pile
+  (`sisi handover`) and are filed into that project's own documentation or work list.
+- A learning round now ends with a whole-document edit: each rulebook, recipe and technique
+  document with unintegrated notes is rewritten as a proper document or marked reviewed with a
+  reason; every folded lesson must be traced to the text that carries it, so nothing can be lost.
+  `sisi done ID --trace` and `sisi lessons show ID` print where each lesson lives.
+- Rule 7 of the rulebook is rewritten as short grouped instructions.
+
+- Dynamic workers (`sisi workers`, `sisi route`, `sisi delegate`): the agent tools and models on
+  the machine are discovered and cached (refreshed during normal use, never scheduled), work is
+  routed to the most affordable usable worker by pure arithmetic over a judged delegation ledger
+  (flat-rate allowance before per-use price, load spread in proportion to allowance left, thin
+  records explored on low-difficulty work, reviews sent to a different maker, "contributor"
+  models never chosen), and one brief can be run unattended with limit and login failures —
+  recognised from output text, including failures reported with a success exit status — recorded
+  as unavailability and retried on the next choice. Judgements are recorded with
+  `sisi delegate judge`; an earlier hand-kept ledger is imported once, unchanged. The session's
+  own model is now kept from hook payloads, and session start says in one line whether it should
+  plan and delegate or do the work itself. See docs/workers.md.
 - Request-time delivery (`sisi prompt`): where a tool documents a prompt-submission event with a
   context channel (Claude Code, Codex CLI, Gemini CLI, Muse CLI, Pi), the matching
   recipe's "done means" list and the strictly matching lessons are injected when the human's
