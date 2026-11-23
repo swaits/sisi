@@ -18,10 +18,6 @@ def project_label(pid):
     return os.path.basename(str(pid).rstrip("/")) if pid else "(unknown project)"
 
 
-def visible_in(rec, cwd):
-    return L.in_scope(rec, cwd)
-
-
 USAGE = ("usage: sisi learn [--scope user|project] \"<what you want>\"\n"
          "       sisi learn --withdraw ID --reason \"<why it was recorded by mistake>\"")
 

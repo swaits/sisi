@@ -134,10 +134,6 @@ def routing_adjustments(project):
 
 # ---- enforced checks (verify.py seam) ----------------------------------------------
 
-def enforced_path():
-    return paths.overlay_dir("enforced.json")
-
-
 def load_enforced(project=None):
     """Enforced checks; with a project, only those that apply in it."""
     checks = [c for c in _overlay_json("enforced.json", "checks").get("checks", []) if isinstance(c, dict)]

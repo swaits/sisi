@@ -18,7 +18,7 @@ that shows it:
 | Work at a higher level (functions, modules, products) | size of verified work delivered per human message |
 | Verifiable outcomes, formal where possible | share of delivered claims backed by a check that ran, by rung |
 | Hands off | human minutes and blocking questions per delivered piece of work |
-| Delivered sooner, with no weaker check | median time from request to verified result (`sisi time`) |
+| Delivered sooner, with no weaker check | median time from request to verified result (`sisi status`) |
 | Improves itself from use, everywhere | the numbers above, as trends, across all tools |
 
 ## The objective
@@ -30,9 +30,8 @@ with a weaker check or a smaller result.
 
 Time to delivery is measured, not guessed. Each time the end-of-turn gate lets a turn end it records one
 delivery row: the time since the last message the human actually typed (hook feedback and tool results do not
-count), how many times the gate sent the agent back, and how long the checks ran. `sisi time` shows the median
-and 90th percentile for the last 7 days against the 7 days before, the share spent in checks, and the five
-slowest checks; `sisi status` shows the 7-day median.
+count), how many times the gate sent the agent back, and how long the checks ran. `sisi status` shows the
+median and 90th percentile by project, risk profile, model and policy version.
 
 A learned change that speeds things up but fails a check is rejected. A learned change that keeps every check
 passing but makes median delivery slower is flagged for reversal. (Built: `sisi cycle status` flags a cycle
@@ -126,12 +125,10 @@ runs alone. Results are reported in contract order either way.
 
 **Enforcement.** The tool's end-of-turn hook calls `sisi verify`. If a contract exists and a check fails or was
 not run, the agent is sent back with the failures and cannot report the work as done. If no contract exists and
-the change is larger than a small threshold, the agent is sent back to write one; a change that size
-with a contract whose design section is missing or fails validation is sent back to fill it. Small
+the change is larger than its risk profile allows without one, the agent is sent back to write one. Small
 edits and subagents pass untouched, and the same send-back budget bounds every send-back, so no
-session is trapped. Request-time delivery hands the standing principles and the design instruction
-over when a request reads as design or build work, and `sisi design` prints them before a contract
-exists.
+session is trapped. Request-time delivery hands the standing principles over when a request reads as
+design or build work.
 Claude Code supports a blocking stop hook. The equivalent in OpenCode, Codex and Muse is not verified; where it
 does not exist, verification is meant to run at the next session start and failures to be reported then (that
 fallback is a design intention, not built).
@@ -315,19 +312,18 @@ Built and covered by tests:
   where nothing blocks.
 - The rulebook (`canon/core.md`), the risk table, the verifier library and the recipes.
 - Retrospectives and lessons (`sisi retro`, `sisi lessons`), `sisi learn` live at once, time to delivery
-  (`sisi time`).
-- Choosing the approach as a checked step: the contract design section, `sisi design`, the gate's
-  design send-back on large changes, and request-time delivery of the standing principles for design
-  or build requests. The rulebook's first rule states it and `sisi rule` reports its enforcement.
+  (`sisi status`).
+- Choosing the approach as a checked step: the contract's `approach` and the request-time delivery of the
+  standing principles for design or build requests. `sisi rule` reports the rulebook's enforcement.
 - Patterns: each retro names the general failure of thinking behind the incident; patterns are
   first-class, merged in rounds, and promoted into the rulebook as strategic behaviours past a
-  threshold; the digest and `sisi improve` show them first. Three tiers (`core`, `user`, `project`)
+  threshold; `sisi status --learning` shows them first. Three tiers (`core`, `user`, `project`)
   replace the two-way scope, with older universal items tiered by the next round, and `sisi promote`
   listing, writing (from the clone) or exporting core items.
-- The lesson loop: immediate effects in the overlay (field notes, draft recipes, learned notes, `sisi backlog`),
+- The lesson loop: immediate effects in the overlay (field notes, draft recipes, learned notes),
   moment-of-use delivery with recorded showings, per-lesson measurement, the strength ladder with enforced
   checks, `sisi cycle` (due counter, brief, validated apply under lock and base version, exact revert, status
-  with worse-cycle flagging) and `sisi improve`.
+  with worse-cycle flagging).
 - Personal data, the overlay, update, export and import, releases and rollback, promotion of a personal item
   into the product.
 - The data layer for learning: harvest of Claude Code transcripts, task set, ground truth, escape candidates,

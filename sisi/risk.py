@@ -38,7 +38,6 @@ import fnmatch, json, os, re, subprocess
 
 PROFILES = ["trivial", "isolated", "logic", "integration", "data", "critical", "release"]
 _ORDER = {name: i for i, name in enumerate(PROFILES)}
-_TRIVIAL_PROFILES = {"trivial"}
 _DEFAULT_REASON = "ordinary source file: one module's behaviour"
 _CONTAINERS = {"src", "lib", "app", "packages", "apps", "services", "crates", "modules", "libs",
                "cmd", "internal", "pkg"}

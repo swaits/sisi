@@ -409,17 +409,13 @@ def main(argv):
 
 
 def _learn_cli(cmd, args):
-    """Data-layer commands (harvest, tasks, ...) live in learn_cli. The CLI works without it, even if it is broken."""
-    try:
-        import argparse
-        from . import learn_cli
-        ap = argparse.ArgumentParser(prog="sisi")
-        sub = ap.add_subparsers(dest="cmd")
-        learn_cli.register(sub)
-        if cmd not in sub.choices:
-            return None
-        ns = ap.parse_args([cmd] + args)
-        return ns.func(ns)
-    except (ImportError, AttributeError, TypeError) as e:
-        print("sisi: the %r command is unavailable (%s)" % (cmd, e), file=sys.stderr)
-        return 70
+    """Data-layer commands (harvest, tasks, ...) live in learn_cli; None when `cmd` is not one of them."""
+    import argparse
+    from . import learn_cli
+    ap = argparse.ArgumentParser(prog="sisi")
+    sub = ap.add_subparsers(dest="cmd")
+    learn_cli.register(sub)
+    if cmd not in sub.choices:
+        return None
+    ns = ap.parse_args([cmd] + args)
+    return ns.func(ns)

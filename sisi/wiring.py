@@ -1,7 +1,7 @@
 """install / uninstall / doctor. Wiring by reference (import line, symlink, hook entry); never copies canon text.
 The tools load the generated rulebook in the personal data folder (base rules with the overlay applied), not the
 product's canon/core.md. Every modified file is backed up into <personal>/install/ first; uninstall restores it exactly."""
-import copy, hashlib, json, os, re, shlex, shutil, stat as _stat
+import copy, hashlib, json, os, re, stat as _stat
 
 from . import hookjson, paths, store
 
@@ -318,36 +318,6 @@ def add_hooks(obj):
                 group = {"matcher": HOOK_MATCHERS[ev], "hooks": group["hooks"]}
             kept.append(group)
             changed = True
-    return changed
-
-
-def remove_hooks(obj):
-    changed = False
-    hooks = obj.get("hooks")
-    if not isinstance(hooks, dict):
-        return False
-    for ev, sub in (("SessionStart", "tick"), ("UserPromptSubmit", "prompt"), ("Stop", "gate"), ("SubagentStop", "gate"),
-                    ("PreToolUse", "watch"), ("PostToolUse", "watch")):
-        groups = hooks.get(ev)
-        if not isinstance(groups, list):
-            continue
-        keep, ev_changed = [], False
-        for g in groups:
-            hs = g.get("hooks") if isinstance(g, dict) else None
-            if isinstance(hs, list) and any(_is_ours(h, sub) for h in hs):
-                changed = ev_changed = True
-                rest = [h for h in hs if not _is_ours(h, sub)]
-                if rest:
-                    g = dict(g, hooks=rest)
-                else:
-                    continue
-            keep.append(g)
-        if keep:
-            hooks[ev] = keep
-        elif ev_changed:
-            del hooks[ev]
-    if changed and not hooks:
-        del obj["hooks"]
     return changed
 
 

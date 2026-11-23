@@ -173,6 +173,5 @@ learnings in scope that target that entry.
 - `cycle.risk_patterns(cwd)` — the learned risk patterns that apply in a project (`risk.load_patterns`).
 - `cycle.routing_adjustments(project)` — the learned routing adjustments that apply in a project.
 - `cycle.due_notice()` — the session-start lines (cycle due, decision waiting).
-- `retro.satisfied(repo, since, fp)` and `retro.TEMPLATE` — what the gate asks.
 - `learning.delivery_text(project, query, targets=())` — what the prompt hook may add.
 - `evaluate.validate_command(repo, before, after, cmd)` — the replay.

@@ -190,7 +190,6 @@ _PRINT_WORDS = {"echo", "printf"}
 _SHELLS = {"sh", "bash", "dash", "zsh", "/bin/sh", "/bin/bash", "/usr/bin/env"}
 _WRAPPERS = {"env", "command", "exec", "time", "nohup", "builtin"}
 _TESTERS = {"test", "["}
-_OPS = {"&&", "||", ";", "|", "&"}
 
 
 def _lex(s):

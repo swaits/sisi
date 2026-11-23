@@ -124,18 +124,6 @@ def delegations(project, t0, t1):
         return None
 
 
-def _row_epoch(r):
-    for k in ("ts", "t", "started", "ended", "time"):
-        v = r.get(k)
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            return float(v)
-        if isinstance(v, str):
-            t = harvest.epoch(v)
-            if t is not None:
-                return t
-    return None
-
-
 def policy_version(project, c):
     """Hash of the policies in force: the effective rulebook, the risk tables,
     the enforced checks, and the gate/verify config."""

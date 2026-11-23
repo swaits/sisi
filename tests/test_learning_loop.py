@@ -983,12 +983,29 @@ class Store(Base):
         root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
         bad = []
         for n in sorted(os.listdir(os.path.join(root, "sisi"))):
-            if not n.endswith(".py") or n == "gate.py":  # gate.py's retro.lessons_block is the live gate seam
+            if not n.endswith(".py"):
                 continue
             with open(os.path.join(root, "sisi", n)) as f:
                 for i, line in enumerate(f, 1):
                     if any(w in line for w in ("retro.db_path", "retro.cycle_records", "retro.lesson", "retro.connect",
                                                "_folded_lessons(rule_id):\n        try")):
+                        bad.append("%s:%d" % (n, i))
+        self.assertEqual(bad, [])
+
+    def test_no_guarded_seams_between_modules_that_always_exist(self):
+        """Item 4: no `except ImportError` or `hasattr(module, ...)` probe stands in for a module of this
+        package, and nothing names a removed seam. The one platform probe (fcntl, absent on Windows, in pdata) stays."""
+        import re
+        root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+        bad = []
+        for n in sorted(os.listdir(os.path.join(root, "sisi"))):
+            if not n.endswith(".py"):
+                continue
+            with open(os.path.join(root, "sisi", n)) as f:
+                for i, line in enumerate(f, 1):
+                    if n != "pdata.py" and re.search(r"except \(?ImportError|hasattr\((delivery|unit|gate|retro|learning|cycle)\b", line):
+                        bad.append("%s:%d" % (n, i))
+                    if re.search(r"retro\.(TEMPLATE|satisfied|lessons_block)|ensure_imported", line):
                         bad.append("%s:%d" % (n, i))
         self.assertEqual(bad, [])
 

@@ -9,11 +9,6 @@ import argparse, json, sys, time
 from . import store
 
 
-def _con():
-    from . import harvest
-    return harvest.connect()
-
-
 def cmd_harvest(args):
     from . import groundtruth, harvest
     t = time.time()

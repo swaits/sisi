@@ -88,37 +88,6 @@ class DiscoveryTests(WorkerCase):
         self.assertFalse(tools["cursor-agent"]["usable"])
 
 
-class LedgerImportTests(WorkerCase):
-    def test_existing_ledger_imported_once_losslessly(self):
-        src = os.path.join(self.tmp, "orch-log.jsonl")
-        rows = [
-            {"kind": "attempt", "id": "abc123", "ts": 1700000000, "project": "p", "type": "impl",
-             "difficulty": 2, "worker": "beta-1", "outcome": "accepted", "check": "tests",
-             "minutes": 3, "tokens": None, "retry_of": None, "note": "keep me", "extra": [1, 2]},
-            {"kind": "attempt", "id": "def456", "ts": 1700000100, "project": "p", "type": "impl",
-             "difficulty": 2, "worker": "beta-1", "outcome": "rejected", "check": "read",
-             "minutes": 4, "tokens": 9, "retry_of": "abc123", "note": None},
-            {"kind": "amend", "id": "abc123", "ts": 1700000200, "note": "later wrong"},
-        ]
-        with open(src, "w") as f:
-            for row in rows:
-                f.write(json.dumps(row) + "\n")
-        before = open(src).read()
-        r = self.sisi("workers", env=self.env(SISI_LEDGER=src))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("imported 3 rows", r.stdout)
-        self.assertEqual(open(src).read(), before, "the original ledger must not be modified")
-        got = [json.loads(l) for l in open(os.path.join(self.data, "delegations.jsonl"))]
-        self.assertEqual(len(got), 3)
-        for want, have in zip(rows, got):
-            for k, v in want.items():
-                self.assertEqual(have.get(k), v, k)
-        # a second run imports nothing more
-        self.sisi("workers", env=self.env(SISI_LEDGER=src))
-        got2 = [json.loads(l) for l in open(os.path.join(self.data, "delegations.jsonl"))]
-        self.assertEqual(len(got2), 3)
-
-
 class RouteTests(WorkerCase):
     def test_route_explains_and_skips_contributor_and_logged_out(self):
         r = self.sisi("route", "--kind", "impl", "--difficulty", "2", "--explain", env=self.env())

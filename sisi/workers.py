@@ -470,36 +470,6 @@ def import_ledger(src, now=None):
     return before, before + added, added
 
 
-def ensure_imported(now=None):
-    """Import the previously hand-kept ledger once, losslessly. Returns the row count, or None
-    when there was nothing (more) to import. The original file is only read."""
-    now = time.time() if now is None else now
-    marker = _data_file("delegations-import.json")
-    if os.path.exists(marker):
-        return None
-    try:
-        from . import taskset
-        src = taskset.ledger_path()
-    except Exception:
-        src = None
-    if not src or not os.path.isfile(src):
-        return None
-    if os.path.realpath(src) == os.path.realpath(ledger_path()):
-        return None
-    _before, _after, count = import_ledger(src, now=now)
-    # Merge the availability file that sat beside the old ledger, so nothing is forgotten.
-    sibling = os.path.join(os.path.dirname(src), "availability.json")
-    if os.path.isfile(sibling):
-        avail = read_availability()
-        for k, v in read_json(sibling).items():
-            if isinstance(v, dict):
-                avail[str(k).lower()] = v
-        if avail:
-            write_json(availability_path(), avail)
-    write_json(marker, {"source": src, "rows": count, "ts": now})
-    return count
-
-
 def unjudged_runs(records=None):
     records = read_records() if records is None else records
     judged = {r.get("run_id") for r in records if r.get("kind") == "attempt" and r.get("run_id")}
@@ -1230,7 +1200,6 @@ def cmd_workers(args=()):
         return _cmd_up(args[1:])
     if args[:1] == ["import"]:
         return _cmd_import(args[1:])
-    imported = ensure_imported()
     disc = discover(force="--refresh" in args)
     records = read_records()
     avail = read_availability()
@@ -1274,9 +1243,6 @@ def cmd_workers(args=()):
             continue
         print("Unavailable: %s - %s, next try %s%s" % (k, v.get("reason") or "down", _when(v.get("retry_at")),
                                                        (" (%s)" % v["note"]) if v.get("note") else ""))
-    if imported is not None:
-        print("Imported the existing delegation ledger: imported %d rows, once, without changing the original."
-              % imported)
     waiting = unjudged_runs(records)
     if waiting:
         print("%d delegation%s waiting for a judgement (%s). Judge with `sisi delegate judge ID "
@@ -1296,7 +1262,6 @@ def cmd_workers(args=()):
 
 
 def _route_setup(args):
-    ensure_imported()
     kind = _opt(args, "--kind")
     difficulty = _opt(args, "--difficulty")
     if not kind or difficulty is None:
