@@ -38,13 +38,13 @@ def cfg():
 
 
 def hosts():
-    if not _HOSTS:
+    if not _HOSTS:  # a failed read is not remembered: the next call tries again
         try:
             with open(paths.canon("orchestration-tools.json"), encoding="utf-8") as f:
                 d = json.load(f)
             _HOSTS.update({k: v for k, v in d.items() if isinstance(v, dict)})
         except (OSError, ValueError):
-            _HOSTS["_none"] = {}
+            return {}
     return _HOSTS
 
 
@@ -54,6 +54,19 @@ def host_data(host):
 
 def refuse_style(host):
     return host_data(host).get("refuse")
+
+
+def meter_note(tool, wired):
+    """One honest line for `sisi doctor`: what the meter can do in this host, from what its hooks support."""
+    hd = host_data(tool) if tool in hosts() else {}
+    if not hd:
+        return "cannot run (no before-tool hook is wired for this tool)"
+    if not wired:
+        return "not running (this tool's hooks are not wired: `sisi install`)"
+    style = hd.get("refuse")
+    how = {"json-deny": "can refuse a call (permission-deny output)",
+           "exit-2": "can refuse a call (exit status 2 with the reason)"}.get(style, "only counts (cannot refuse)")
+    return "%s; %s" % (how, hd.get("evidence") or "evidence not stated")
 
 
 # ---------------------------------------------------------------- classifying a call

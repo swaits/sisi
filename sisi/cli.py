@@ -145,6 +145,8 @@ def cmd_wiring(name, args=()):
         w = max(len(r["tool"]) for r in rows)
         for r in rows:
             line = "%-*s  %-9s  blocking hook: %-8s  %s" % (w, r["tool"], r["status"], r["blocking_hook"][:60], r["detail"])
+            if r.get("meter"):
+                line += " | orchestration meter: " + r["meter"]
             if r.get("action"):
                 line += " | you need to: " + r["action"]
             print(line)

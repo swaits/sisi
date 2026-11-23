@@ -611,6 +611,11 @@ def uninstall():
 
 
 # ---- doctor ----------------------------------------------------------------
+def _meter(pair):
+    from . import orchestration
+    return orchestration.meter_note(*pair)
+
+
 def doctor():
     L = loc()
     rows = []
@@ -627,6 +632,7 @@ def doctor():
     rows.append({"tool": "claude-code", "status": "not wired" if missing else "wired",
                  "detail": ("missing: " + ", ".join(missing)) if missing else "import + tick + prompt + gate registered",
                  "blocking_hook": "yes (Stop)" if hw["gate"] else "no",
+                 "meter": _meter(("claude-code", hw["pre"] and hw["post"] and hw.get("postfail", False))),
                  "rulebook": not missing and _claude_md_wired(cm), "tick": hw["tick"],
                  "enforcement": "blocks", "action": None})
     from . import adapters
@@ -640,13 +646,14 @@ def doctor():
                     "sends a follow-up (%s)" % st["via"] if enf == "sends a follow-up" else enf)
         tool_rows.append({"tool": st["tool"], "status": "wired" if st["wired"] else "not wired",
                           "detail": st["detail"], "blocking_hook": blocking, "rulebook": st["rulebook"],
-                          "tick": st["tick"], "enforcement": enf, "action": st["action"]})
+                          "tick": st["tick"], "enforcement": enf, "action": st["action"],
+                          "meter": _meter((st["tool"], st["wired"]))})
     rows += tool_rows
     anti = adapters.antigravity_status()
     if anti["detected"]:
         rows.append({"tool": "antigravity", "status": "not wired", "detail": anti["detail"],
                      "blocking_hook": "unknown", "rulebook": anti["rulebook"], "tick": False,
-                     "enforcement": "unknown", "action": None})
+                     "enforcement": "unknown", "action": None, "meter": _meter(("antigravity", False))})
     _providers = {"claude-code", "codex", "opencode", "cursor", "pi", "muse", "gemini", "copilot", "qwen", "grok"}
     wired_names = [n for n in ([r["tool"] for r in tool_rows if r["status"] == "wired"]
                    + (["claude-code"] if rows[0]["status"] == "wired" else [])) if n in _providers]

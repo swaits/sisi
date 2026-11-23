@@ -284,3 +284,201 @@ class DelegationGuardTests(MeterBase):
         for _ in range(10):
             self.assertFalse(self.deleg(model="alpha-small")[0])
         self.assertFalse(self.pre()[0])
+
+
+class DelegationRecordTests(MeterBase):
+    """Item 4: a host delegation writes itself to the ledger; the gate asks for the judgement once."""
+
+    def deleg_pre(self, tool_use_id="tu1", model="alpha-small"):
+        return self.pre("Agent", {"description": "d", "prompt": "Outcome: x\nAcceptance: y\nFiles you may change: none",
+                                  "model": model}, tool_use_id=tool_use_id)
+
+    def deleg_post(self, response, tool_use_id="tu1", event="PostToolUse"):
+        return self.post("Agent", {"description": "d", "prompt": "p", "model": "alpha-small"}, response=response,
+                         event=event, tool_use_id=tool_use_id)
+
+    def stop(self):
+        r = self.sisi("gate", "--tool", "claude-code", stdin=json.dumps(
+            {"session_id": self.sid, "cwd": self.proj, "hook_event_name": "Stop", "stop_hook_active": False}))
+        return json.loads(r.stdout) if r.stdout.strip() else {}
+
+    def runs(self):
+        return workers.merged_runs()
+
+    def test_a_synchronous_delegation_is_written_pending_then_completed_with_tokens(self):
+        self.prompt()
+        _d, ctx, _ = self.deleg_pre()
+        run = self.runs()[0]
+        self.assertIn(run["id"], ctx)                               # the id is printed
+        self.assertEqual((run["status"], run["worker"], run["session"]), ("pending", "alpha-small", self.sid))
+        self.assertEqual(workers.unjudged_runs(), [])               # in flight: nothing to judge yet
+        self.deleg_post({"status": "completed", "totalTokens": 4321, "totalDurationMs": 90000})
+        run = self.runs()[0]
+        self.assertEqual((run["status"], run["tokens"], run["tokens_class"], run["minutes"]), ("waiting", 4321, "measured", 1.5))
+        self.assertEqual([r["id"] for r in workers.unjudged_runs()], [run["id"]])
+        r = self.sisi("delegate", "judge", run["id"], "--outcome", "accepted", "--check", "read",
+                      "--type", "research", "--difficulty", "1")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(workers.unjudged_runs(), [])
+        att = [x for x in workers.read_records() if x.get("kind") == "attempt" and x.get("run_id") == run["id"]][0]
+        self.assertEqual((att["type"], att["difficulty"], att["tokens"], att["minutes"]), ("research", 1, 4321, 1.5))
+
+    def test_an_async_launch_stays_pending_until_the_hosts_notice_arrives(self):
+        """The host answers an async launch at once; the run is finished only when its notice comes as a prompt."""
+        self.prompt()
+        self.deleg_pre(tool_use_id="toolu_A")
+        self.read_n(3)
+        self.deleg_post({"isAsync": True, "status": "async_launched", "agentId": "agent9", "resolvedModel": "alpha-small-2"},
+                        tool_use_id="toolu_A")
+        self.assertEqual(self.runs()[0]["status"], "pending")      # still running: nothing to judge or ask for
+        self.assertEqual(workers.unjudged_runs(), [])
+        note = ("<task-notification>\n<task-id>agent9</task-id>\n<tool-use-id>toolu_A</tool-use-id>\n"
+                "<status>completed</status>\n<result>done</result>\n<usage><subagent_tokens>7302</subagent_tokens>"
+                "<tool_uses>1</tool_uses><duration_ms>1612</duration_ms></usage>\n</task-notification>")
+        self.prompt(note)
+        run = self.runs()[0]
+        self.assertEqual((run["status"], run["tokens"], run["tokens_class"]), ("waiting", 7302, "measured"))
+        # a notice is the host reporting, not a new request: it gives no new budget
+        self.assertEqual(self.read_n(5), [False] * 3 + [True] * 2)
+
+    def test_the_gate_asks_for_the_judgements_once_per_set_of_runs(self):
+        self.prompt()
+        self.deleg_pre("t1")
+        self.deleg_post({"status": "completed"}, "t1")
+        out = self.stop()
+        self.assertEqual(out.get("decision"), "block")
+        self.assertIn("not judged yet", out["reason"])
+        rid = self.runs()[0]["id"]
+        self.assertIn(rid, out["reason"])
+        self.assertIn("sisi delegate judge", out["reason"])
+        self.assertEqual(self.stop(), {})                            # the same set is not asked again
+        self.deleg_pre("t2")
+        self.deleg_post({"status": "completed"}, "t2")
+        out = self.stop()                                            # a new set is
+        self.assertEqual(out.get("decision"), "block")
+        for r in self.runs():
+            self.sisi("delegate", "judge", r["id"], "--outcome", "accepted", "--check", "read", "--type", "research", "--difficulty", "1")
+        self.assertEqual(self.stop(), {})
+
+    def test_another_sessions_runs_are_not_asked_for(self):
+        workers.append_record({"kind": "run", "id": "other1", "ts": 1, "worker": "alpha-small", "session": "someone-else",
+                               "status": "waiting"})
+        self.assertEqual(self.stop(), {})
+
+
+class RepeatFailureTests(MeterBase):
+    """Item 5 (R-15-4): the fourth identical failing command with no file changed is refused once."""
+
+    def fail(self, cmd="make build"):
+        denied, reason, _ = self.pre("Bash", {"command": cmd})
+        if not denied:
+            self.post("Bash", {"command": cmd}, response=None, event="PostToolUseFailure", error="Exit code 2")
+        return denied, reason
+
+    def test_the_fourth_identical_attempt_is_refused_once(self):
+        self.prompt()
+        self.assertEqual([self.fail()[0] for _ in range(3)], [False] * 3)
+        denied, reason = self.fail("make   build")                    # whitespace-normalised
+        self.assertTrue(denied)
+        self.assertIn("will not produce new information", reason)
+        self.assertIn("failed 3 times", reason)
+        self.assertLessEqual(len(reason.splitlines()), 12)
+        self.assertFalse(self.fail()[0])                              # once: the next is let through
+        self.assertEqual([e["why"] for e in self.events("refusal")], ["repeat"])
+
+    def test_a_changed_file_between_failures_resets_the_count(self):
+        self.prompt()
+        self.fail(); self.fail()
+        open(os.path.join(self.proj, "fix.txt"), "w").write("a fix")
+        self.fail()                                                    # first failure of the new state
+        self.assertFalse(self.fail()[0])
+        self.assertFalse(self.fail()[0])
+        self.assertTrue(self.fail()[0])
+
+    def test_a_success_in_between_resets_it(self):
+        self.prompt()
+        self.fail(); self.fail()
+        self.post("Bash", {"command": "make build"}, response={"stdout": "ok", "exit_code": 0})
+        self.fail(); self.fail()
+        self.assertFalse(self.fail()[0])
+
+    def test_another_command_is_not_affected(self):
+        self.prompt()
+        for _ in range(3):
+            self.fail()
+        self.assertFalse(self.fail("make test")[0])
+
+    def test_a_new_turn_starts_the_count_again(self):
+        self.prompt()
+        for _ in range(3):
+            self.fail()
+        self.prompt("the build is still broken, please look at it again now")
+        self.assertFalse(self.fail()[0])
+
+    def test_workers_are_not_stopped(self):
+        self.prompt()
+        for _ in range(3):
+            self.fail()
+        self.assertFalse(self.pre("Bash", {"command": "make build"}, agent_id="a1")[0])
+
+
+class RecordTests(MeterBase):
+    """Item 6: the unit record and `sisi status` show orchestration, each value classed measured."""
+
+    def start_unit(self):
+        from sisi import contract as C
+        self.assertEqual(self.sisi("contract", "init", "--goal", "make the thing").returncode, 0)
+        p = os.path.join(self.proj, ".sisi", "contract.json")
+        c = C.load(p)
+        c["checks"] = [check("works", "test -f done.txt")]
+        C.save(p, c)
+
+    def finish_and_close(self):
+        open(os.path.join(self.proj, "done.txt"), "w").write("x")
+        self.assertEqual(self.sisi("verify").returncode, 0)
+        r = self.sisi("unit", "close")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        return json.load(open(os.path.join(self.proj, ".sisi", "units", "proj.json")))
+
+    def test_the_closed_unit_carries_the_orchestration_part(self):
+        self.start_unit()
+        self.prompt()
+        self.read_n(8)                                                 # 6 counted, 2 refused
+        self.sisi("unit", "direct", "the two config files hold 40 lines each, a brief costs more")
+        self.read_n(2)
+        self.pre("Agent", {"description": "d", "prompt": "p", "model": "alpha-small"}, tool_use_id="x1")
+        rec = self.finish_and_close()
+        o = rec["orchestration"]
+        self.assertEqual(o["direct_calls"], {"value": 8, "class": "measured"})
+        self.assertEqual(o["refusals"], {"value": 2, "class": "measured"})
+        self.assertEqual(o["extensions"], {"value": 1, "class": "measured"})
+        self.assertIn("40 lines", o["extension_reasons"]["value"][0])
+        self.assertEqual(o["delegations_started"]["value"], 1)
+        self.assertEqual((o["delegations_judged"]["value"], o["delegations_unjudged"]["value"]), (0, 1))
+        self.assertEqual(o["delegated_share"], {"value": 0.111, "class": "measured"})    # 1 of 9 tool calls
+        self.assertEqual(rec["scorecard"]["parallelism"]["orch_direct_calls"]["class"], "measured")
+        out = self.sisi("status").stdout
+        self.assertIn("orch_direct_calls 8 (measured)", out)
+        self.assertIn("orch_extension_reasons", out)
+
+    def test_status_shows_it_for_the_unit_in_progress(self):
+        self.start_unit()
+        self.prompt()
+        self.read_n(7)
+        out = self.sisi("status").stdout
+        self.assertIn("orchestration (measured): 6 direct calls", out)
+        self.assertIn("1 refusals", out)
+
+    def test_a_unit_with_nothing_metered_says_unavailable_not_zero(self):
+        self.start_unit()
+        rec = self.finish_and_close()
+        self.assertEqual(rec["orchestration"]["direct_calls"]["class"], "unavailable")
+
+    def test_rule_six_is_listed_as_enforced_and_names_the_mechanisms(self):
+        out = self.sisi("rule").stdout
+        line = next(l for l in out.splitlines() if "orchestrate" in l)
+        self.assertIn("enforced", line)
+        self.assertNotIn("not enforced", line)
+        detail = self.sisi("rule", "orchestrate").stdout
+        for phrase in ("direct tool calls", "sisi unit direct", "names no model", "judg"):
+            self.assertIn(phrase, detail)
