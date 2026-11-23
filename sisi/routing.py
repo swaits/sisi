@@ -528,10 +528,10 @@ def _why_not(a, difficulty, basis, cheaper):
 def retry_choice(candidates, records, availability, kind, difficulty, rejected, rejections,
                  now=0.0, exclude=(), avoid=None, prefer=None, floors=None, review_of=None):
     """Who gets a task again after `rejected` (a worker id) was rejected `rejections` times in this chain.
-    The first retry goes back to the same worker while it is still usable and has no poor record. After that: the cheapest
-    capable worker whose evidence is strictly better than the rejected one's, or, when there is none,
+    The first retry goes back to the same worker while it is still usable and has no poor record.
+    After that: the cheapest capable worker whose evidence is strictly better than the rejected one's, or, when there is none,
     the strongest known usable worker other than it (and only the rejected one itself when nobody
-    else is usable). Returns {"choice", "step", "assessments", "basis", ...}; step is "same", "better",
+    else is usable). Returns {"choice", "step", "assessments", ...}; step is "same", "better",
     "strongest" or "only", and choice is None when nobody is usable. Pure; the caller supplies facts."""
     now = float(now or 0)
     eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of)
