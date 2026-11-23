@@ -27,7 +27,7 @@ or learned from judged results. The strategy is [canon/orchestration.md](../cano
   needs no command-line tool, is usable unless marked down, and `sisi route` says to start it with
   the host's own subagent tool. Everything `sisi workers` and `sisi delegate` write to the user
   store is committed there, one small commit per command.
-- `sisi workers down WORKER --reason limit|auth|missing|error [--until DATE] [--note TEXT]` and
+- `sisi workers down WORKER --reason limit|auth|missing|error [--until DATE-OR-TIME] [--note TEXT]` and
   `sisi workers up WORKER` — availability. Without `--until`, the wait widens on repeat failures.
 - `sisi workers import FILE` — merge another ledger file into the delegation ledger, idempotently,
   printing row counts before and after. The source file is only read.
@@ -76,9 +76,14 @@ allows it per tool (`workers.allow_bypass`).
 
 In the user store: `workers.json` (discovery cache), `delegations.jsonl` (the ledger),
 `worker-availability.json`, `worker-prices.json` and `model-strength.json` (worker facts),
-`worker-prefs.json` (avoid/prefer). When facts are missing or older than
+`worker-prefs.json` (avoid/prefer) and `worker-notes.json` (standing notes). When facts are missing or older than
 `workers.facts_max_age_days` (default 30), session start prints one line asking for a fast,
 cheap worker to research current prices and benchmark standing and record them — an age check
 during normal use, never a scheduler. Settings live under `workers` in the config:
 `refresh_after_s`, `timeout_s`, `allow_bypass`, `facts_max_age_days`, `digest_days`,
 `host_cross_provider`.
+
+## What this does not do
+
+Prices and benchmark standing are only as fresh as their recorded source and date. A worker
+with no judged record, price or prior is listed but never routed to until evidence exists.
