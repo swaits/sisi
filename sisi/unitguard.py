@@ -624,7 +624,7 @@ def shell_targets(cmd, cwd):
             i += 1
         words = [w for w in seg if w and not re.fullmatch(r"\d*(>>?|<<?|>\||&>>?)", w)]
         k = 0
-        while k < len(words) and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[k]) or words[k] in ("sudo", "command", "exec", "time", "nice")):
+        while k < len(words) and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[k]) or words[k] in ("sudo", "command", "exec", "time", "nice", "do", "then", "else", "!", "{")):
             k += 1
         if k >= len(words):
             continue
@@ -850,6 +850,11 @@ def _before(payload):
             store.save_session(sid, sess)
         return None
     floor, _reasons = floor_of(paths_all, project) if paths_all else ("trivial", [])
+    # a write whose target is named by a shell variable or substitution cannot be told from the text (found by the
+    # live check: `for f in src/*; do sed -i ... "$f"; done`): it is ordinary source until shown otherwise
+    unresolved = [r for r in rels if kind == "shell" and re.search(r"[$`]", r)]
+    if unresolved and assure.ORDER[floor] < assure.ORDER["isolated"]:
+        floor = "isolated"
     if kind != "delegate" and floor == "trivial":
         have = sess.setdefault("ug_paths", [])
         for r in rels:
@@ -866,6 +871,8 @@ def _before(payload):
         return None
     if kind == "delegate":
         what = "delegating this work to a worker"
+    elif unresolved:
+        what = "this call would change files its own text does not name (`%s`)" % unresolved[0]
     else:
         focus = next((x for x in paths_all if floor_of([x], project)[0] != "trivial"), paths_all[0])
         what = ("this call would change `%s`" % focus) if focus in rels else \

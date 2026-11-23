@@ -432,6 +432,15 @@ class NoDeadlockAfterARefusedEdit(TG.GuardCase):
         for cmd in ("sisi contract init > notes.txt", "sisi contract init | tee notes.txt"):
             self.assertIsNotNone(self.bash(cmd), cmd)
 
+    def test_a_write_named_by_a_shell_variable_is_ordinary_source(self):
+        """Found by the live check: `for f in src/*; do sed -i ... "$f"; done` slipped through as a trivial change."""
+        msg = self.bash('for f in src/*.py; do sed -i "s/a/b/" "$f"; done')
+        self.assertIn("sisi contract init", msg)
+        self.assertIn("does not name", msg)
+        self.assertLessEqual(len(msg.splitlines()), 12)
+        self.open_unit()
+        self.assertIsNone(self.bash('for f in src/*.py; do sed -i "s/a/b/" "$f"; done'))
+
     def test_a_cache_folder_is_as_ignorable_as_the_files_in_it(self):
         self.assertIsNone(self.bash("rm -rf src/__pycache__"))
 
