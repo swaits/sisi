@@ -238,23 +238,34 @@ def brief_text():
 
 # ---- replay validation (one implementation: evaluate.validate_command) -----------------
 
-def replay_validate(rec, action):
+def replay_validate(rec, action, run=True):
     """(result, detail): `validated` only when the command ran and failed before the fix and ran
-    and passed after it, in the learning's own, trusted project; `unvalidated` (with the reason)
-    when it could not be shown; `failed` when it ran and did not behave so."""
+    and passed after it, in the learning's own, trusted project, between the two commits the
+    learning's OWN record holds (its unit's start and closing commits, or the ones stored with the
+    finding). Commits, repository and project named in the cycle file are ignored. `unvalidated`
+    (with the reason) when it could not be shown; `failed` when it ran and did not behave so;
+    `vacuous` when the command names no path that differs between the two trees. With run=False
+    nothing is executed (the preflight only): the result is `unvalidated` unless it is refused."""
     cmd = action.get("cmd") or ""
     exp = (action.get("expect") or {}).get("exit", 0)
-    replay = rec.get("replay") or {}
-    repo = L.normalize_project(action.get("repo") or replay.get("repo") or rec.get("origin_project"))
-    before = action.get("before") or replay.get("before")
-    after = action.get("after") or replay.get("after")
-    if not (repo and before and after and cmd):
-        return "unvalidated", "no before/after commits are known, so the command was never replayed"
-    if repo != rec.get("origin_project"):
-        return "unvalidated", "the repository is not this learning's origin project; no replay was run"
+    commits = L.replay_commits(rec)
+    repo = rec.get("origin_project")
+    if not (repo and commits and cmd):
+        return "unvalidated", ("no commits are recorded for this learning (its unit %s has no start and closing "
+                               "commit, and the finding stored none), so the command was never replayed"
+                               % rec.get("source_unit"))
+    before, after, where = commits
+    if not run:
+        stop = evaluate.replay_preflight(repo, before, after, cmd)
+        if stop and stop["outcome"] == "vacuous":
+            return "vacuous", stop["reason"]
+        return "unvalidated", ("`check` runs nothing; `apply` replays it between the commits in %s"
+                               % where if not stop else "not replayable: %s" % stop.get("reason"))
     out = evaluate.validate_command(repo, before, after, cmd, exp)
     if out["outcome"] == "validated":
-        return "validated", "replay: failed at %s, passed at %s" % (str(before)[:12], str(after)[:12])
+        return "validated", "replay: failed at %s, passed at %s (commits from %s)" % (before[:12], after[:12], where)
+    if out["outcome"] == "vacuous":
+        return "vacuous", out.get("reason")
     if out["outcome"] == "not-run":
         return "unvalidated", "replay did not establish it: %s" % out.get("reason")
     return "failed", "replay: %s" % (out.get("reason") or out["outcome"])
@@ -282,7 +293,7 @@ def _risk_lowers(pattern, profile):
     return risk._ORDER[profile] < risk._ORDER[cur]
 
 
-def _plan_promote(a, rec, virtual_rules):
+def _plan_promote(a, rec, virtual_rules, run=True):
     """(normalized action, reasons that make it consequential, granted scope, replay)."""
     kind = a.get("mechanism_kind")
     lid = rec["id"]
@@ -312,14 +323,13 @@ def _plan_promote(a, rec, virtual_rules):
         n["cmd"] = _text(a, "cmd", lid).strip()
         exp = a.get("expect") if isinstance(a.get("expect"), dict) else {}
         n["expect"] = {"exit": exp.get("exit", 0)}
-        for k in ("before", "after", "repo"):
-            if isinstance(a.get(k), str):
-                n[k] = a[k]
         if a.get("timeout_s") is not None:
             _need(isinstance(a["timeout_s"], (int, float)) and 0 < a["timeout_s"] <= 600,
                   "timeout_s for %s must be between 0 and 600" % lid)
             n["timeout_s"] = a["timeout_s"]
-        replay = replay_validate(rec, n)
+        replay = replay_validate(rec, n, run)
+        _need(replay[0] != "vacuous", "command check for %s is vacuous: %s. Write a command that reads a path "
+                                      "the fix changed" % (lid, replay[1]))
         _need(replay[0] != "failed", "replay validation failed for %s: %s; nothing is applied" % (lid, replay[1]))
         if replay[0] != "validated":
             reasons.append("an enforced command nobody has seen fail and then pass in its own project (%s)" % replay[1])
@@ -374,7 +384,7 @@ def _plan_promote(a, rec, virtual_rules):
     return n, reasons, granted, replay
 
 
-def validate_doc(doc, rows):
+def validate_doc(doc, rows, run=True):
     """Every refusal is raised before anything is applied. Returns the plan: a list of
     {"kind": status|promote|disable-rule, "action", "rec", "pending", "reasons", "scope", "replay"}."""
     if not isinstance(doc, dict) or not isinstance(doc.get("actions"), list) or not doc["actions"]:
@@ -409,7 +419,7 @@ def validate_doc(doc, rows):
                          "rec": rec, "pending": False, "scope": None, "replay": None, "reasons": []})
             continue
         _need(act == "promote", "unknown action %r" % act)
-        n, reasons, granted, replay = _plan_promote(a, rec, virtual)
+        n, reasons, granted, replay = _plan_promote(a, rec, virtual, run)
         plan.append({"kind": "promote", "action": n, "rec": rec, "pending": bool(reasons),
                      "scope": granted, "replay": replay, "reasons": reasons})
     ignored = [r["id"] for r in L.flagged(rows) if r["id"] not in acted]
@@ -912,7 +922,7 @@ def cmd_cycle(args):
         try:
             with open(args[1], encoding="utf-8") as f:
                 doc = json.load(f)
-            plan = validate_doc(doc, L.load_learnings())
+            plan = validate_doc(doc, L.load_learnings(), run=False)
         except (CycleError, OSError, ValueError, documents.DocumentError, overlay.OverlayError) as e:
             print("sisi cycle: %s" % e, file=sys.stderr)
             return 2

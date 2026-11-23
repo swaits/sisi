@@ -23,6 +23,16 @@ def _git_head(cwd):
         return None
 
 
+def _unit_start(project):
+    """The commit the open unit started at (base_head in its contract), if known."""
+    try:
+        with open(os.path.join(project, ".sisi", "contract.json"), encoding="utf-8") as f:
+            b = json.load(f).get("base_head")
+        return b if isinstance(b, str) and b else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def unit_summary(project):
     """What `sisi retro` with no arguments prints: the unit's record and what stands out."""
     from . import unit as _unit
@@ -161,7 +171,7 @@ def cmd_retro(argv, stdin=None):
     replay = None
     head = _git_head(project)
     if head:
-        replay = {"repo": pk, "after": head, "before": None}
+        replay = {"repo": pk, "after": head, "before": _unit_start(project)}
     ts = L.now()
     fid = "F-" + hashlib.sha1(("%s|%s|%s|%s" % (uid, pk, ts, finding)).encode()).hexdigest()[:8]
     f = {"id": fid, "unit": uid, "project": pk, "ts": ts, "finding": L.scrub_secrets(finding),

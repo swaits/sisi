@@ -539,6 +539,29 @@ def withdraw(lid, why):
     return rec
 
 
+def replay_commits(rec):
+    """(before, after, where) for replaying a command against this learning, or None. Only the
+    learning's own record counts, never anything a cycle file says: the start and closing commits
+    of the unit it was found in (the unit record in its origin project), else the two commits
+    stored with the finding. A learning without both cannot be validated."""
+    proj, uid = rec.get("origin_project"), rec.get("source_unit")
+    if proj and uid and os.path.isdir(proj):
+        from . import store
+        try:
+            with open(os.path.join(proj, ".sisi", "units", store.safe_id(uid) + ".json"), encoding="utf-8") as f:
+                u = json.load(f)
+            a, b = u.get("start_commit"), u.get("closing_commit")
+            if isinstance(a, str) and isinstance(b, str) and a and b and a != b:
+                return a, b, "the unit record of %s" % uid
+        except (OSError, ValueError, AttributeError):
+            pass
+    rp = rec.get("replay") or {}
+    a, b = rp.get("before"), rp.get("after")
+    if isinstance(a, str) and isinstance(b, str) and a and b and a != b:
+        return a, b, "the commits stored with the finding"
+    return None
+
+
 def findings_for_unit(project, uid):
     """Seam for the unit record: the findings recorded for one unit in one project."""
     pk = project_key(project)

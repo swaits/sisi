@@ -64,6 +64,15 @@ class Base(SisiCase):
         self._commit("fix")
         return before, self._head()
 
+    def archive_unit(self, before, after, uid=None, d=None):
+        """The unit record, as `sisi unit close` writes it: the unit's start and closing commits."""
+        uid = uid or self.rows()[0]["source_unit"]
+        d = os.path.join(d or self.proj, ".sisi", "units")
+        os.makedirs(d, exist_ok=True)
+        from sisi import store
+        with open(os.path.join(d, store.safe_id(uid) + ".json"), "w") as f:
+            json.dump({"id": uid, "start_commit": before, "closing_commit": after}, f)
+
     def cycle_file(self, actions, name="c.json", base=None):
         p = os.path.join(self.tmp, name)
         with open(p, "w") as f:
@@ -185,9 +194,10 @@ class Retro(Base):
         """R-11.5-6, R-11.5-8 (item 13): the status field itself says validated / monitored."""
         before, after = self.fixed_repo()
         self.retro(*PROMOTE[1:])
+        self.archive_unit(before, after)
         # a validated command that waits for the owner is `validated`, not `promoted`
         self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check",
-                     "cmd": "grep -q fixed f.txt", "before": before, "after": after, "scope": "user"}])
+                     "cmd": "grep -q fixed f.txt", "scope": "user"}])
         self.assertEqual(self.rows()[0]["status"], "validated")
         self.assertEqual(self.rows()[0]["validation"]["result"], "validated")
         # a promoted learning becomes `monitored` once a unit in its scope has closed since
@@ -316,9 +326,12 @@ class Replay(Base):
     fix and ran and passed after it, in the learning's own trusted repository."""
 
     def promote_cmd(self, cmd, before, after, **kw):
+        """Record the learning, give its unit record the two commits, then apply a command check.
+        The commits come from the record; anything the cycle file says about them is ignored."""
         self.retro(*PROMOTE[1:])
-        a = {"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check",
-             "cmd": cmd, "before": before, "after": after}
+        if before and after:
+            self.archive_unit(before, after, uid=self.rows()[0]["source_unit"])
+        a = {"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check", "cmd": cmd}
         a.update(kw)
         return self.apply([a])
 
@@ -422,8 +435,10 @@ class Replay(Base):
         r = self.promote_cmd("grep -q fixed f.txt", before, after)
         self.assert_unvalidated(r, "trust")
 
-    def test_repo_chosen_by_the_author_must_be_the_learnings_project(self):
-        """The cycle file names a different (trusted) repository: it is not the learning's origin."""
+    def test_repo_and_commits_named_by_the_author_are_ignored(self):
+        """R-11.6-3, R-16-7: the cycle file names another (trusted) repository and its own two
+        commits; the replay uses the learning's own record, so a command that only passes there
+        is not validated here."""
         from sisi import trust
         before, after = self.fixed_repo()
         other = self.other_project()
@@ -433,8 +448,14 @@ class Replay(Base):
         ob = self._head(other)
         self.write("f.txt", "fixed\n", other)
         self._commit("a", other)
-        r = self.promote_cmd("grep -q fixed f.txt", ob, self._head(other), repo=other)
-        self.assert_unvalidated(r, "origin project")
+        self.retro(*PROMOTE[1:])
+        self.archive_unit(before, after, uid=self.rows()[0]["source_unit"])
+        r = self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check",
+                         "cmd": "grep -q fixed f.txt", "repo": other, "before": ob, "after": self._head(other)}])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.rows()[0]["validation"]["result"], "validated")
+        self.assertIn(before[:12], self.rows()[0]["validation"]["detail"])
+        self.assertNotIn(ob[:12], self.rows()[0]["validation"]["detail"])
 
     def test_nothing_validated_without_a_passing_run(self):
         """R-11.5-6, R-11.1-8: 'validated' requires a validation run that passed."""
@@ -489,8 +510,9 @@ class Mechanisms(Base):
         from sisi import cycle, trust
         before, after = self.fixed_repo()
         self.retro(*PROMOTE[1:])
+        self.archive_unit(before, after)
         self.assertEqual(self.apply([{"action": "promote", "learning": "L-0001", "mechanism_kind": "command-check",
-                                      "cmd": "grep -q fixed f.txt", "before": before, "after": after}]).returncode, 0)
+                                      "cmd": "grep -q fixed f.txt"}]).returncode, 0)
         other = self.other_project()
         trust.add(other)
         self.write("f.txt", "bug\n", other)
