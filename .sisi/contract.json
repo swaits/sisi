@@ -1,12 +1,23 @@
 {
-  "id": "sisi-phase1",
-  "goal": "sisi phase 1 works: CLI, store, contracts, gate, wiring, audit",
+  "id": "spec-reconciliation",
+  "goal": "BRUTALLY critique it against the objective/principles/specification document below. THAT IS THE BIBLE OF WHAT WE WANT TO ACHIEVE (not necessarily exactly HOW) with sisi. Find ALL the flaws, the unnecessary complexities, the things that are just flat out wrong. Consider its use and its customers, what goes in sisi itself (things that work broadly across all projects, all users) versus what is learned and evolved for an individual user. Then convert that into a PLAN and IMPLEMENTATION to fix it. Anything short of perfection, based on that document below, is UNACCEPTABLE!! Please save this spec document VERBATIM in the project. It is our ONE TRUE NORTH STAR!!!",
   "checks": [
     {
-      "id": "unit-tests",
-      "claim": "the whole test suite passes (wiring and gate property tests included)",
+      "id": "spec-saved-verbatim",
+      "claim": "the owner's specification is in the project unchanged: the original .docx byte for byte and SPEC.md with the same words",
       "kind": "general",
-      "rung": 3,
+      "rung": 2,
+      "cmd": "sha256sum -c docs/spec/SHA256SUMS",
+      "expect": {
+        "exit": 0
+      },
+      "timeout_s": 20
+    }
+  ],
+  "invariants": [
+    {
+      "id": "unit-tests",
+      "claim": "the whole test suite passes",
       "cmd": "python3 tests/run_parallel.py",
       "expect": {
         "exit": 0
@@ -16,16 +27,12 @@
     {
       "id": "library-lint",
       "claim": "every verifier and recipe lints clean, and recipes cite only existing verifier ids",
-      "kind": "general",
-      "rung": 3,
       "cmd": "bin/sisi verifiers lint",
       "expect": {
         "exit": 0
       },
       "timeout_s": 20
-    }
-  ],
-  "invariants": [
+    },
     {
       "id": "launcher-help",
       "claim": "the launcher still prints help",
@@ -38,7 +45,149 @@
     }
   ],
   "assumptions": [
-    "Tests never touch the real home: SISI_HOME and SISI_STATE point to temp dirs."
+    "Tests never touch the real home: SISI_HOME and SISI_STATE point to temp dirs.",
+    "The critique, plan and design section are added to this contract once the inventory of the existing system (SPEC 19, steps 1-4) is back; implementation checks are added with the plan.",
+    "Work happens on a branch with local commits as checkpoints; nothing is pushed without the owner asking."
   ],
-  "questions": []
+  "questions": [],
+  "design": {
+    "implies": [
+      "The specification is the standard, so the critique has to account for every requirement in it, not a sample: a numbered list of its normative statements with a test that the list is complete and verbatim, and a conformance table that gives each requirement its mechanism, its evidence and its honest status.",
+      "SPEC 19 fixes the method and the order: inventory, map to the spec, classify gaps and liabilities, measure a baseline, keep what demonstrably works, then make the objective explicit, then the work-unit record, then the learning mechanism, then the evaluation harness. Its first milestone is observability and control. 'Perfection' therefore means every requirement accounted for and every unjustified mechanism gone, not a rewrite.",
+      "SPEC 14.3 says an agent must not weaken the objective, so the saved specification is protected: checksums, a test that fails when it changes, and a note that only the owner changes it.",
+      "The owner's two questions (does it apply to all projects, would every user want it) decide what ships in the product and what stays in a user's own data. The audit has to find owner-specific material in the product and learning that is stuck in personal data and can never reach another user.",
+      "He already asked for one orchestrator and for the old one to be deleted. The hand-written orchestrator in his Claude settings and sisi's own router cannot both survive, and the delegation history must move to the user store.",
+      "His installed copy runs in every session he has open. Changes land on a branch; the installed copy is switched only after the checks pass; personal data is backed up and migrated, never dropped; sessions already running must keep working or be told.",
+      "There is no size target for always-loaded text, in either direction. A block is cut only when a mechanism makes it redundant or measurement shows it is noise for the request it was added to; a block is added when it is shown to change behaviour. The numbers are measured in characters actually loaded and reported.",
+      "SPEC 20.3 and Appendix D ask for improvement shown over comparable work. That evidence cannot exist on day one. The work must build what measures it and say plainly which criteria are met, which are measurable from now on, and which are not yet demonstrated."
+    ],
+    "provided": [
+      {
+        "what": "A contract, a check runner and an end-of-turn gate that already enforce a definition of done; they are the starting point for the work-unit record and the verification record, not something to rebuild.",
+        "evidence": "file:sisi/gate.py"
+      },
+      {
+        "what": "The check runner with fast and deep tiers and stored results.",
+        "evidence": "file:sisi/verify.py"
+      },
+      {
+        "what": "A hermetic test suite with a parallel runner, used as the baseline and the regression net for every stage.",
+        "evidence": "file:tests/run_parallel.py"
+      },
+      {
+        "what": "A library of verification techniques and definitions of done, to be judged by the audit and kept where it earns its place.",
+        "evidence": "file:sisi/verifiers.py"
+      },
+      {
+        "what": "A stable installed copy with release and rollback, so the owner's sessions are switched once, after checks, and can be switched back.",
+        "evidence": "file:sisi/release.py"
+      },
+      {
+        "what": "The personal data folder as its own git repository, which already gives provenance and rollback for learned changes.",
+        "evidence": "file:sisi/pdata.py"
+      },
+      {
+        "what": "Worker discovery and a judged delegation record inside sisi, to become the single router.",
+        "evidence": "file:sisi/routing.py"
+      },
+      {
+        "what": "pandoc, for a faithful Markdown copy of the owner's document.",
+        "evidence": "command:pandoc"
+      }
+    ],
+    "alternatives": [
+      {
+        "name": "Rewrite sisi from the specification on a clean slate",
+        "cost": "Weeks of worker time, and it solves again what already works (safe install, hooks for several tools, the check runner).",
+        "risk": "Loses working parts and the owner's data paths; the specification itself forbids a wholesale rewrite without evidence that it is needed (19)."
+      },
+      {
+        "name": "Patch: add the missing pieces (scorecard, learning record, requirement list) on top of everything that exists",
+        "cost": "The least work now: a few new modules and commands beside the existing ones, perhaps two days of worker time, and nothing is removed.",
+        "risk": "Keeps every duplicate, every ceremony and every prose-only rule; the product gets bigger and the complexity the owner objects to grows."
+      }
+    ],
+    "chosen": {
+      "name": "Staged reconciliation as SPEC 19 describes it",
+      "why": "It is the method the owner's own document prescribes. It removes what serves no requirement (one of everything, nothing that is only good intentions), keeps what the evidence shows is working, builds the missing mechanisms in the order the specification gives, and every stage ends with checks that can fail. He gets a critique he can trust because it is tied to numbered requirements and measured data, and a product that is smaller and stricter instead of one more layer."
+    },
+    "objections": [
+      {
+        "principle": "my Claude usage is pushing my weekly limit. We definitely want to not hit that if at all possible!!!",
+        "applicable": true,
+        "objection": "An audit and overhaul of an 18,000-line tool will burn my Claude allowance.",
+        "answer": "The audits, the requirement extraction and the building go to Muse Code and, when its allowance is back, the cheap OpenCode Go models. The main thread reads reports and conclusions, not source files. Claude workers are used only where a call must block (a short design challenge) or where the other workers fail."
+      },
+      {
+        "principle": "when OpenCode-Go renews (2d 18h) let's try to stick to the most affordable models only on there. (shown with prices for GPT-6 Luna, Qwen3.8 Flash, GLM-5.3-Flash, MiMo-V2.6-Flash, DeepSeek V4.1 Flash).",
+        "applicable": true,
+        "objection": "Do not reach for the expensive OpenCode Go models when Muse runs out.",
+        "answer": "OpenCode Go is marked down until its allowance renews. After that only the five affordable models are used there, and only for search, reading and mechanical edits."
+      },
+      {
+        "principle": "I said no external dependencies. That means NO CRON jobs. So if you need something to do some updates, check a counter at the run of a normal turn and see if it's due, and if so run it. Or roll a dice or something. You install it. You use your AI. It gets smarter and better and faster and stronger JUST BY YOU USING IT!",
+        "applicable": true,
+        "objection": "Do not solve measurement, learning or model discovery with a scheduler, a service or a package.",
+        "answer": "Everything stays Python standard library and runs inside hooks and commands during normal use. Telemetry is read from what the host tool already writes; anything periodic stays a counter checked on a normal turn. The audit checks that this still holds today."
+      },
+      {
+        "principle": "You shouldn've automatically known this BEFORE implementation. I shouldn't have to wait this long for an incorrect implementation! (on a crossfade built as a slow smear instead of a short transition between two tones).",
+        "applicable": true,
+        "objection": "Do not build for a day and then discover it is the wrong thing.",
+        "answer": "Nothing is built before the inventory, the measured baseline and the numbered requirement list exist; the target design is attacked by another model playing the owner before any stage starts; each stage lands separately so a wrong turn costs one stage."
+      },
+      {
+        "principle": "I want everything as close to 'mechanisms over good intentions' as absolutely possible.",
+        "applicable": true,
+        "objection": "Half of sisi is prose telling agents to behave. Do not give me a nicer set of prose.",
+        "answer": "The audit classifies every rule and every learning path as enforced by a mechanism or prose only. The plan keeps a rule only with its mechanism, turns learning into changes to executable things with a validation step, and the conformance table names the mechanism and the test for each requirement."
+      },
+      {
+        "principle": "I need the agent to be sharp as a tack and act exactly as I want in every possible way. We may want a bigger limit on the always-included context size, unless you have concrete data and published information that goes against this.",
+        "applicable": true,
+        "objection": "Do not cut the always-loaded rules so far that agents stop doing what I want.",
+        "answer": "Size is not the target, obedience is. Text is removed where a mechanism enforces the behaviour or where the baseline shows it is noise; what stays is ordered as one document. What each hook adds is measured before and after, in characters actually loaded."
+      },
+      {
+        "principle": "The orchestrator should always be dynamic and automatic. It shouldn't be a hard set of models and harnesses to use. It should look for every available tool and use what it finds, constantly updating its data. It should always use the MOST affordable choice (plus apply some load balancing and multi model check and balance use, peer review style) available for any given task. It should also know that the main thread should be a higher quality, higher reasoning model (ie Fable 5.2 level as of today). The idea is it could drop into any user's environment and figure out how to work extremely well, efficiently, intelligently.",
+        "applicable": true,
+        "objection": "I asked for one dynamic orchestrator that finds what is available and uses the host's own subagents. I still have two, one of them a hand-written list of models.",
+        "answer": "The audit compares the two with their real ledgers. The plan keeps one, inside sisi: discovery of what is installed, the judged record in the user store, the host's native delegation first, and the hand-written section removed from his settings once the single one is proven."
+      },
+      {
+        "principle": "Over time lessons get appended and maybe turn into new rules. These lists can become convoluted nonsense. Part of the regular update has to look at them holistically and make sure they're properly structured, clear, present in a logical order and structure. Basically follow good UX and information architecture for them. It has to include everything we want included, all the rules or lessons or whatever, but it has to be constructed in a way that most effectively conveys ALL of it, with an objective of maximizing the consuming agents' instruction following. The ultimate goal is to get all agents to perfectly follow all our rules and lessons and mechanics. It shouldn't just be a gross journal of arbitrary shit. It should be a proper document!!!!",
+        "applicable": true,
+        "objection": "Do not leave me with a journal of lessons that grows forever.",
+        "answer": "The baseline measures what the lessons are really worth. The plan replaces appended notes with structured learning records that end in a mechanism or are closed with a reason, and keeps the rulebook as one whole document rebuilt from its parts."
+      }
+    ],
+    "challenge": {
+      "by": "Claude Sonnet 5.5 subagent playing the owner (the lead is Claude Fable 5.2); it read the draft design, the oracle, the handover items and SPEC.md",
+      "recorded_at": "2026-11-23T10:41:00-07:00",
+      "objections": [
+        "You are still planning. There is no cut list: nothing names what will be deleted, and nothing says what I will see at the end of the first hour.",
+        "You are hiding behind SPEC 19's 'incremental'. A conformance table with an 'honest status' column lets you mark things 'not yet demonstrated' and call that finished.",
+        "Product versus personal data is only a bullet. It is the first thing I asked for; the cleanup and backfill of my global data is not carried out anywhere in the plan.",
+        "My live setup is at risk: no backup step, no rollback trigger, no mechanism for telling running sessions, and I said I should not have to restart them.",
+        "How I will know it worked is missing. A scorecard I never see does not count; I want a before-and-after I can look at.",
+        "'Always-loaded text must shrink' contradicts what I said (weigh a bigger limit unless you have data) and contradicts the design's own 'size is not the target'.",
+        "Cost is promised but not budgeted: no cap on Claude spend, no fallback order, no stop condition when the cheap workers are down.",
+        "Removing my hand-written orchestrator 'once the single one is proven' is risky and out of order. The ledger is 898 rows of real data and both must not stay in place for days.",
+        "Learning is the heart of the specification and the plan puts it fourth with no concrete mechanism, no first visible effect, and nothing that stops a rule being promoted from one incident.",
+        "You wrote the plan, the attack and the grading. The specification warns against self-scoring; one attack by a model playing me is not independent evaluation of the result."
+      ],
+      "changes": [
+        "The first deliverable is a ranked defect list with a verdict (keep, simplify, replace, retire) and line counts for every module and command, held complete by a test. Fixes that an audit shows are certain start as soon as that audit is back, without waiting for the whole plan.",
+        "Stages are an order, not a ceiling. Every MUST and SHOULD in the numbered requirement list is either implemented with a named mechanism and a test, or appears in a short plain-language list of exceptions for the owner with the reason and what it would take. Nothing is left as 'later' without being on that list.",
+        "The sort comes first after the audit: every rule, recipe, verifier, lesson and default is classified product, user or project by the owner's two questions and moved; project items leave his global data for their projects; universal lessons that exist only in his data are queued for the product; a test scans the product for owner-specific names, model ids, prices and paths.",
+        "A written cutover checklist: timestamped archive of his data folder and Claude settings first; migration proven on a copy of his real data; rollback proven in a sandbox as one command; the installed copy is never changed in the middle of a stage; hooks of the new version must accept state written by sessions that are already running, with a test, and a one-time notice reaches running sessions through the existing prompt hook.",
+        "The measured baseline is taken before any change and kept in the repository as a script that prints it. It is re-run after every stage and shown as one before-and-after table (characters loaded at session start and per prompt, hook time, test time, commands, lines of code, rules without a mechanism, requirements met). The contract gets checks that fail when these regress. Criteria that cannot be shown yet are named with when they could be.",
+        "The design now has one rule on always-loaded text: no size target; a block is cut only when a mechanism makes it redundant or measurement shows it is noise, and the numbers are reported.",
+        "Budget: Claude workers only for short blocking reviews, at most ten Sonnet calls in the whole job and no Opus. Order of workers: Muse Wonder, Muse Wonder Full for the hard stages, the five affordable OpenCode Go models once renewed. If all of those are down the work pauses at a stage boundary and says so instead of moving the build to Claude.",
+        "Orchestrator order: copy the old ledger into the user store with a row-count check and the original kept; prove the single sisi router on a real delegation; then remove the hand-written section from his settings in one reversible edit with a backup, in the same stage, and notify running sessions.",
+        "The plan names the minimum learning loop concretely: a structured learning record per work unit, a validation step before promotion, promotion as a commit in the data repository so rollback is a revert, monitoring by recurrence, and a test that fails when something seen once is promoted as a universal rule. It is built as soon as the work-unit record it depends on exists.",
+        "A different model family grades the finished conformance table against the specification text, requirement by requirement; a test holds that every requirement has a mechanism or a recorded exception; the exceptions are given to the owner in plain words."
+      ]
+    }
+  }
 }
