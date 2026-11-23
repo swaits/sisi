@@ -72,13 +72,6 @@ def meter_note(tool, wired):
 
 # ---------------------------------------------------------------- classifying a call
 
-def _exempt_names(hd):
-    out = set()
-    for names in (hd.get("exempt") or {}).values():
-        out.update(str(n).lower() for n in names or [])
-    return out
-
-
 def _dig(obj, dotted):
     for k in str(dotted or "").split("."):
         if not isinstance(obj, dict):
