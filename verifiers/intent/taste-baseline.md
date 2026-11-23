@@ -25,7 +25,7 @@ Note: no tool. The store is plain files; not run here.
 
 ## Set up
 Create `docs/taste/` with one small file per verdict. Record a verdict only when
-the human states it (core rule 7: `sisi learn "<their words>"` for lasting
+the human states it (rule 8, close-with-retro: `sisi learn "<their words>"` for lasting
 preferences, quoted, never your inference).
 
 ## Minimal example

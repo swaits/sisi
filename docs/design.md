@@ -18,7 +18,7 @@ that shows it:
 | Work at a higher level (functions, modules, products) | size of verified work delivered per human message |
 | Verifiable outcomes, formal where possible | share of delivered claims backed by a check that ran, by rung |
 | Hands off | human minutes and blocking questions per delivered piece of work |
-| Delivered sooner, with no weaker check | median time from request to verified result (`sisi time`) |
+| Delivered sooner, with no weaker check | median time from request to verified result (`sisi status`) |
 | Improves itself from use, everywhere | the numbers above, as trends, across all tools |
 
 ## The objective
@@ -30,7 +30,7 @@ with a weaker check or a smaller result.
 
 Time to delivery is measured, not guessed. Each time the end-of-turn gate lets a turn end it records one
 delivery row: the time since the last message the human actually typed (hook feedback and tool results do not
-count), how many times the gate sent the agent back, and how long the checks ran. `sisi time` shows the median
+count), how many times the gate sent the agent back, and how long the checks ran. `sisi status` shows the median
 and 90th percentile for the last 7 days against the 7 days before, the share spent in checks, and the five
 slowest checks; `sisi status` shows the 7-day median.
 
@@ -313,7 +313,7 @@ Built and covered by tests:
   where nothing blocks.
 - The rulebook (`canon/core.md`), the minimum-rung floors, the verifier library and the recipes.
 - Retrospectives and lessons (`sisi retro`, `sisi lessons`), `sisi learn` live at once, time to delivery
-  (`sisi time`).
+  (`sisi status`).
 - Choosing the approach as a checked step: the contract design section, `sisi design`, the gate's
   design send-back on large changes, and request-time delivery of the standing principles for design
   or build requests. The rulebook's first rule states it and `sisi rule` reports its enforcement.

@@ -361,7 +361,7 @@ class UpdateTests(PersonalCase):
         self.assertTrue(open(core).read().endswith("local edit\n"))
         open(core, "w").write(orig)
         # a person's replacement, then the origin changes that rule
-        rid = "deliver-fast"  # a protected rule (know-done) cannot be replaced at all
+        rid = "deliver-fast"  # a protected rule (define-done) cannot be replaced at all
         self.ok_owner("overlay", "replace-rule", rid, "-", stdin=rule_file("Know it, my way", "My text."))
         text = open(os.path.join(origin, "canon", "core.md")).read()
         open(os.path.join(origin, "canon", "core.md"), "w").write(text.replace("unchanged inputs, and a useful", "unchanged inputs, and one useful"))
