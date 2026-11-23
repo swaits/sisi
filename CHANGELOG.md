@@ -8,6 +8,10 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- Workers that appear after install become routable: the host's own listing and delegation calls, new command-line
+  tools (`sisi workers learn`), per-provider plans, allowance probes, failure phrases and the owner's vouch
+  (`sisi workers plan|allowance|signature|vouch`). Learned tools that switch off approvals and allowance probes are
+  decided with learning changes by one `sisi approve`; one data file (`canon/orchestration-tools.json`) describes a host's tools.
 - The durable work-unit record: `sisi unit close|pause|show|list`, an archive per unit in the
   project, one summary line per unit in the user store, five delivery statuses, the policy
   version, start and closing commits. See docs/records.md.
