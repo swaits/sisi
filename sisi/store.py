@@ -78,6 +78,19 @@ def tool():
     return None
 
 
+def is_subagent_payload(payload):
+    """Is this hook call from a worker: started by `sisi delegate`, or marked by the host as a subagent? Kept here
+    (not in workers.py) so the per-tool hooks need not import the worker code."""
+    if os.environ.get("SISI_WORKER_RUN"):
+        return True
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("agent_id") or payload.get("agentId") or payload.get("agent_transcript_path"):
+        return True
+    tp = str(payload.get("transcript_path") or "")
+    return "/subagents/" in tp or tp.endswith("/subagents")
+
+
 def session_id():
     return os.environ.get("SISI_SESSION_ID") or None
 

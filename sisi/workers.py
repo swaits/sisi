@@ -1415,14 +1415,7 @@ def _cached_candidates(records=None):
 
 
 def is_subagent_payload(payload):
-    if os.environ.get("SISI_WORKER_RUN"):
-        return True
-    if not isinstance(payload, dict):
-        return False
-    if payload.get("agent_id") or payload.get("agentId") or payload.get("agent_transcript_path"):
-        return True
-    tp = str(payload.get("transcript_path") or "")
-    return "/subagents/" in tp or tp.endswith("/subagents")
+    return store.is_subagent_payload(payload)
 
 
 def _with_facts(lines):

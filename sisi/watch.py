@@ -14,7 +14,13 @@ Both hooks fail open: any error is logged and the tool call proceeds.
 """
 import json, os, re, time
 
-from . import gitutil, paths, store
+from . import paths, store
+
+
+def _git():
+    """gitutil, imported when a measurement needs it: a hook call that only meters (most tools) must stay light."""
+    from . import gitutil
+    return gitutil
 
 BEFORE_EVENTS = {"PreToolUse", "BeforeTool", "preToolUse", "beforeShellExecution", "tool_call"}
 AFTER_EVENTS = {"PostToolUse", "AfterTool", "postToolUse", "afterShellExecution",
@@ -57,8 +63,8 @@ def is_shell(tool, cmd):
 
 
 def _may_write(cmd):
-    from . import gate
-    return gate._shell_may_write(cmd)
+    from . import attribution  # the classifier the gate uses (gate._shell_may_write is this function)
+    return attribution.shell_may_write(cmd)
 
 
 def snap_file(sid, kind):
@@ -113,9 +119,8 @@ def note_shell(sess, cmd, payload):
     its hook payload came from a subagent (an agent id or a subagent transcript path). `sisi retro`
     reads this from the session record to quarantine what a subagent records; it never trusts the
     caller's environment. The command text itself is not kept."""
-    from . import workers
     shells = sess.setdefault("shells", [])
-    shells.append({"retro": "retro" in (cmd or ""), "subagent": bool(workers.is_subagent_payload(payload)),
+    shells.append({"retro": "retro" in (cmd or ""), "subagent": bool(store.is_subagent_payload(payload)),
                    "ts": time.time()})
     del shells[:-8]
 
@@ -130,7 +135,7 @@ def before(payload):
     store.save_session(sid, sess)
     if _may_write(cmd) is False:
         return  # provably read-only (incl. sisi's own and git commit): no measurement paid
-    snap = gitutil.snapshot(cwd)
+    snap = _git().snapshot(cwd)
     _save(snap_file(sid, "watch"), {"root": snap["root"], "files": snap["files"],
                                     "command": (cmd or "")[:500], "ts": time.time()})
 
@@ -151,16 +156,16 @@ def after(payload):
         os.unlink(snap_file(sid, "watch"))
     except OSError:
         pass
-    root = pend.get("root") or gitutil.root(cwd) or cwd
-    now = gitutil.snapshot(root)
-    changed = gitutil.snapshot_diff(pend, now)
+    root = pend.get("root") or _git().root(cwd) or cwd
+    now = _git().snapshot(root)
+    changed = _git().snapshot_diff(pend, now)
     if changed:
         note_edit(sess, changed, root)
     store.save_session(sid, sess)
 
 
 def pend_root(sess, cwd):
-    return gitutil.root(cwd) or sess.get("req_project") or cwd
+    return _git().root(cwd) or sess.get("req_project") or cwd
 
 
 def consume_pending(sess, sid, cwd):
@@ -178,7 +183,7 @@ def consume_pending(sess, sid, cwd):
 
 
 def save_pass_snapshot(sid, cwd):
-    snap = gitutil.snapshot(cwd)
+    snap = _git().snapshot(cwd)
     _save(snap_file(sid, "pass"), snap)
     return snap
 
@@ -188,7 +193,7 @@ def changed_since_pass(sid, cwd):
     pend = _load(snap_file(sid, "pass"))
     if pend is None:
         return None
-    return gitutil.snapshot_diff(pend, gitutil.snapshot(cwd))
+    return _git().snapshot_diff(pend, _git().snapshot(cwd))
 
 
 _COMMIT_RE = re.compile(r"(?:^|[;&|(]\s*)(?:\w+=\S+\s+)*git\s+(?:(?:-C|-c)\s+\S+\s+|--[\w-]+\s+)*(?:commit|merge)\b")
@@ -211,6 +216,17 @@ def commit_notice(payload):
         return None
     return ("sisi: unit %s has no passing `sisi verify` result for the tree you are about to commit; run "
             "`sisi verify` first (a notice, not a block)." % c.get("id"))
+
+
+def _read_payload():
+    try:
+        import sys
+        if sys.stdin is None or sys.stdin.isatty():
+            return {}
+        d = json.loads(store.read_stdin() or "{}")
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
 
 
 def meter(payload, after_call, host=None):
@@ -268,8 +284,7 @@ def render_claude(out, event):
 
 def main(args=()):
     try:
-        from . import gate
-        payload = gate._read_payload()
+        payload = _read_payload()
         _tool, _cmd, ev, _cwd, _sid = extract(payload)
         out = run(payload, args)
         before_call = "--before" in args or ev in BEFORE_EVENTS

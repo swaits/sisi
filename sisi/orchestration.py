@@ -17,7 +17,7 @@ canon/orchestration-tools.json. Per-session state is in <state>/sessions/<id>.me
 every counted event is also appended to <state>/orchestration.jsonl for the unit record. Every entry point
 fails open (the caller wraps it): an error here must never hold up the user's tool.
 """
-import fcntl, json, os, re, shlex, time, uuid
+import fcntl, json, os, re, shlex, time
 
 from . import paths, store
 
@@ -408,8 +408,7 @@ def _norm(cmd):
 
 
 def _is_worker(payload, sess, m):
-    from . import workers
-    return bool(m.get("worker") or sess.get("subagent") or workers.is_subagent_payload(payload))
+    return bool(m.get("worker") or sess.get("subagent") or store.is_subagent_payload(payload))
 
 
 def _transcript_model(path):
@@ -471,11 +470,11 @@ def _before(payload, host=None):
     c = cfg()
     if not c["enabled"]:
         return {}
-    from . import watch, workers
+    from . import watch
     tool, cmd, _ev, cwd, sid = watch.extract(payload)
     host = host or store.tool() or "claude-code"
     hd = host_data(host)
-    if not hd or workers.is_subagent_payload(payload):
+    if not hd or store.is_subagent_payload(payload):
         return {}
     sid = sid or "cwd-" + cwd
     inp = next((payload[k] for k in ("tool_input", "toolInput", "input") if isinstance(payload.get(k), dict)), {})
@@ -579,6 +578,7 @@ def _before_delegation(payload, hd, tool, inp, host, sid, sess, m, c, cwd):
         m["refusals"] += 1
         _event(m, sid, "refusal", why="route", tool=tool)
         return {"deny": route_text()}
+    import uuid
     run_id = uuid.uuid4().hex[:8]
     worker = model or own or "(inherited)"
     against = None
@@ -619,11 +619,11 @@ def after(payload, host=None):
     c = cfg()
     if not c["enabled"]:
         return {}
-    from . import watch, workers
+    from . import watch
     tool, cmd, ev, cwd, sid = watch.extract(payload)
     host = host or store.tool() or "claude-code"
     hd = host_data(host)
-    if not hd or workers.is_subagent_payload(payload):
+    if not hd or store.is_subagent_payload(payload):
         return {}
     sid = sid or "cwd-" + cwd
     inp = next((payload[k] for k in ("tool_input", "toolInput", "input") if isinstance(payload.get(k), dict)), {})
