@@ -93,7 +93,7 @@ def save_state(project, contract_id, fp, results, deep_ids):
     items = [{"id": r["id"], "status": r["status"], "tail": (r.get("tail") or "")[-1500:]}
              for r in results if r.get("tier") == "deep"]
     st = {"contract": contract_id, "fp": fp, "epoch": time.time(), "ids": sorted(deep_ids),
-          "ok": all(i["status"] in ("passed", "awaiting-human") for i in items), "items": items}
+          "ok": all(i["status"] in ("passed", "skipped", "not-applicable") for i in items), "items": items}
     p = _state_path(project)
     os.makedirs(os.path.dirname(p), exist_ok=True)
     tmp = p + ".tmp%d" % os.getpid()
@@ -123,7 +123,7 @@ def deep_state(c, project, fp):
     st = load_state(project)
     if st is not None and st.get("ids") == ids:
         base.update(epoch=st.get("epoch"), fresh=fp is not None and st.get("fp") == fp,
-                    failed=[i for i in st["items"] if i["status"] not in ("passed", "awaiting-human")])
+                    failed=[i for i in st["items"] if i["status"] in ("failed", "not-run")])
     else:
         st = None
     if lock:

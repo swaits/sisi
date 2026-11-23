@@ -27,9 +27,10 @@ class EndToEnd(SisiCase):
         r = self.sisi("gate", stdin=stop)
         self.assertEqual((r.returncode, r.stdout), (0, ""))
 
+        self.assertEqual(self.sisi("unit", "close").returncode, 0)
         out = self.sisi("status").stdout
-        self.assertIn("contracts verified : 1", out)
-        self.assertIn("3: 100%", out)
+        self.assertIn("[delivered]", out)
+        self.assertIn("correctness and assurance", out)
         self.assertEqual(self.sisi("uninstall").returncode, 0)
 
 

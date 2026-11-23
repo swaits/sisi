@@ -25,12 +25,19 @@ def head(cwd):
     return out.strip() if rc == 0 else None
 
 
+_EXCLUDE = ":(exclude).sisi"  # sisi's own records are never part of the work being measured
+
+
+def _is_sisi(rel):
+    return rel == ".sisi" or rel.startswith(".sisi/")
+
+
 def measure(cwd, base=None, max_untracked=200):
     """Return {'lines': n, 'files': [paths]} for the working tree vs `base` (default HEAD)."""
     cwd = root(cwd) or cwd
     base = base or head(cwd) or EMPTY_TREE
     lines, files = 0, set()
-    rc, out = _git(cwd, "diff", "--numstat", base, timeout=10)
+    rc, out = _git(cwd, "diff", "--numstat", base, "--", ".", _EXCLUDE, timeout=10)
     if rc == 0:
         for ln in out.splitlines():
             parts = ln.split("\t", 2)
@@ -44,7 +51,7 @@ def measure(cwd, base=None, max_untracked=200):
     rc, out = _git(cwd, "ls-files", "--others", "--exclude-standard", timeout=10)
     if rc == 0:
         top = cwd
-        for rel in out.splitlines()[:max_untracked]:
+        for rel in [r for r in out.splitlines() if not _is_sisi(r)][:max_untracked]:
             files.add(rel)
             try:
                 fp = os.path.join(top, rel)
@@ -100,13 +107,13 @@ def fingerprint(cwd, extra_files=()):
     h = hashlib.sha1()
     base = head(top) or EMPTY_TREE
     h.update(base.encode())
-    p = subprocess.run(["git", "diff", "--no-ext-diff", "--no-textconv", "--no-color", base], cwd=top,
-                       capture_output=True, timeout=10)
+    p = subprocess.run(["git", "diff", "--no-ext-diff", "--no-textconv", "--no-color", base, "--", ".", _EXCLUDE],
+                       cwd=top, capture_output=True, timeout=10)
     h.update(b"\0diff\0" + p.stdout)
     p = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "-z"], cwd=top,
                        capture_output=True, timeout=10)
     for rel in p.stdout.split(b"\0")[:2000]:
-        if not rel:
+        if not rel or _is_sisi(os.fsdecode(rel)):
             continue
         try:
             st = os.stat(os.path.join(top, os.fsdecode(rel)))

@@ -115,6 +115,8 @@ class SisiCase(unittest.TestCase):
 
 
 def check(id, cmd, rung=3, kind="general", exit=0, timeout_s=10, **expect):
+    if cmd == "true":  # a passing check that can fail (bare `true` is vacuous and refused)
+        cmd = "test -f .sisi/contract.json"
     return {"id": id, "claim": "claim " + id, "kind": kind, "rung": rung, "cmd": cmd,
             "expect": dict({"exit": exit}, **expect), "timeout_s": timeout_s}
 

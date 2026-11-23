@@ -142,4 +142,4 @@ check first and slow checks in the background while you carry on, never repeatin
 inputs have not changed, and finding out why a slow step is slow instead of waiting on it.
 
 Why: correct work that takes days when hours would do fails the human almost as badly as wrong
-work. `sisi time` shows where the time went.
+work. `sisi status` shows where the time went.

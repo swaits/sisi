@@ -5,7 +5,7 @@ from . import paths
 
 FILES = {"results": "results.jsonl",
          "learn": "learn.jsonl", "quarantine": "learn.jsonl", "waivers": "waivers.jsonl",
-         "deliveries": "deliveries.jsonl"}
+         "deliveries": "deliveries.jsonl", "units": "units.jsonl"}
 
 
 def _migrate_learn():
@@ -82,7 +82,7 @@ def session_id():
     return os.environ.get("SISI_SESSION_ID") or None
 
 
-PERSONAL = ("learn", "quarantine")  # what the person told or taught sisi: personal data, the rest is scratch
+PERSONAL = ("learn", "quarantine", "units")  # what the person told or taught sisi: personal data, the rest is scratch
 
 
 def file_path(name):
@@ -156,7 +156,9 @@ def stamp(extra):
 
 DEFAULTS = {"gate": {"enabled": True, "budget_s": 120, "max_blocks": 3, "growth_lines": 40, "growth_files": 3},
             "verify": {"default_timeout_s": 60, "fast_limit_s": 60},
-            "retro": {"required": True}}
+            "retro": {"required": True},
+            "scratch": {"session_max_age_days": 30, "prune_every": 20, "prune_max_delete": 1000,
+                        "prune_budget_s": 0.25}}
 
 
 def config():
@@ -202,6 +204,76 @@ def save_session(sid, rec):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(rec, f)
     os.replace(tmp, p)
+
+
+def _transcript_alive(session_file, cutoff):
+    """True when the transcript this session record names was written to since `cutoff`: the
+    session is still going on in the host even though sisi has not touched its record."""
+    try:
+        with open(session_file, encoding="utf-8") as f:
+            tp = json.load(f).get("transcript_path")
+        return isinstance(tp, str) and os.stat(os.path.expanduser(tp)).st_mtime >= cutoff
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def prune_sessions(now=None, active_ids=(), force=False):
+    """Remove session-state files older than the configured age. Runs on a counter kept in
+    scratch (every Nth session start, first run included), never on a scheduler. Bounded:
+    stops after the configured time budget or deletion count, and a later start continues.
+    Never deletes the file of a session named active (callers pass the current session's id)
+    nor of one whose transcript the host has written to within the age. Returns the number
+    of files removed."""
+    cfg = config().get("scratch", {})
+    d = os.path.join(paths.state(), "sessions")
+    counter_file = os.path.join(d, ".prune-counter")
+    count = 0
+    try:
+        with open(counter_file, encoding="utf-8") as f:
+            count = int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        count = 0
+    count += 1
+    try:
+        os.makedirs(d, exist_ok=True)
+        with open(counter_file, "w", encoding="utf-8") as f:
+            f.write(str(count))
+    except OSError:
+        pass
+    every = max(1, int(cfg.get("prune_every", 20)))
+    if not force and (count - 1) % every != 0:
+        return 0  # not this start's turn: the first start and every Nth after it sweep
+    now = time.time() if now is None else now
+    cutoff = now - float(cfg.get("session_max_age_days", 30)) * 86400
+    keep = {safe_id(s) + ".json" for s in active_ids if s}
+    budget = float(cfg.get("prune_budget_s", 0.25))
+    max_delete = int(cfg.get("prune_max_delete", 1000))
+    removed, deadline, unfinished = 0, time.time() + budget, False
+    try:
+        with os.scandir(d) as it:
+            for e in it:
+                if removed >= max_delete or time.time() > deadline:
+                    unfinished = True
+                    break
+                if not e.name.endswith(".json") or e.name in keep:
+                    continue
+                try:
+                    if e.is_file(follow_symlinks=False) and e.stat().st_mtime < cutoff:
+                        if _transcript_alive(e.path, cutoff):
+                            continue  # the host is still writing this session's transcript
+                        os.unlink(e.path)
+                        removed += 1
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    if unfinished:  # out of budget with files left: the next start continues the sweep
+        try:
+            with open(counter_file, "w", encoding="utf-8") as f:
+                f.write("0")
+        except OSError:
+            pass
+    return removed
 
 
 def log_error(where, exc):

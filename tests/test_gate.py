@@ -57,7 +57,7 @@ class GateContractTests(GateBase):
         a, msg = self.call()
         self.assertEqual(a, "block")
         st = {r["check"]: r["status"] for r in self.results()}
-        self.assertEqual(st, {"a": "timeout", "b": "timeout"})  # b never ran: counts as timeout
+        self.assertEqual(st, {"a": "not-run", "b": "not-run"})  # a timed out, b never ran: neither passed
 
     def test_three_strikes_then_unverified_release_then_reset(self):
         self.write_contract(contract([check("bad", "false")]))

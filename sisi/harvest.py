@@ -226,6 +226,90 @@ def machine_reason(text, origin_kind=None, entrypoint=None):
     return bool(reasons), ";".join(reasons)
 
 
+# ---------------------------------------------------------------- transcript usage (telemetry)
+
+_USAGE_KEYS = (("input", ("input_tokens", "inputTokens")),
+               ("output", ("output_tokens", "outputTokens")),
+               ("cache_read", ("cache_read_input_tokens", "cacheReadInputTokens", "cached_input_tokens")),
+               ("cache_creation", ("cache_creation_input_tokens", "cacheCreationInputTokens")))
+_QUESTION_TOOLS = {"AskUserQuestion", "request_user_input", "ask_user_question"}
+
+
+def transcript_stats(path, t0=None, t1=None):
+    """Token usage and human-attention counts from one Claude-Code-shaped transcript, or None
+    when the file cannot be read. `usage` is None when no record carried any usage numbers:
+    a caller must report tokens as unavailable then, never as zero. Timestamps bound the
+    window in epoch seconds when given. Streams the file; malformed lines are skipped."""
+    try:
+        f = open(os.path.expanduser(path), "rb")
+    except (OSError, TypeError):
+        return None
+    by_model, by_cat = {}, {}
+    human, corrections, dialogs, subagents, first = 0, 0, 0, 0, True
+    with f:
+        for raw in f:
+            try:
+                if b"usage" not in raw and b"user" not in raw and b"tool_use" not in raw \
+                        and b"queued_command" not in raw:
+                    continue
+                d = json.loads(raw)
+                if not isinstance(d, dict):
+                    continue
+                ts = epoch(d["timestamp"]) if isinstance(d.get("timestamp"), str) else None
+                outside = ts is not None and ((t0 is not None and ts < t0) or (t1 is not None and ts > t1))
+                typ = d.get("type")
+                if outside and typ != "user":
+                    continue
+                if typ == "assistant":
+                    m = d.get("message") or {}
+                    u = m.get("usage") if isinstance(m, dict) else None
+                    if isinstance(u, dict):
+                        model = m.get("model") if isinstance(m.get("model"), str) and not m["model"].startswith("<") else "(unknown)"
+                        got = {}
+                        for cat, keys in _USAGE_KEYS:
+                            for k in keys:
+                                if isinstance(u.get(k), (int, float)) and not isinstance(u.get(k), bool):
+                                    got[cat] = int(u[k]); break
+                        if got:
+                            slot = by_model.setdefault(model, {})
+                            for cat, v in got.items():
+                                by_cat[cat] = by_cat.get(cat, 0) + v
+                                slot[cat] = slot.get(cat, 0) + v
+                    content = m.get("content") if isinstance(m, dict) else None
+                    for b in content if isinstance(content, list) else ():
+                        if isinstance(b, dict) and b.get("type") == "tool_use":
+                            if b.get("name") in _QUESTION_TOOLS:
+                                dialogs += 1
+                            if b.get("name") in ("Agent", "Task"):
+                                subagents += 1
+                elif typ == "user":
+                    text = typed_text(d)[0]
+                    if text is not None:
+                        # the transcript's first typed message is a request, never a correction,
+                        # whether or not it falls inside the window
+                        if not outside:
+                            if not first and is_correction(text):
+                                corrections += 1
+                            human += 1
+                        first = False
+                elif typ == "attachment":
+                    a = d.get("attachment") or {}
+                    if a.get("type") == "queued_command" and a.get("commandMode") == "prompt" and not a.get("isMeta"):
+                        if typed_text(a, queued_prompt=a.get("prompt"))[0] is not None:
+                            human += 1
+            except Exception:
+                continue
+    for slot in by_model.values():
+        slot["total"] = sum(v for k, v in slot.items())
+    if by_cat:
+        by_cat_out = dict(by_cat, total=sum(by_cat.values()))
+        usage = {"by_category": by_cat_out, "by_model": by_model}
+    else:
+        usage = None
+    return {"usage": usage, "human_messages": human, "corrections": corrections,
+            "question_dialogs": dialogs, "subagent_runs": subagents}
+
+
 # ---------------------------------------------------------------- source interface
 
 class Source:

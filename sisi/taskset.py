@@ -299,10 +299,3 @@ def benchmark_cases(con):
             out.append(case)
     return out
 
-
-def counts(con):
-    """{kind: {grade: {split: n}}} for the scoreboard."""
-    out = {}
-    for r in con.execute("SELECT kind, COALESCE(grade,'-') g, split, COUNT(*) n FROM tasks GROUP BY 1,2,3"):
-        out.setdefault(r["kind"], {}).setdefault(r["g"], {})[r["split"]] = r["n"]
-    return out

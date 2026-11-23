@@ -247,7 +247,6 @@ class OverlayTests(PersonalCase):
         self.assertIn("rulebook %d lines" % lines, out)
         self.assertIn("%d characters" % len(self.generated()), out)
         self.assertNotIn("lessons block", out)  # no lesson list is loaded at session start
-        self.assertIn("rulebook %d lines" % lines, self.ok("status").stdout)
 
     def test_core_md_rules_have_unique_ids_and_the_budget_holds(self):
         text = open(os.path.join(REPO, "canon", "core.md")).read()

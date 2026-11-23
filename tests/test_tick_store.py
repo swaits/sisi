@@ -106,18 +106,6 @@ class StoreTests(SisiCase):
         [t.start() for t in ts]; [t.join() for t in ts]
         self.assertEqual(len(self.read("learn.jsonl")), 300)
 
-    def test_status(self):
-        self.write_contract(contract([check("a", "true", rung=2), check("b", "true", rung=3), human("h")]))
-        self.sisi("verify")
-        self.write_contract(contract([check("a", "false", rung=2)]))
-        self.sisi("verify")
-        self.sisi("contract", "waive", "tiny")
-        out = self.sisi("status").stdout
-        self.assertIn("contracts verified : 1", out)
-        self.assertIn("pass rate 50%", out)
-        self.assertIn("waivers            : 1", out)
-        self.assertIn("unverified passes  : 0", out)
-
 
 class HelpTests(SisiCase):
     def test_help_and_unknown(self):
