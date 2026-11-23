@@ -447,9 +447,10 @@ def how_on(c, state, last):
     else:
         head = 'Unit %s ("%s", last active %s) was not opened or continued by this session.' % (uid, goal, when)
     return [head,
-            "Three ways on: `sisi unit continue` (it is this work), `sisi unit park \"<why>\"` (set it aside, kept),",
-            "or `sisi unit close --abandon \"<why>\"`; for new work then run `sisi contract init`, replace its placeholder",
-            "check with one that can fail, and fill what the profile needs."]
+            "Three ways on: if it is different work, park it, nothing is lost: `sisi unit park \"<why>\"`;",
+            "if it is this work: `sisi unit continue`; if it was dropped: `sisi unit close --abandon \"<why>\"`.",
+            "For new work then run `sisi contract init`, replace its placeholder check with one that can fail,",
+            "and fill what the profile needs."]
 
 
 def _profile_needs(profile):

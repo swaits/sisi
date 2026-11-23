@@ -937,6 +937,14 @@ def cmd_unit(args, cwd=None, out=print):
             return 0
         p = C.find(cwd)
         project = C.project_dir(p) if p else None
+        if p:
+            try:
+                cur = C.load(p)
+            except (OSError, ValueError):
+                cur = None
+            if isinstance(cur, dict) and cur.get("id") == uid and not is_closed(cur):
+                out(json.dumps(cur, indent=2))  # the open unit, asked for by its id
+                return 0
         if project:
             for rec in list_archives(project):
                 if rec.get("id") == uid:
