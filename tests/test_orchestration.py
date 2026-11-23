@@ -200,6 +200,45 @@ class RouteTests(OrchCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("mechanism:", r.stdout)
 
+    def _big_catalogue(self, n=2000):
+        names = ["m-%d" % i for i in range(n)] + ["contributor-%d" % i for i in range(40)]
+        script = FAKE_TOOL.replace('echo "beta-1"; echo "beta-2";', " ".join('echo "%s";' % x for x in names))
+        with open(os.path.join(self.bindir, "muse"), "w") as f:
+            f.write(script)
+
+    def test_explain_stays_short_with_a_huge_catalogue(self):
+        """R-7.2-1: --explain prints at most 20 lines and 3 example names per reason group,
+        and still shows every reason group, however many catalogue models were passed over."""
+        self._big_catalogue()
+        self.sisi("workers", "avoid", "m-7", "--why", "fixture avoid", env=self.env())
+        r = self.sisi("route", "--kind", "impl", "--difficulty", "2", "--explain", env=self.env())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lines = r.stdout.splitlines()
+        self.assertLessEqual(len(lines), 20, r.stdout[:2000])
+        self.assertTrue(lines[0].startswith("muse/"))
+        self.assertIn("mechanism:", r.stdout)
+        self.assertIn("cold start", r.stdout)
+        self.assertIn("worker facts", r.stdout)
+        groups = [l for l in lines if l.startswith("passed over")]
+        for l in groups:
+            self.assertLessEqual(len(re.findall(r"muse/[\w-]+", l.split("):")[0])), 3, l)
+        text = "\n".join(groups)
+        self.assertIn("contributor", text)   # the training-tier reason group
+        self.assertIn("fixture avoid", text)  # the user's avoid-pattern group
+        self.assertIn("equal on price and load", text)  # the bulk group
+
+    def test_explain_line_budget_holds_with_many_distinct_reasons(self):
+        """R-7.2-1: when reasons alone would overflow, groups merge into one line that still
+        names every reason with its count."""
+        from sisi import routing
+        passed = [("w%d" % i, "reason number %d" % (i % 40)) for i in range(400)]
+        result = {"choice": None, "passed_over": passed, "stats": {}}
+        lines = routing.explain_choice(result, "impl", 2)
+        self.assertLessEqual(len(lines) + 5, 20)
+        text = "\n".join(lines)
+        for k in range(40):
+            self.assertIn("reason number %d" % k, text)
+
     def test_unpriced_catalogue_models_are_not_candidates(self):
         """Candidates need a judged record, a price or a benchmark prior."""
         self.seed_attempts([self.attempt("j%d" % i) for i in range(8)])

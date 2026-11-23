@@ -280,6 +280,10 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
             "load_ratios": {c["worker"]: load_ratio(c) for c in candidates}}
 
 
+MAX_EXPLAIN_LINES = 20
+EXPLAIN_TAIL_LINES = 5  # worker, mechanism, exclusion note, cold-start notice, request for facts
+
+
 def explain_choice(result, kind, difficulty):
     """Plain lines for `--explain`, from a choose() result."""
     choice = result["choice"]
@@ -325,10 +329,24 @@ def explain_choice(result, kind, difficulty):
             groups[reason] = []
             order.append(reason)
         groups[reason].append(worker)
-    for reason in order:
+    # `--explain` stays short whatever the catalogue size (R-7.2-1): one line per reason with a
+    # count and at most 3 example names; if reasons alone would overflow MAX_EXPLAIN_LINES, the
+    # smallest groups share one closing line that still names each reason and its count.
+    def group_line(reason):
         names = groups[reason]
-        shown = ", ".join(names[:12])
-        if len(names) > 12:
-            shown += " (and %d more)" % (len(names) - 12)
-        lines.append("passed over %s: %s" % (shown, reason))
+        shown = ", ".join(names[:3])
+        more = " and %d more" % (len(names) - 3) if len(names) > 3 else ""
+        return "passed over %d worker(s) (%s%s): %s" % (len(names), shown, more, reason)
+
+    room = max(MAX_EXPLAIN_LINES - len(lines) - EXPLAIN_TAIL_LINES, 1)
+    ranked = sorted(order, key=lambda r: -len(groups[r]))
+    keep = ranked if len(ranked) <= room else ranked[:room - 1]
+    for reason in order:
+        if reason in keep:
+            lines.append(group_line(reason))
+    rest = [r for r in ranked if r not in keep]
+    if rest:
+        lines.append("passed over %d more worker(s) for %d other reasons: %s"
+                     % (sum(len(groups[r]) for r in rest), len(rest),
+                        "; ".join("%s (%d)" % (r, len(groups[r])) for r in rest)))
     return lines
