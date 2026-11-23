@@ -331,7 +331,7 @@ def _decide(payload):
         own = _own_changed(sess, sid, cwd, top, attr)
         own_floor, own_reasons = risk.assess(own, diff_text=_diff_text(project, sess.get("head")),
                                              patterns=risk.load_patterns(project))
-        claimed = c is not None and _claims_unit(sess, path)
+        claimed = c is not None and (attr is None or _claims_unit(sess, path))  # no transcript: every change is ours
         if own_floor == "trivial" and not claimed and not (c is not None and sess.get("last_unit") == c.get("id")):
             return stop.allow(cwd)  # documentation and the like, or nothing of this session's: nothing is asked
         if c is not None:
