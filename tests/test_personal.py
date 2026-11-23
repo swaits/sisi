@@ -2,7 +2,7 @@
 install migration, and the property that sisi never writes inside the product."""
 import hashlib, json, os, signal, time, shutil, sqlite3, stat, subprocess, sys, tarfile, unittest, unittest.mock
 from support import *
-from sisi import lifecycle, overlay, paths, pdata, retro, wiring
+from sisi import lifecycle, overlay, paths, pdata, wiring
 
 RULES = [("alpha", "Alpha rule", "Do alpha things.\n\nWhy: alpha."),
          ("beta", "Beta rule", "Do beta things.\n\nWhy: beta."),
@@ -246,7 +246,7 @@ class OverlayTests(PersonalCase):
         lines = len(self.generated().splitlines())
         self.assertIn("rulebook %d lines" % lines, out)
         self.assertIn("%d characters" % len(self.generated()), out)
-        self.assertIn("lessons block at most %d characters" % retro.LIMIT, out)
+        self.assertNotIn("lessons block", out)  # no lesson list is loaded at session start
         self.assertIn("rulebook %d lines" % lines, self.ok("status").stdout)
 
     def test_core_md_rules_have_unique_ids_and_the_budget_holds(self):
@@ -367,6 +367,23 @@ class UpdateTests(PersonalCase):
         self.assertIn("not a git clone", r.stdout)
 
 
+def _seed_legacy_db(path, lessons, proj):
+    """A pre-rebuild retro.db: the sqlite lesson store the migration reads."""
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE lessons (id INTEGER PRIMARY KEY, aim TEXT, change_kind TEXT, target TEXT,"
+                " moment TEXT, cause TEXT, change TEXT, status TEXT, project TEXT, created TEXT)")
+    con.execute("CREATE TABLE occurrences (id INTEGER PRIMARY KEY, lesson_id INTEGER, ts TEXT, session TEXT,"
+                " moment TEXT, repo TEXT)")
+    for f in lessons:
+        cur = con.execute("INSERT INTO lessons(aim,change_kind,target,moment,cause,change,status,project,created)"
+                          " VALUES(?,?,?,?,?,?,?,?,?)",
+                          (f.get("aim"), f.get("change_kind"), f.get("target"), f.get("moment"),
+                           f.get("cause"), f.get("change"), "open", proj, "2026-01-01T00:00:00Z"))
+        con.execute("INSERT INTO occurrences(lesson_id,ts,session,moment,repo) VALUES(?,?,?,?,?)",
+                    (cur.lastrowid, "2026-01-01T00:00:00Z", "s0", f.get("moment"), proj))
+    con.commit(); con.close()
+
+
 class MigrationTests(PersonalCase):
     LESSONS = [dict(aim="verified", moment="ran pytest and it passed without the new test", cause="the test never failed",
                     change_kind="rule", change="Always watch a new test fail without the change first", target=None),
@@ -377,13 +394,8 @@ class MigrationTests(PersonalCase):
         """Lay out an old-style installation: personal files in the state dir, oracle and notes in the product."""
         os.makedirs(os.path.join(self.state, "backups"))
         db = os.path.join(self.state, "retro.db")
-        with unittest.mock.patch.object(retro, "db_path", return_value=db):
-            con = retro.connect()
-            for f in self.LESSONS + ([dict(aim="intent", moment="built the wrong thing for a day", cause="no check with the human",
-                                           change_kind="rule", change="Confirm the goal in one line before starting", target=None)] if extra_lesson else []):
-                retro.new_lesson(con, dict(f), self.proj, None)
-            con.commit()
-            con.close()
+        _seed_legacy_db(db, self.LESSONS + ([dict(aim="intent", moment="built the wrong thing for a day", cause="no check with the human",
+                                       change_kind="rule", change="Confirm the goal in one line before starting", target=None)] if extra_lesson else []), self.proj)
         json.dump([self.proj], open(os.path.join(self.state, "trusted.json"), "w"))
         json.dump({"verify": {"fast_limit_s": 9}}, open(os.path.join(self.state, "config.json"), "w"))
         for n, t in (("learn-quarantine.jsonl", "quarantined"), ("notes.jsonl", "a note"), ("proposals.jsonl", "a proposal")):
@@ -424,11 +436,11 @@ class MigrationTests(PersonalCase):
         self.assertIn("/x/CLAUDE.md", json.load(open(os.path.join(self.data, "install", "manifest.json")))["files"])
         # committed: the learned content is in git history, the database is not
         files = pdata.git("ls-files").stdout.split()
-        for f in ("oracle.md", "lessons.jsonl", "trusted.json", "config.json", "notes/fuzz.md", "VERSION", "learn-quarantine.jsonl"):
+        for f in ("oracle.md", "learnings.jsonl", "trusted.json", "config.json", "notes/fuzz.md", "VERSION", "learn-quarantine.jsonl"):
             self.assertIn(f, files)
         self.assertNotIn("retro.db", files)
-        self.assertEqual(len(open(os.path.join(self.data, "lessons.jsonl")).read().splitlines()), 2 + len(before[1]))
-        self.assertTrue(any(l.startswith("migrate:") for l in self.git_log()))
+        self.assertEqual(len(open(os.path.join(self.data, "learnings.jsonl")).read().splitlines()), 2)  # one record per lesson; occurrences are provenance inside it
+        self.assertTrue(self.git_log()[0].startswith("migrate:"))
         # the backup has what moved, before it moved
         bk = os.path.join(self.data, "backups")
         b = next(os.path.join(bk, d) for d in sorted(os.listdir(bk))
@@ -440,31 +452,29 @@ class MigrationTests(PersonalCase):
         self.assertTrue(os.path.exists(os.path.join(self.p1, "canon", "oracle.md")))
         # a second run does nothing
         n = len(self.git_log())
-        self.ok("update", "--post")
+        self.ok("update", "--post")  # a second run migrates nothing more
         self.assertEqual(len(self.git_log()), n)
         self.assertEqual(self.lessons_of(os.path.join(self.data, "retro.db")), before)
-        self.assertEqual(self.ok("lessons", "--json").stdout.count('"change_kind"'), 2)
+        self.assertEqual(self.ok("lessons", "--json").stdout.count('"id": "L-'), 2)
 
     def test_old_layout_keeps_working_before_migration(self):
         self.legacy_state()
+        self.ok("update", "--post")  # lessons now live in learnings.jsonl; migration is the one path in
         self.assertEqual(self.ok("lessons").stdout.count("\n"), 2)
         self.assertEqual(wiring.quick_problem(), None)
         from sisi import trust
         self.assertTrue(trust.is_trusted(self.proj))
         self.assertEqual(self.ok("tick", stdin="{}").returncode, 0)
-        self.assertEqual(self.sisi("tick", stdin="{}").stdout, "")  # no lesson list at session start
+        self.assertNotIn("Always watch", self.sisi("tick", stdin="{}").stdout)  # no lesson list at session start
 
     def test_migrate_merges_when_both_old_and_new_databases_exist(self):
         self.legacy_state(extra_lesson=True)
         # the new location already has one of the same lessons and one of its own
-        with unittest.mock.patch.object(retro, "db_path", return_value=os.path.join(self.data, "retro.db")):
-            os.makedirs(self.data)
-            con = retro.connect()
-            retro.new_lesson(con, dict(self.LESSONS[0]), self.proj, None)
-            retro.new_lesson(con, dict(aim="level", moment="asked about a thing the oracle already answered", cause="did not run oracle",
-                                       change_kind="rule", change="Run sisi oracle before asking anything", target=None), self.proj, None)
-            con.commit()
-            con.close()
+        os.makedirs(self.data, exist_ok=True)
+        _seed_legacy_db(os.path.join(self.data, "retro.db"),
+                        [dict(self.LESSONS[0]),
+                         dict(aim="level", moment="asked about a thing the oracle already answered", cause="did not run oracle",
+                              change_kind="rule", change="Run sisi oracle before asking anything", target=None)], self.proj)
         self.ok("update", "--post")
         rows, _ = self.lessons_of(os.path.join(self.data, "retro.db"))
         changes = sorted(r["change"] for r in rows)
@@ -555,11 +565,12 @@ class ExportImportTests(PersonalCase):
     def test_round_trip_is_lossless_for_committed_content(self):
         self.ok("overlay", "add-rule", "--id", "delta", "-", stdin=rule_file("Delta", "Body."))
         self.ok("overlay", "replace-verifier", "shellcheck", "-", stdin=self.verifier_text("shellcheck", "Mine"))
-        self.ok("learn", "--scope", "everywhere", "never", "ask", "twice")
-        self.ok("retro", "--scope", "everywhere", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
-                "--cause", "the test was written after the code", "--change-kind", "rule",
-                "--when", "tests, pytest, failing first, regression, test quality, red green", "--pattern", "Reach for the familiar tool instead of the check that fits the claim", 
-                "--change", "write the failing test first and show it fail with `pytest -k new`")
+        self.ok("learn", "--scope", "user", "never ask the same thing twice")
+        self.ok("retro", "--finding", "ran `pytest -q` and saw 3 passed but the new test had never failed",
+                "--cause", "the test was written after the code", "--impact", "correctness",
+                "--disposition", "promote", "--change", "write the failing test first and show it fail with `pytest -k new`",
+                "--mechanism", "verification", "--expect", "new tests are seen failing first",
+                "--validate", "replay the new test at the parent commit")
         os.makedirs(os.path.join(self.state, "sessions"))
         open(os.path.join(self.state, "sessions", "s1.json"), "w").write('{"a": 1}')
         open(os.path.join(self.state, "results.jsonl"), "w").write('{"r": 1}\n')
@@ -572,7 +583,7 @@ class ExportImportTests(PersonalCase):
         with tarfile.open(arc) as tf:
             names = tf.getnames()
         self.assertIn("personal/overlay/rules/delta.md", names)
-        self.assertIn("personal/retro.db", names)
+        self.assertIn("personal/learnings.jsonl", names)
         self.assertIn("state/results.jsonl", names)
         self.assertIn("state/sessions/s1.json", names)
         self.assertFalse([n for n in names if "/generated" in n or "/backups" in n or "/install" in n])
@@ -591,22 +602,16 @@ class ExportImportTests(PersonalCase):
         self.assertTrue(os.path.exists(os.path.join(self.state, "sessions", "s1.json")))
         self.assertRegex(self.ok("verifiers", "--section", "safety").stdout, r"shellcheck .*Mine")
 
-    def test_import_sets_existing_data_aside_and_rebuilds_db_from_the_dump(self):
-        self.ok("retro", "--scope", "everywhere", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
-                "--cause", "the test was written after the code", "--change-kind", "rule",
-                "--when", "tests, pytest, failing first, regression, test quality, red green", "--pattern", "Reach for the familiar tool instead of the check that fits the claim", 
-                "--change", "write the failing test first and show it fail with `pytest -k new`")
+    def test_import_sets_existing_data_aside_and_restores_learnings(self):
+        self.ok("retro", "--finding", "ran `pytest -q` and saw 3 passed but the new test had never failed",
+                "--cause", "the test was written after the code", "--impact", "correctness",
+                "--disposition", "promote", "--change", "write the failing test first and show it fail with `pytest -k new`",
+                "--mechanism", "verification", "--expect", "new tests are seen failing first",
+                "--validate", "replay the new test at the parent commit")
         arc = os.path.join(self.tmp, "out.tar.gz")
         self.ok("export", arc)
-        # an archive without the database: the dump recreates it
-        slim = os.path.join(self.tmp, "slim.tar.gz")
-        with tarfile.open(arc) as a, tarfile.open(slim, "w:gz") as b:
-            for m in a.getmembers():
-                if m.name != "personal/retro.db":
-                    b.addfile(m, a.extractfile(m) if m.isfile() else None)
-        r = self.ok("import", slim)
+        r = self.ok("import", arc)
         self.assertIn("set aside", r.stdout)
-        self.assertIn("rebuilt from lessons.jsonl", r.stdout)
         self.assertTrue(glob_aside(self.data))
         self.assertEqual(self.ok("lessons").stdout.count("\n"), 1)
 
@@ -628,46 +633,34 @@ def glob_aside(data):
 
 
 def LessonRows():
-    con = retro.connect()
-    try:
-        return retro.dump_lines(con)
-    finally:
-        con.close()
+    from sisi import learning as _L
+    return [json.dumps(r, sort_keys=True) for r in _L.load_learnings()]
 
 
 class LessonDumpTests(PersonalCase):
-    RETRO = ["--scope", "everywhere", "--aim", "verified", "--moment", "ran `pytest -q` and saw 3 passed but the new test had never failed",
-             "--cause", "the test was written after the code", "--change-kind", "rule",
-             "--when", "tests, pytest, failing first, regression, test quality, red green", "--pattern", "Reach for the familiar tool instead of the check that fits the claim", 
-             "--change", "write the failing test first and show it fail with `pytest -k new`"]
+    """The learning store is learnings.jsonl, committed; git is the history. No sqlite mirror."""
+    RETRO = ["--finding", "ran `pytest -q` and saw 3 passed but the new test had never failed",
+             "--cause", "the test was written after the code", "--impact", "correctness",
+             "--disposition", "promote", "--change", "write the failing test first and show it fail with `pytest -k new`",
+             "--mechanism", "verification", "--expect", "new tests are seen failing first",
+             "--validate", "replay the new test at the parent commit"]
 
-    def test_dump_is_committed_sorted_and_the_database_is_not(self):
+    def test_learnings_are_committed_and_no_database_exists(self):
         self.ok("retro", *self.RETRO)
-        self.assertEqual(self.git_log()[0], "lessons: retro recorded for lesson #1")
+        self.assertIn("learnings.jsonl", pdata.git("ls-files").stdout)
         self.assertNotIn("retro.db", pdata.git("ls-files").stdout)
-        lines = open(os.path.join(self.data, "lessons.jsonl")).read().splitlines()
-        self.assertEqual(json.loads(lines[0])["t"], "lesson")
-        self.assertEqual(json.loads(lines[1])["t"], "occurrence")
-        n = len(self.git_log())
-        self.ok("lessons", "set", "1", "--status", "rejected")
-        self.assertEqual(len(self.git_log()), n + 1)
-        self.assertIn("lesson #1 set to rejected", self.git_log()[0])
-        self.assertEqual(json.loads(open(os.path.join(self.data, "lessons.jsonl")).readline())["status"], "rejected")
-        # recoverable from history alone
-        old = pdata.git("show", "HEAD~1:lessons.jsonl").stdout
-        self.assertEqual(json.loads(old.splitlines()[0])["status"], "open")
-        # export is stable
-        a = open(os.path.join(self.data, "lessons.jsonl")).read()
-        self.ok("lessons", "export")
-        self.assertEqual(open(os.path.join(self.data, "lessons.jsonl")).read(), a)
-        self.assertEqual(len(self.git_log()), n + 1)
+        self.assertFalse(os.path.exists(os.path.join(self.data, "retro.db")))
+        lines = open(os.path.join(self.data, "learnings.jsonl")).read().splitlines()
+        rec = json.loads(lines[0])
+        self.assertEqual(rec["status"], "proposed")
+        self.assertEqual(rec["validation"]["result"], "unvalidated")
 
     def test_learn_and_note_are_personal_and_committed(self):
-        self.ok("learn", "--scope", "everywhere", "Always", "use", "options")
-        self.assertIn("learn: Always use options", self.git_log()[0])
-        self.assertIn("learn.jsonl", pdata.git("ls-files").stdout)
+        self.ok("learn", "--scope", "user", "Always use options when asking")
+        self.assertIn("learnings.jsonl", pdata.git("ls-files").stdout)
         self.assertFalse(os.path.exists(os.path.join(self.state, "learn.jsonl")))
         self.assertIn("oracle", self.ok("oracle").stdout.lower())
+        self.assertIn("Always use options when asking", self.ok("oracle").stdout)
 
 
 class IsolationTests(PersonalCase):
@@ -742,7 +735,7 @@ class ProductIsReadOnlyTests(PersonalCase):
         gate_in = json.dumps({"session_id": "s1", "cwd": self.proj, "stop_hook_active": False})
         cmds = [("install",), ("doctor",), ("tick", "--tool", "t"), ("status",),
                 ("overlay", "add-rule", "--id", "z", "-"), ("overlay", "diff"), ("overlay", "disable-rule", "z"),
-                ("learn", "--scope", "everywhere", "x"), ("lessons", "export"), ("verifiers", "show", "shellcheck"),
+                ("learn", "--scope", "user", "x"), ("lessons",), ("verifiers", "show", "shellcheck"),
                 ("contract", "init", "--goal", "g"), ("verify",), ("update", "--post"),
                 ("export", os.path.join(self.tmp, "e.tar.gz")), ("gate",), ("uninstall",)]
         for c in cmds:

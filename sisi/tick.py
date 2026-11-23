@@ -37,31 +37,6 @@ def _export_session(sid):
             pass
 
 
-def _decision_line():
-    """One line for a decision waiting for the owner, via the learning module when it
-    provides one; a missing function prints nothing."""
-    for mod_name in ("cycle", "retro", "scope"):
-        try:
-            mod = __import__("sisi." + mod_name, fromlist=["*"])
-        except Exception:
-            continue
-        for name in ("pending_decision_line", "owner_decision_line", "decision_waiting_line",
-                     "pending_owner_line"):
-            fn = getattr(mod, name, None)
-            if callable(fn):
-                try:
-                    out = fn()
-                except TypeError:
-                    try:
-                        out = fn(os.getcwd())
-                    except Exception:
-                        return ""
-                except Exception:
-                    return ""
-                return out if isinstance(out, str) else ""
-    return ""
-
-
 def _handover_line(sess, sid, cwd):
     """Handover items for this project, once per session."""
     try:
@@ -144,17 +119,12 @@ def main(args=()):
             store.log_error("tick-workers", e)
         try:
             from . import cycle
+            # cycle.due_notice carries both the due-cycle line and the pending-decision line (learning.pending_notice).
             note = cycle.due_notice(session=sid if isinstance(sid, str) else None)
             if note:
                 sys.stdout.write(note + "\n")
         except Exception as e:
             store.log_error("tick-cycle", e)
-        try:
-            decision = _decision_line()
-            if decision:
-                sys.stdout.write(decision + "\n")
-        except Exception as e:
-            store.log_error("tick-decision", e)
         try:
             sess2 = rec or store.load_session(sid)
             hline = _handover_line(sess2, sid if isinstance(sid, str) else "cwd", cwd)

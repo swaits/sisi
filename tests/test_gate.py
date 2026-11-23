@@ -869,14 +869,15 @@ class GateSingleSessionEquivalenceTests(GateBase):
         return d
 
     def retro_for(self, proj, sid, n):
-        from test_retro import GOOD, argv as retro_argv
-        f = dict(GOOD, moment="`cargo test` twin run %d took 4 minutes with no fuzz verifier in project" % n,
-                 change="Add the fuzz verifier to the parser-or-codec recipe Checks, twin variant %d" % n, new=True)
-        r = self.sisi("retro", *retro_argv(f), cwd=proj, env={"SISI_SESSION_ID": sid})
-        if r.returncode == 4:  # same lesson as the twin's: add an occurrence for this repo instead
-            r = self.sisi("retro", "--same-as", "1", "--moment", "again `cargo test` twin run %d, no fuzz" % n,
-                          cwd=proj, env={"SISI_SESSION_ID": sid})
-        self.assertEqual(r.returncode, 0, r.stdout)
+        r = self.sisi("retro",
+                      "--finding", "`cargo test` twin run %d took 4 minutes with no fuzz verifier in project" % n,
+                      "--cause", "the recipe never named a fuzz verifier for parsers",
+                      "--impact", "time", "--disposition", "promote",
+                      "--change", "Add the fuzz verifier to the parser-or-codec recipe Checks, twin variant %d" % n,
+                      "--mechanism", "verification", "--expect", "parser work gets a fuzz check",
+                      "--validate", "run the recipe checks on a parser change",
+                      cwd=proj, env={"SISI_SESSION_ID": sid})
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
     def test_seeded_sequences_match_the_reference(self):
         os.environ["SISI_RETRO_REQUIRED"] = "1"

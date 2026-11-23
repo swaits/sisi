@@ -99,7 +99,6 @@ def _merge_retro_db(src, dst):
     b.row_factory = sqlite3.Row
     added = 0
     try:
-        from . import retro
         key = lambda r: (r["aim"], r["change_kind"], r["target"], r["change"])
         have = {key(r): r["id"] for r in b.execute("SELECT * FROM lessons")}
         for r in a.execute("SELECT * FROM lessons ORDER BY id"):
@@ -107,7 +106,7 @@ def _merge_retro_db(src, dst):
                 lid = have[key(r)]
             else:
                 bcols = [x[1] for x in b.execute("PRAGMA table_info(lessons)")]
-                cols = [c for c in retro.LESSON_COLS if c != "id" and c in bcols]
+                cols = [c for c in bcols if c != "id"]  # legacy schema, read from the db itself
                 cur = b.execute("INSERT INTO lessons(%s) VALUES(%s)" % (",".join(cols), ",".join("?" * len(cols))),
                                 [r[c] if c in r.keys() else None for c in cols])
                 lid = cur.lastrowid
@@ -117,7 +116,8 @@ def _merge_retro_db(src, dst):
                 if b.execute("SELECT 1 FROM occurrences WHERE lesson_id=? AND ts=? AND session IS ? AND moment=?",
                              (lid, o["ts"], o["session"], o["moment"])).fetchone():
                     continue
-                cols = [c for c in retro.OCC_COLS if c not in ("id", "lesson_id")]
+                ocols = [x[1] for x in b.execute("PRAGMA table_info(occurrences)")]
+                cols = [c for c in ocols if c not in ("id", "lesson_id")]
                 b.execute("INSERT INTO occurrences(lesson_id,%s) VALUES(?,%s)" % (",".join(cols), ",".join("?" * len(cols))),
                           [lid] + [o[c] if c in o.keys() else None for c in cols])
         b.commit()
@@ -239,15 +239,130 @@ def run():
                     _union_lines(src, paths.data_file(name))
                     os.unlink(src)
                     notes.append("%s moved" % name)
-        try:
-            from . import retro
-            retro.export_jsonl()
-        except Exception as e:
-            store.log_error("migrate-export", e)
-            notes.append("lessons dump failed: %r" % e)
         pdata.commit("migrate: move personal data out of the product and the state folder", strict=True)
     notes += pdata.upgrade()
+    notes += migrate_learnings()
     return notes
+
+
+def migrate_learnings():
+    """Old lesson store -> learning records. Idempotent, with a backup first, lossless.
+
+    lessons.jsonl mixed lesson rows with occurrence and impression rows. Lessons become
+    learning records with honest statuses (folded into prose is `implemented`, always
+    unvalidated; nothing becomes `validated`); occurrences become provenance; impressions
+    (sisi's own showings) are dropped, never evidence. learn.jsonl owner statements become
+    owner-statement records in the same store. Returns notes with before/after counts.
+    """
+    from . import learning as L
+    if os.path.exists(L.learnings_path()):
+        return []
+    src = paths.data_file("lessons.jsonl")
+    learn_src = paths.data_file("learn.jsonl")
+    if not os.path.exists(src) and not os.path.exists(learn_src) \
+            and not os.path.exists(paths.data_file("retro.db")):
+        return []
+    bdir = snapshot("learning-migration")
+    lessons, occs, impressions = {}, {}, 0
+    db = paths.data_file("retro.db")
+    if not os.path.exists(src) and os.path.exists(db):
+        # an install whose committed dump was never written: read the sqlite store directly
+        con = sqlite3.connect(db, timeout=30)
+        con.row_factory = sqlite3.Row
+        try:
+            for r in con.execute("SELECT * FROM lessons ORDER BY id"):
+                lessons[r["id"]] = dict(r)
+            for r in con.execute("SELECT * FROM occurrences ORDER BY id"):
+                occs.setdefault(r["lesson_id"], []).append(dict(r))
+        except sqlite3.Error:
+            lessons, occs = {}, {}
+        finally:
+            con.close()
+    if os.path.exists(src):
+        with open(src, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                t = r.get("t")
+                if t == "lesson":
+                    lessons[r.get("id")] = r
+                elif t == "occurrence":
+                    occs.setdefault(r.get("lesson_id"), []).append(r)
+                elif t == "impression":
+                    impressions += 1
+    rows = []
+    for lid in sorted(lessons, key=lambda x: (x is None, x)):
+        old = lessons[lid]
+        prov = []
+        for o in occs.get(lid, []):
+            prov.append({"unit": "session:%s" % (o.get("session") or o.get("id")),
+                         "project": o.get("repo") or o.get("cwd") or old.get("project") or "",
+                         "ts": o.get("ts") or "", "kind": "occurrence"})
+        origin = old.get("project") or (prov[0]["project"] if prov else "")
+        if not prov:
+            prov = [{"unit": "legacy:%s" % lid, "project": origin, "ts": old.get("created") or "",
+                     "kind": "origin"}]
+        status = {"applied": "implemented", "retired": "reverted"}.get(old.get("status"), "observed")
+        kind = old.get("change_kind")
+        rows.append({
+            "id": "L-%04d" % (len(rows) + 1), "legacy_id": lid,
+            "title": L.derive_title(old.get("short") or old.get("change") or old.get("moment") or ""),
+            "source_unit": prov[0]["unit"], "origin_project": origin,
+            "observation": {"evidence": old.get("moment") or "", "impact": "correctness"},
+            "root_cause": old.get("cause") or "",
+            "proposed": {"description": old.get("change") or "",
+                         "mechanism": "tool" if kind == "tool" else ("verification" if kind in ("check", "test") else "policy"),
+                         "scope": "project", "target": old.get("target")},
+            "expected_effect": "", "limits": "", "why_not": "",
+            "validation": {"method": "", "benchmark": None, "result": "unvalidated",
+                           "detail": "migrated from the old lesson store; never replay-validated"},
+            "status": status, "version": 1, "confidence": "low", "provenance": prov,
+            "terms": L.derive_terms(old.get("moment") or "", old.get("cause") or "", old.get("change") or ""),
+            "owner_statement": False, "candidate": False, "entered_via": "migration",
+            "recurrences_after_promotion": 0, "flagged_not_working": False,
+            "promoted_at": None, "promoted_unit_seq": None, "mechanism_ref": old.get("folded_into"),
+            "replay": None, "created": old.get("created") or L.now()})
+    statements = 0
+    if os.path.exists(learn_src):
+        with open(learn_src, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                text = r.get("text") or r.get("statement") or ""
+                if not text:
+                    continue
+                statements += 1
+                rows.append({
+                    "id": "L-%04d" % (len(rows) + 1), "title": L.derive_title(text),
+                    "source_unit": "owner", "origin_project": r.get("cwd") or "",
+                    "observation": {"evidence": text, "impact": "value"},
+                    "root_cause": "owner statement",
+                    "proposed": {"description": text, "mechanism": "knowledge",
+                                 "scope": "user", "target": None},
+                    "expected_effect": "the agent acts on this statement", "limits": "", "why_not": "",
+                    "validation": {"method": "", "benchmark": None, "result": "unvalidated", "detail": ""},
+                    "status": "promoted", "version": 1, "confidence": "high",
+                    "provenance": [{"unit": "owner", "project": r.get("cwd") or "",
+                                    "ts": r.get("ts") or "", "kind": "origin"}],
+                    "terms": L.derive_terms(text), "owner_statement": True, "candidate": False,
+                    "entered_via": "migration", "recurrences_after_promotion": 0,
+                    "flagged_not_working": False, "promoted_at": r.get("ts") or L.now(),
+                    "promoted_unit_seq": None, "mechanism_ref": None, "replay": None,
+                    "created": r.get("ts") or L.now()})
+    L.save_learnings(rows, "migrate: lessons and owner statements become learning records")
+    return ["learning migration: backed up to %s; %d lesson(s) and %d owner statement(s) became "
+            "%d learning record(s); %d occurrence(s) became provenance; %d impression(s) dropped "
+            "(showings are never evidence); nothing is validated"
+            % (bdir, len(lessons), statements, len(rows),
+               sum(len(v) for v in occs.values()), impressions)]
 
 
 # ---- snapshots (before an update) -------------------------------------------------------------
@@ -431,14 +546,7 @@ def import_archive(path):
                 f.write(tf.extractfile(m).read())
             os.chmod(dst, m.mode & 0o777 or 0o644)
             os.utime(dst, (m.mtime, m.mtime))
-    if not os.path.exists(paths.data_file("retro.db")) and os.path.exists(paths.data_file("lessons.jsonl")):
-        from . import retro
-        con = retro.connect()
-        try:
-            retro.import_jsonl(paths.data_file("lessons.jsonl"), con)
-        finally:
-            con.close()
-        notes.append("retro.db rebuilt from lessons.jsonl")
+    notes += migrate_learnings()
     notes += pdata.upgrade()
     b = overlay.build_canon()
     notes.append("rulebook rebuilt: %d lines" % b["lines"])

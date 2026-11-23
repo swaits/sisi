@@ -222,23 +222,6 @@ class DeliveryRowTests(SisiCase):
         per = (time.perf_counter() - t) / 5
         self.assertLess(per, 0.25)
 
-    def test_retro_stores_the_request_time_with_the_lesson(self):
-        store.save_session("r-1", {"session_id": "r-1", "transcript_path": self.tp, "cwd": self.proj})
-        os.environ["SISI_SESSION_ID"] = "r-1"
-        con = retro.connect()
-        try:
-            lid = retro.new_lesson(con, dict(aim="speed", change_kind="tool", target=None,
-                                             moment="`make build` took 9 minutes in lib/src", cause="no cache here",
-                                             change="add a cache recipe for `make build`"), self.proj, None)
-            con.commit()
-            v = con.execute("SELECT delivery_s FROM occurrences WHERE lesson_id=?", (lid,)).fetchone()[0]
-        finally:
-            con.close()
-        self.assertGreaterEqual(v, 89)
-        self.assertLess(v, 200)
-        self.assertIn("it took longer than it had to", self.sisi("help").stdout)
-
-
 def ref_percentile(xs, p):
     s = sorted(xs)
     if len(s) == 1:
