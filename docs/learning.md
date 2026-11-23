@@ -81,8 +81,7 @@ store: an enforced contract requirement, an enforced command check (both in
 adjustment (`overlay/risk-adjustments.json`), a routing adjustment
 (`overlay/routing-adjustments.json`), or a benchmark case
 (`overlay/benchmarks/<name>.json`). `tool` learnings — changes to sisi's own code — are
-refused by the cycle; they go to the backlog shown in the learning report and to the
-contribution export.
+refused by the cycle; they go to the tool list shown in the learning report and to the contribution export.
 
 `sisi cycle apply FILE` treats the file as untrusted input and plans everything before writing anything —
 the budget and every other check run first, and a refusal applies nothing. If applying then fails part-way
@@ -144,7 +143,7 @@ never delivered again.
 
 ## Migration
 
-`sisi update` (and `sisi migrate`, and `sisi learn`/`sisi oracle`) run the learning migration whenever the
+`sisi update` (and `sisi learn`/`sisi oracle`) run the learning migration whenever the
 old store exists and the `learnings-migrated.json` marker does not: a backup first, merged by legacy id
 (a lesson already carried over is not carried twice; a learning recorded before the first migration does
 not stop it). Old lesson rows become learning records with honest statuses (a lesson folded into prose
@@ -167,8 +166,7 @@ learnings in scope that target that entry.
 ## Seams for other parts of sisi
 
 - `learning.findings_for_unit(project, unit_id)` — the findings a unit record stores.
-- `learning.learning_report()` — the text `sisi status --learning` prints. It replaces
-  `sisi improve`, `sisi backlog` and `sisi lessons digest`, which are deleted.
+- `learning.learning_report()` — the text `sisi status --learning` prints, the one learning report.
 - `cycle.enforced_results(contract, project, ...)` — what `sisi verify` runs, filtered by project.
 - `cycle.risk_patterns(cwd)` — the learned risk patterns that apply in a project (`risk.load_patterns`).
 - `cycle.routing_adjustments(project)` — the learned routing adjustments that apply in a project.
@@ -176,3 +174,9 @@ learnings in scope that target that entry.
 - `retro.satisfied(repo, since, fp)` and `retro.TEMPLATE` — what the gate asks.
 - `learning.delivery_text(project, query, targets=())` — what the prompt hook may add.
 - `evaluate.validate_command(repo, before, after, cmd)` — the replay.
+
+## What this does not do
+
+Replay validation needs commits and a trusted project; without them a check stays
+unvalidated and waits for the owner. Being shown is never evidence, and one incident never
+earns wider scope on its own.

@@ -21,7 +21,7 @@ whether the source folder is ahead of it.
 
 ## Make a release
 
-Run from the clone:
+Run from the clone (a release is made from the running launcher's folder):
 
     bin/sisi release          # runs the checks; refuses if they fail
     bin/sisi release --deep   # also needs the slow checks to pass

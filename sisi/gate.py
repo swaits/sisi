@@ -2,7 +2,7 @@
 {"decision":"block","reason":...} on stdout, exit 0. Anything that goes wrong inside sisi allows
 (fail open) and is logged to the state dir.
 
-The flow is target.md section 7, and each stop answers these in order:
+The flow is docs/design.md section 7, and each stop answers these in order:
 
  1. Did THIS session change anything since its last settled stop? If not, the turn ends silently
     (a paused unit with no new change, a closed unit, another session's edits: all silent).

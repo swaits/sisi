@@ -154,10 +154,8 @@ class NoStaleValues(unittest.TestCase):
 
     def test_docs_have_no_stale_values(self):
         rels = ["CONTRIBUTING.md", "SECURITY.md"]
-        # docs/target.md is the reconciliation build reference: its start date and "as today"
-        # describe that project, not the product, so they do not go stale with the product.
         rels += [os.path.join("docs", n) for n in sorted(os.listdir(os.path.join(REPO, "docs")))
-                 if n.endswith(".md") and n != "target.md"]
+                 if n.endswith(".md")]
         findings = []
         for rel in rels:
             findings += _stale_value_findings(_text(rel), rel, allow_version_evidence=True)

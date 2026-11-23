@@ -27,7 +27,7 @@ uninstalling makes hooks exit silently instead of erroring on every turn. The pe
 between each tool's hook JSON and the gate lives in `sisi/hookio.py`; the adapters live in
 `sisi/adapters.py`; the textual JSON editing lives in `sisi/hookjson.py`. Install also links any
 skills shipped under `canon/skills` into `~/.agents/skills`; `sisi doctor` reports the linked
-state. Hooks fail open: any error lets the agent finish. Where a tool's hook input has no transcript path, the gate falls back to its pre-attribution behaviour (tree-change based, with no per-session edit attribution). Shell commands are attributed by measurement, not by their text, wherever the tool has confirmed before/after tool events (`sisi watch` takes a stat-only tree snapshot before and after the command and attributes the paths that changed to the session; provably read-only commands skip the pair); tools without confirmed before/after tool events keep the command-text classifier described in docs/design.md.
+state. Hooks fail open: any error lets the agent finish. Where a tool's hook input has no transcript path, the gate falls back to its pre-attribution behaviour (tree-change based, with no per-session edit attribution). Shell commands are attributed by measurement, not by their text, wherever the tool has confirmed before/after tool events (`sisi watch` takes a stat-only tree snapshot before and after the command and attributes the paths that changed to the session; provably read-only commands skip the pair); tools without confirmed before/after tool events keep the command-text classifier described in [docs/design.md](design.md).
 
 ## Claude Code
 

@@ -23,11 +23,12 @@ Under `SISI_HOME` (tests) the personal folder is `$SISI_HOME/.local/share/sisi` 
     cycles/              one JSON record per learning cycle, including the bytes revert restores
     config.json          settings (over config.default.json)
     trusted.json         projects whose contracts may run commands
-    lessons.jsonl        sorted dump of the lessons database, committed whenever lessons change
-    learn.jsonl, notes.jsonl, proposals.jsonl   what the person stated (`sisi learn`, live at once;
-                         an older learn-quarantine.jsonl is migrated into learn.jsonl on first read)
+    learnings.jsonl      one JSON object per learning, committed whenever learnings change
+    findings.jsonl       retro findings, one per line
+    units.jsonl          one summary line per closed work unit
+    delegations.jsonl    the delegation ledger: judged attempts and runs awaiting judgement
+    worker-notes.json    standing facts about workers, by pattern
     retest.jsonl         replaced items whose base changed in an update (id, old base hash, new base hash)
-    retro.db             lessons database (sqlite; not in git; lessons.jsonl is its committed form)
     generated/core.md    the effective rulebook (not in git; rebuilt by install and update)
     install/             manifest and original copies of the files `sisi install` edited (not in git)
     backups/             copies taken before a migration or an update (not in git)
@@ -57,6 +58,6 @@ person's version and is queued in `retest.jsonl` for the learning loop.
 
 ## Moving data
 
-`sisi update` (also run by install) moves an older layout in, after a timestamped copy under
-`backups/`. `sisi export [PATH]` / `sisi import PATH` carry personal data, results and session records as one
+`sisi update` on an installed copy runs the migration step: it moves an older layout in (the old
+lesson store becomes `learnings.jsonl`), after a timestamped copy under `backups/`. `sisi export [PATH]` / `sisi import PATH` carry personal data, results and session records as one
 tar.gz.

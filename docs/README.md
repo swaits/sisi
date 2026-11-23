@@ -4,9 +4,9 @@
 |---|---|
 | [../README.md](../README.md) | learn what sisi is, install it and try it |
 | [../SPEC.md](../SPEC.md) | read the standard sisi is built and judged against |
-| [target.md](target.md) | see how sisi meets that standard |
-| [design.md](design.md) | understand why sisi works the way it does, and what is built versus only designed |
+| [design.md](design.md) | see how sisi meets that standard, and why it works the way it does |
 | [records.md](records.md) | know what a closed work unit records, the five verification statuses, telemetry classes and `sisi status` |
+| [evaluation.md](evaluation.md) | see how policy versions are compared by replaying past work |
 | [learning.md](learning.md) | how a recorded lesson takes effect, is measured, strengthened, consolidated or withdrawn |
 | [workers.md](workers.md) | how the agent tools and models on the machine are found, chosen between by measured results, and run |
 | [personal-data.md](personal-data.md) | know where sisi keeps what it learns, how the overlay works, and what an update touches |

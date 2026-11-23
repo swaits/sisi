@@ -101,7 +101,7 @@ one line of reason [13.3]. The judgement is stored with the result as `judged_by
 judge from the same maker is refused: a worker's own assessment is never recorded as
 independent evidence.
 
-## Honest limits
+## What this does not do
 
 - A replay is a **sample**, not the original work: the worker, its context and the state
   of the world have all moved on. Outcomes are comparable between policies run the same

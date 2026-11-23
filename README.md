@@ -86,7 +86,7 @@ to report a problem privately.
 ## Where to read more
 
 - [SPEC.md](SPEC.md) — the standard sisi is built and judged against.
-- [docs/target.md](docs/target.md) — how sisi meets that standard.
+- [docs/design.md](docs/design.md) — how sisi meets that standard.
 - `sisi help` — every command, with no per-command reference kept in this file.
 - [docs/README.md](docs/README.md) — the index of the remaining documentation.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to run the tests and send a change.
