@@ -28,6 +28,12 @@ with a failing check cannot close as delivered. A mandatory check that never ran
 whose `when_changed` glob matches no file, makes the unit `delivered-with-deferred`, never
 plainly `delivered`. `sisi contract waive` records a deviation; it turns nothing green.
 
+The record also carries `guard_refusals`: every building step the before-tool guard refused for
+this unit, with what, when, the tool and the unit's state (see docs/design.md, section 4). Units
+set aside with `sisi unit park` are kept whole under `.sisi/parked/<id>.json` with the reason, the
+time and what each still owes. The guard's own state (which session continues which unit, a unit's
+last activity, remembered floors) lives in the state folder and is scratch.
+
 A pause records what the unit waits for. While nothing in the tree changes the gate asks
 nothing; a change ends the wait, and so does running `sisi verify`. Waiting time is telemetry.
 A contract must declare `risk.profile`; see [docs/design.md](design.md).

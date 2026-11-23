@@ -60,7 +60,8 @@ def _passing(r):
 
 def review_evidence(project, c, now=None):
     """The accepted review delegations of this project inside the unit's window whose result was
-    checked by something stronger than `none`. The ledger names a project by its folder name."""
+    checked by something stronger than `none`, and whose worker is not the author's own model (nobody
+    is their own independent evidence). The ledger names a project by its folder name."""
     t0 = harvest.epoch(c["started"]) if isinstance(c.get("started"), str) else None
     if t0 is None:
         return []
@@ -71,27 +72,43 @@ def review_evidence(project, c, now=None):
     except Exception as e:
         store.log_error("assure-delegations", e)
         return []
+    from . import unitguard
+    models = unitguard.authors(project, c)
     return [r for r in dg["delegations"] if r.get("type") == "review" and r.get("outcome") == "accepted"
-            and r.get("check") not in (None, "", "none")]
+            and r.get("check") not in (None, "", "none")
+            and not any(unitguard.same_model(r.get("worker"), m) for m in models)]
+
+
+def self_declared(project, c):
+    """Checks that call themselves independent but whose `by` is empty or is the author: [(id, by)]."""
+    from . import unitguard
+    models = unitguard.authors(project, c)
+    return [(x.get("id"), x.get("by")) for x in list(c.get("checks") or []) + list(c.get("invariants") or [])
+            if isinstance(x, dict) and x.get("independent") is True
+            and unitguard.is_self_reference(x.get("by"), models)]
 
 
 def independent_evidence(project, c, results, now=None):
-    """What stands behind a unit as independent evidence: a judged review in the ledger, or a
-    passing check that is marked independent AND says by whom or what it was produced."""
+    """What stands behind a unit as independent evidence: a judged review in the ledger by a worker other than the
+    author, or a passing check that is marked independent AND says by whom or what it was produced (not the author)."""
     out = []
     for r in review_evidence(project, c, now):
         out.append("review by %s" % (r.get("worker") or "a reviewer"))
+    refused = {i for i, _ in self_declared(project, c)}
     named = {x.get("id"): x for x in list(c.get("checks") or []) + list(c.get("invariants") or [])
-             if isinstance(x, dict) and x.get("independent") is True and not C.is_placeholder(x.get("by"))}
+             if isinstance(x, dict) and x.get("independent") is True and not C.is_placeholder(x.get("by"))
+             and x.get("id") not in refused}
     for r in results or []:
         if r.get("id") in named and _passing(r):
             out.append("check %s by %s" % (r["id"], named[r["id"]]["by"]))
     return out
 
 
-def missing(profile, c, project, results=None, errors=None, deep_state=None, now=None):
+def missing(profile, c, project, results=None, errors=None, deep_state=None, now=None, before_build=False):
     """[(what is missing, how to supply it)] for this profile. `c` is None when no contract is open.
-    `errors` are the contract's validation errors. Nothing is asked that the table does not require."""
+    `errors` are the contract's validation errors. Nothing is asked that the table does not require.
+    `before_build` asks only what must exist before building starts: independent evidence, the deep
+    checks and the retro belong to the end of the work."""
     req = requirements(profile)
     out = []
     if not req.get("contract"):
@@ -137,11 +154,13 @@ def missing(profile, c, project, results=None, errors=None, deep_state=None, now
                 or not [a for a in ap.get("alternatives") or [] if not C.is_placeholder(a)]:
             out.append(("the approach: what you chose, why, and an alternative you rejected",
                         '"approach": {"chosen", "why", "alternatives": [...]}'))
-    if req.get("independent_evidence") and not independent_evidence(project, c, results, now):
-        out.append(("independent evidence that someone or something else checked this",
+    if req.get("independent_evidence") and not before_build and not independent_evidence(project, c, results, now):
+        own = self_declared(project, c)
+        said = (" (not counted, `by` is the author: %s)" % ", ".join("%s by %r" % (i, b) for i, b in own[:3])) if own else ""
+        out.append(("independent evidence that someone or something else checked this" + said,
                     "a reviewer's judged result (`sisi delegate judge --type review --outcome accepted "
                     "--check review`), or a passing check with \"independent\": true and \"by\": \"<who or what>\""))
-    if req.get("all_checks") and deep_state is not None and deep_state not in ("fresh-pass", "none"):
+    if req.get("all_checks") and not before_build and deep_state is not None and deep_state not in ("fresh-pass", "none"):
         out.append(("every check, deep ones included, passing on this tree (release)",
                     "`sisi verify --deep --background`, then `sisi verify --state`"))
     return out

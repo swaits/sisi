@@ -118,7 +118,37 @@ The open unit is `.sisi/contract.json`. New fields are optional unless the profi
   and the risk table, so every unit says which policies were in force [11.6].
 - `sisi unit pause "<what it waits for>"` records a wait and lets the turn end with no
   demands. The pause also ends when the tree changes or `sisi verify` runs. Wait time is
-  telemetry [6.1].
+  telemetry [6.1]. A pause defers checks that wait on something and the retro, never the
+  contract: it is refused when no unit is open, the unit is not the session's own, or it is
+  missing what is required before building (below). It silences the gate only for the session
+  that holds the unit, and only while the unit is valid.
+- A unit is **bound to the session that works on it** [10.1]. A session opened it
+  (`sisi contract init`) or said it continues it (`sisi unit continue`, which prints the goal,
+  age and owed checks); the binding is kept in the session record, never in the contract. A
+  unit with no activity (a verification run, an allowed edit, a continue) for `unit.stale_hours`
+  (12) needs `continue` again. `sisi unit park "<why>"` sets the open unit aside, kept under
+  `.sisi/parked/` and listed by `status` and `unit list`; `sisi unit resume ID` brings it back
+  when no unit is open. `contract init` on an open unit names the three ways on: continue,
+  park, or close it as abandoned.
+- **The contract comes before the work** (rule 3). `sisi/unitguard.py`, called from the
+  before-tool hook (`sisi watch`) on a main thread, works out the risk floor of the path a
+  file-changing call (or a shell write the classifier recognises) is about to change, together
+  with the paths this session already changed since its last valid unit. Above `trivial` the
+  call is refused (a short message, at most 12 lines, naming each missing item and the command
+  that supplies it) unless the session holds a valid unit: bound, not stale, passing
+  `sisi contract check` with no placeholder check left, and carrying what the profile needs
+  *before building* from canon/risk.json (the requirement list, risk note and approach for
+  integration and above; independent evidence and the retro come at the end). Writes under
+  `.sisi/` and outside the project, worker and subagent sessions, and every error inside the
+  hook are let through. A shell command the classifier does not recognise is caught by the
+  after-tool snapshot, and the next counted call is refused the same way. Delegating a build
+  needs the unit too (the contract is where the brief's acceptance comes from). Word lists
+  live in canon/guard.json. Every refusal is stored (what, when) and kept in the unit record
+  (`guard_refusals`); `sisi status` counts them.
+- Nobody is their own independent evidence [13.3]: a check marked `independent` counts only
+  if `by` names something other than the author (not empty, not the session's own model, not
+  a self-reference such as "me" or "my own review"), and a review counts only from a worker
+  other than the author's model, judged with a check stronger than `none`.
 - `sisi unit show [ID]` prints a record. Nothing is ever overwritten or lost.
 - Delivery status is one of `delivered`, `delivered-with-deferred`, `deviation` (a check was
   waived), `unverified` (the gate released after its send-backs ran out), `abandoned`.
@@ -187,7 +217,13 @@ At the end of a turn in which the session changed something:
    evidence), say which.
 4. If everything is green and the unit is not closed, offer the two ways on: record the retro
    (`sisi retro`), which closes the unit; or `sisi unit pause "<what it waits for>"`.
-5. A paused or closed unit with no new change passes silently.
+5. A paused or closed unit with no new change passes silently. A pause silences only the session
+   that holds the unit, and only while it is valid.
+
+The gate judges a session's changes only against a unit the session holds. When the open unit
+is another session's, or stale, a non-trivial change is sent back with the three ways on
+(continue, park, or init) and none of that unit's checks are run; if the send-backs run out the
+turn ends as unverified and the other unit is left as it was.
 
 In this build the retro is offered once for each state of the tree and a trivial change is asked
 nothing (unless the unit shows an anomaly); a recorded retro closes the unit. A session is judged only on

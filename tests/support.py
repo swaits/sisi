@@ -126,7 +126,7 @@ def human(id, rung=5, kind="general"):
 
 
 def contract(checks, invariants=()):
-    return {"id": "t", "goal": "g", "risk": {"profile": "isolated"}, "checks": list(checks),
+    return {"id": "t", "goal": "make the feature work", "risk": {"profile": "isolated"}, "checks": list(checks),
             "invariants": list(invariants), "assumptions": [], "questions": []}
 
 

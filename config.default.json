@@ -18,5 +18,8 @@
       "3": 85
     },
     "price_blend_input_parts": 3
+  },
+  "unit": {
+    "stale_hours": 12
   }
 }

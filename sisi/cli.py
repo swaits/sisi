@@ -26,9 +26,11 @@ def cmd_contract(args):
                 old = None
             from . import unit as _U
             if not _U.is_closed(old):
-                print("sisi: %s already exists and the unit %s is still open. Close it first with "
-                      "`sisi unit close`, or record why it stopped with "
-                      "`sisi unit close --abandon \"<reason>\"`." % (p, (old or {}).get("id", "?")))
+                print("sisi: %s already exists and the unit %s (%s) is still open. Three ways on: "
+                      "`sisi unit continue` if it is this work; `sisi unit park \"<why>\"` to set it aside, "
+                      "kept, and start new work; or `sisi unit close --abandon \"<reason>\"` if it was dropped. "
+                      "Then `sisi contract init` again for new work."
+                      % (p, (old or {}).get("id", "?"), ((old or {}).get("goal") or "no goal")[:80]))
                 return 1
             # A closed unit is replaced. Its archive should already exist; if a hand-edited
             # contract claims closed with none, archive it now so nothing is ever lost.
@@ -50,6 +52,13 @@ def cmd_contract(args):
             json.dump(skel, f, indent=2)
             f.write("\n")
         trust.add(os.getcwd())
+        try:
+            from . import unitguard as _G
+            _sid = _G.cli_session()
+            if _sid:
+                _G.bind(_sid, project, skel, "init")
+        except Exception as e:
+            store.log_error("contract-init-bind", e)
         print("created %s as a SKELETON, not a contract yet: replace the placeholder check with a real command "
               "(rung 1-4) and add every check that shows the work is done. Until then `sisi verify` fails and "
               "the end-of-turn gate ignores it." % p)

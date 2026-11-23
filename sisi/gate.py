@@ -20,7 +20,7 @@ for another session's work in the same tree.
 """
 import hashlib, json, os, sys, time
 
-from . import assure, attribution, contract as C, gitutil, risk, store, trust, unit as U, verify as V
+from . import assure, attribution, contract as C, gitutil, risk, store, trust, unit as U, unitguard, verify as V
 from .questions import QUESTION_DIALOG_TOOLS, ends_with_question  # noqa: F401  (rulecmd and the tests name them here)
 
 # watch.py asks the gate's shell classifier whether a command may write
@@ -316,10 +316,13 @@ def _decide(payload):
             c, path = None, None  # the unit is archived; new work stands or falls on its own
             sess["req_contract"] = False
         elif isinstance(c, dict) and c.get("status") == "paused":
-            if not sess.get("dirty") or top is None or c.get("pause_fp") == gitutil.fingerprint(cwd):
+            # a pause silences the gate only for the session that holds the unit, and only while it is valid
+            holds = unitguard.holds_valid(sess, project, c)
+            if holds and (not sess.get("dirty") or top is None or c.get("pause_fp") == gitutil.fingerprint(cwd)):
                 return stop.allow(cwd, settle=bool(sess.get("dirty")))  # a recorded wait, no new change
-            U.resume(c, path)  # the tree changed since the pause: the wait is over
-            stop.refresh(cwd, path)
+            if holds:
+                U.resume(c, path)  # the tree changed since the pause: the wait is over
+                stop.refresh(cwd, path)
     if not sess.get("dirty"):
         return _late_close(stop, cwd, c, path, project)
 
@@ -332,6 +335,12 @@ def _decide(payload):
         own = _own_changed(sess, sid, cwd, top, attr)
         own_floor, own_reasons = risk.assess(own, diff_text=_diff_text(project, sess.get("head")),
                                              patterns=risk.load_patterns(project))
+        if c:  # (an unreadable contract is reported below, not judged here)
+            held, last = unitguard.bound_fresh(sess, project, c)
+            if held != "ok":  # a unit this session did not open or continue, or one gone stale: never judged against
+                if own_floor == "trivial":
+                    return stop.allow(cwd)
+                return _unit_not_held(stop, cwd, c, project, held, last, own_floor, own_reasons, own)
         claimed = c is not None and (attr is None or _claims_unit(sess, path))  # no transcript: every change is ours
         if own_floor == "trivial" and not claimed and not (c is not None and sess.get("last_unit") == c.get("id")):
             return stop.allow(cwd)  # documentation and the like, or nothing of this session's: nothing is asked
@@ -404,6 +413,19 @@ def _decide(payload):
     sess["offered"] = [c["id"], fp]
     text = _offer_text(c, profile, None)
     return stop.block(text + ("\n" + note if note else ""), c["id"], project, counts=False)
+
+
+def _unit_not_held(stop, cwd, c, project, state, last, floor, reasons, own):
+    """This session changed non-trivial work and the open unit is not its own (or is stale): the send-back is
+    how to get a unit (continue, park or init), never the other unit's failing checks. When the send-backs run
+    out the turn ends as unverified, and the other unit is left exactly as it was."""
+    focus = next((f for f in own if risk.assess([f])[0] != "trivial"), own[0] if own else "the project")
+    if stop.exhausted():
+        stop.allow(cwd)
+        return "allow", ("sisi: result is UNVERIFIED. The gate has sent this work back %d times: no unit of this "
+                         "session stands behind `%s`. Report the work as unverified and say a unit is missing."
+                         % (stop.maxb, focus))
+    return stop.block(assure.fit(unitguard.gate_sendback_lines(c, state, last, focus, floor)), c.get("id"), project)
 
 
 def _trivial(stop, cwd, c, path, project, profile):

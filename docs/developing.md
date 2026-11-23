@@ -36,6 +36,15 @@ afterwards so the tools point at the stable copy (release tells you if they do n
 
 Switches `current` to the release before it and rebuilds the rulebook.
 
+## Check the contract guard against a real agent
+
+`tools/live_contract_check.py` runs the host's command-line tool headless in a temporary
+git project, with the hooks of THIS clone and temporary sisi data and state folders, and asserts
+that a leftover open contract from other work cannot be built on, skipped or paused away. It
+needs a login and costs a few cents, so it is not part of the unit suite. Run it
+(`python3 tools/live_contract_check.py`) after changing sisi/unitguard.py, sisi/watch.py, the
+gate's unit logic or the refusal wording, and whenever the host's hook interface changes.
+
 ## Promote a personal addition
 
 Rules, verifiers and recipes you added live in your personal overlay. Run from the clone:
