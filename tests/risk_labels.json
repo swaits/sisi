@@ -1,8 +1,8 @@
 [
  {
   "path": "src/calc.py",
-  "floor": "isolated",
-  "why": "ordinary module"
+  "floor": "logic",
+  "why": "ordinary module; relabelled logic: calc and matrix names signal numeric code, where under-rating costs more than over-rating"
  },
  {
   "path": "src/pkg/utils.py",
@@ -112,8 +112,8 @@
  },
  {
   "path": "src/sparse_matrix.py",
-  "floor": "isolated",
-  "why": "name contains 'pars' but is not parsing"
+  "floor": "logic",
+  "why": "name contains 'pars' but is not parsing; relabelled logic: calc and matrix names signal numeric code, where under-rating costs more than over-rating"
  },
  {
   "path": "src/parser.py",
@@ -1256,5 +1256,390 @@
   "path": "version.txt",
   "floor": "release",
   "why": "version marker"
+ },
+ {
+  "path": "godot/scripts/entities/boss.gd",
+  "floor": "isolated",
+  "why": "game scripts: a game entity is an actor in the scene, not an ORM entity"
+ },
+ {
+  "path": "unity/Assets/Scripts/Entities/Goblin.cs",
+  "floor": "isolated",
+  "why": "game actor class in a Unity project"
+ },
+ {
+  "path": "engine/ecs/entities.rs",
+  "floor": "isolated",
+  "why": "entity-component-system storage of game objects, not stored data"
+ },
+ {
+  "path": "bevy_game/src/entity_spawner.rs",
+  "floor": "isolated",
+  "why": "spawns game entities into a scene"
+ },
+ {
+  "path": "sprites/entity_sprite.lua",
+  "floor": "isolated",
+  "why": "sprite of a game entity"
+ },
+ {
+  "path": "catalog/domain/Store.kt",
+  "floor": "isolated",
+  "why": "a Store business object (a shop) in a domain model, not a data store"
+ },
+ {
+  "path": "franchise/domain/Store.ts",
+  "floor": "isolated",
+  "why": "a shop in the franchise domain"
+ },
+ {
+  "path": "merchant/domain/Store.py",
+  "floor": "isolated",
+  "why": "a shop as a business object"
+ },
+ {
+  "path": "shop/domain/Stores.php",
+  "floor": "isolated",
+  "why": "a collection of shops in a domain model"
+ },
+ {
+  "path": "lib/domain/store.rb",
+  "floor": "isolated",
+  "why": "the Store of a shop domain, a business object"
+ },
+ {
+  "path": "src/user_store.py",
+  "floor": "data",
+  "why": "a user store: compound name means stored data"
+ },
+ {
+  "path": "lib/SessionStore.java",
+  "floor": "data",
+  "why": "session store: stored data"
+ },
+ {
+  "path": "data/datastore/client.go",
+  "floor": "data",
+  "why": "datastore client: stored data"
+ },
+ {
+  "path": "analytics/stats/percentile.py",
+  "floor": "logic",
+  "why": "numeric algorithm: percentile arithmetic"
+ },
+ {
+  "path": "geo/geometry/polygon_area.go",
+  "floor": "logic",
+  "why": "geometry arithmetic"
+ },
+ {
+  "path": "billing_math/tax_rate.rb",
+  "floor": "critical",
+  "why": "tax rates in billing code move money"
+ },
+ {
+  "path": "lib/math/matrix_multiply.rs",
+  "floor": "logic",
+  "why": "matrix arithmetic"
+ },
+ {
+  "path": "etl/aggregate_daily_totals.py",
+  "floor": "logic",
+  "why": "aggregation arithmetic over many inputs"
+ },
+ {
+  "path": "search/rank_results.java",
+  "floor": "logic",
+  "why": "ranking algorithm over a broad input space"
+ },
+ {
+  "path": "util/diff_text.js",
+  "floor": "logic",
+  "why": "diff algorithm"
+ },
+ {
+  "path": "ring/hashing/consistent_hash.go",
+  "floor": "logic",
+  "why": "hash ring algorithm"
+ },
+ {
+  "path": "sim/dedupe_events.kt",
+  "floor": "logic",
+  "why": "deduplication over streams"
+ },
+ {
+  "path": "finance/currency_convert.swift",
+  "floor": "logic",
+  "why": "currency conversion arithmetic"
+ },
+ {
+  "path": "rollup.dev.config.mjs",
+  "floor": "integration",
+  "why": "build tool configuration with an environment in its name"
+ },
+ {
+  "path": "vite.staging.config.ts",
+  "floor": "integration",
+  "why": "build tool configuration per environment"
+ },
+ {
+  "path": "esbuild.prod.config.js",
+  "floor": "integration",
+  "why": "build tool configuration for production"
+ },
+ {
+  "path": "jest.e2e.config.ts",
+  "floor": "integration",
+  "why": "test runner configuration decides what runs and how"
+ },
+ {
+  "path": ".swcrc",
+  "floor": "integration",
+  "why": "dotfile configuration of a compiler toolchain"
+ },
+ {
+  "path": ".parcelrc",
+  "floor": "integration",
+  "why": "dotfile configuration of a bundler"
+ },
+ {
+  "path": ".browserslistrc",
+  "floor": "integration",
+  "why": "which browsers the build targets"
+ },
+ {
+  "path": "libfoo/include/foo/api.h",
+  "floor": "integration",
+  "why": "public C header: the interface other code compiles against"
+ },
+ {
+  "path": "native/include/mylib/mylib.hpp",
+  "floor": "integration",
+  "why": "public C++ header under an include path"
+ },
+ {
+  "path": "types/index.d.cts",
+  "floor": "integration",
+  "why": "type definitions other code compiles against"
+ },
+ {
+  "path": "idl/inventory.idl",
+  "floor": "integration",
+  "why": "interface definition"
+ },
+ {
+  "path": "specs/petstore-swagger.json",
+  "floor": "integration",
+  "why": "API description file"
+ },
+ {
+  "path": "schemas/events.capnp",
+  "floor": "integration",
+  "why": "wire schema shared between services"
+ },
+ {
+  "path": "sdk/java/src/public/Client.java",
+  "floor": "integration",
+  "why": "public surface of an SDK"
+ },
+ {
+  "path": "ml/feature_store/read_features.py",
+  "floor": "data",
+  "why": "a feature store holds stored data; machine learning cancels model, not store"
+ },
+ {
+  "path": "ml/training/checkpoint_store.py",
+  "floor": "data",
+  "why": "checkpoint store: stored data"
+ },
+ {
+  "path": "etl/load/lake_writer.py",
+  "floor": "data",
+  "why": "writes to a data lake in a load stage"
+ },
+ {
+  "path": "pipeline/sink/postgres_sink.py",
+  "floor": "data",
+  "why": "a sink in a pipeline writes to stored data"
+ },
+ {
+  "path": "jobs/load_orders_to_warehouse.sql",
+  "floor": "data",
+  "why": "loads a warehouse"
+ },
+ {
+  "path": "ingest/warehouse/dim_customers.py",
+  "floor": "data",
+  "why": "warehouse tables"
+ },
+ {
+  "path": "batch/table_writer.scala",
+  "floor": "data",
+  "why": "writes rows to a table"
+ },
+ {
+  "path": "deploy/cronjobs/refund-sweeper.yml",
+  "floor": "critical",
+  "why": "refunds move money and the job runs unattended"
+ },
+ {
+  "path": "batch/payroll/run_payroll.py",
+  "floor": "critical",
+  "why": "payroll moves money"
+ },
+ {
+  "path": "jobs/settlement/nightly_settlement.go",
+  "floor": "critical",
+  "why": "settlement moves money"
+ },
+ {
+  "path": "ops/k8s/refund-reconcile-cronjob.yaml",
+  "floor": "critical",
+  "why": "refund reconciliation, run on a schedule"
+ },
+ {
+  "path": ".github/workflows/nightly-payouts.yml",
+  "floor": "critical",
+  "why": "scheduled workflow that pays out"
+ },
+ {
+  "path": "helm/templates/cleanup-cronjob.yaml",
+  "floor": "integration",
+  "why": "a scheduled cluster job with no money or data in its name"
+ },
+ {
+  "path": "scripts/issue_service_tokens.sh",
+  "floor": "critical",
+  "why": "issues tokens: credential issuance"
+ },
+ {
+  "path": "ops/rotate-signing-keys.rb",
+  "floor": "critical",
+  "why": "rotates signing keys"
+ },
+ {
+  "path": "pki/issue_cert.py",
+  "floor": "critical",
+  "why": "certificate issuance"
+ },
+ {
+  "path": "helpers/AwsCredsProvider.java",
+  "floor": "critical",
+  "why": "credentials provider"
+ },
+ {
+  "path": "hack/vault_unseal.sh",
+  "floor": "critical",
+  "why": "unseals a secrets vault"
+ },
+ {
+  "path": "android/app/release.keystore",
+  "floor": "critical",
+  "why": "signing keystore"
+ },
+ {
+  "path": "tools/revoke_api_keys.go",
+  "floor": "critical",
+  "why": "revokes api keys"
+ },
+ {
+  "path": "app/Http/Middleware/EnsureUserIsAdmin.php",
+  "floor": "critical",
+  "why": "middleware that decides who is an administrator"
+ },
+ {
+  "path": "src/guards/roles.guard.ts",
+  "floor": "critical",
+  "why": "role guard: access control"
+ },
+ {
+  "path": "internal/http/middleware/require_login.go",
+  "floor": "critical",
+  "why": "requires a login: access control"
+ },
+ {
+  "path": "app/Policies/PostPolicy.php",
+  "floor": "critical",
+  "why": "authorization policy"
+ },
+ {
+  "path": "config/opa/policy.rego",
+  "floor": "critical",
+  "why": "access policy language"
+ },
+ {
+  "path": "core/tenant/can_access_tenant.kt",
+  "floor": "critical",
+  "why": "access check across tenants"
+ },
+ {
+  "path": "build/Containerfile",
+  "floor": "integration",
+  "why": "container build file"
+ },
+ {
+  "path": "images/web.containerfile",
+  "floor": "integration",
+  "why": "container build file"
+ },
+ {
+  "path": "containers/worker/docker-entrypoint.sh",
+  "floor": "integration",
+  "why": "how a service starts inside a container"
+ },
+ {
+  "path": "service/entrypoint.bash",
+  "floor": "integration",
+  "why": "container entrypoint script"
+ },
+ {
+  "path": "docker-bake.hcl",
+  "floor": "integration",
+  "why": "container build definition"
+ },
+ {
+  "path": ".devcontainer/devcontainer.json",
+  "floor": "integration",
+  "why": "development container definition"
+ },
+ {
+  "path": "charts/web/Chart.yaml",
+  "floor": "release",
+  "why": "Helm chart metadata names and versions a release"
+ },
+ {
+  "path": "homebrew-tap/Formula/mytool.rb",
+  "floor": "release",
+  "why": "Homebrew formula: how the tool is distributed"
+ },
+ {
+  "path": "Casks/mytool.rb",
+  "floor": "release",
+  "why": "Homebrew cask"
+ },
+ {
+  "path": "packaging/debian/control",
+  "floor": "release",
+  "why": "Debian packaging metadata"
+ },
+ {
+  "path": "rpm/mytool.spec",
+  "floor": "release",
+  "why": "RPM packaging"
+ },
+ {
+  "path": "snap/snapcraft.yaml",
+  "floor": "release",
+  "why": "snap packaging"
+ },
+ {
+  "path": "flatpak/org.example.App.yml",
+  "floor": "release",
+  "why": "flatpak manifest"
+ },
+ {
+  "path": "fastlane/metadata/en-US/release_notes.txt",
+  "floor": "release",
+  "why": "app-store listing metadata"
  }
 ]
