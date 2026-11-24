@@ -1,297 +1,130 @@
-"""The shared store: append-only jsonl files, config, session records, error log."""
-import json, os, re, time
+"""Where sisi keeps things, and the few file operations the rest uses.
 
-from . import paths
+Three places: the product (this copy, never written at run time), the person's store (learned rules, the
+models table, the retro log; a git repository, so every change can be undone), and scratch (session state)."""
+import contextlib, fcntl, hashlib, json, os, subprocess
 
-FILES = {"results": "results.jsonl",
-         "learn": "learn.jsonl", "quarantine": "learn.jsonl", "waivers": "waivers.jsonl",
-         "deliveries": "deliveries.jsonl", "units": "units.jsonl", "subagents": "subagents.jsonl"}
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+HOME = os.path.expanduser("~")
+DATA = os.environ.get("SISI_DATA") or os.path.join(HOME, ".local", "share", "sisi")
+STATE = os.environ.get("SISI_STATE") or os.path.join(HOME, ".local", "state", "sisi")
+LIB = os.environ.get("SISI_LIB") or os.path.join(HOME, ".local", "lib", "sisi")
 
-
-def _migrate_learn():
-    """Lossless one-time move of the old quarantine file into the live learn store.
-
-    Statements used to be parked in learn-quarantine.jsonl, which no agent read. They now take
-    effect at once from learn.jsonl. Every old line (quoted words, date, scope, context) is
-    copied across unchanged, then the old file is removed so nothing is read twice."""
-    try:
-        new = paths.data_file("learn.jsonl")
-        olds = [paths.data_file("learn-quarantine.jsonl"), paths.state_file("learn-quarantine.jsonl")]
-        lines = []
-        for old in olds:
-            if os.path.realpath(old) == os.path.realpath(new) or not os.path.exists(old):
-                continue
-            with open(old, encoding="utf-8") as f:
-                lines += [l.rstrip("\n") for l in f if l.strip()]
-        if not lines and not any(os.path.exists(o) and os.path.realpath(o) != os.path.realpath(new) for o in olds):
-            return
-        have = set()
-        if os.path.exists(new):
-            with open(new, encoding="utf-8") as f:
-                have = {l.rstrip("\n") for l in f if l.strip()}
-        add = [l for l in lines if l not in have]
-        if add:
-            os.makedirs(os.path.dirname(new), exist_ok=True)
-            with open(new, "a", encoding="utf-8") as f:
-                for l in add:
-                    f.write(l + "\n")
-        for old in olds:
-            if os.path.realpath(old) != os.path.realpath(new) and os.path.exists(old):
-                os.unlink(old)
-        # the old two-way scope is now three tiers: an everywhere statement is not yet tiered
-        if os.path.exists(new):
-            with open(new, encoding="utf-8") as f:
-                raw = f.read()
-            if '"everywhere"' in raw:
-                out = []
-                for line in raw.splitlines():
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
-                        out.append(line)
-                        continue
-                    if isinstance(rec, dict) and rec.get("scope") == "everywhere":
-                        rec["scope"] = "unscoped-tier"
-                        out.append(json.dumps(rec, ensure_ascii=False, separators=(",", ":")))
-                    else:
-                        out.append(line)
-                tmp = new + ".tmp%d" % os.getpid()
-                with open(tmp, "w", encoding="utf-8") as f:
-                    f.write("".join(l + "\n" for l in out))
-                os.replace(tmp, new)
-    except OSError:
-        pass
-
-
-def now():
-    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z"
-
-
-def tool():
-    t = os.environ.get("SISI_TOOL")
-    if t:
-        return t
-    if os.environ.get("CLAUDECODE"):
-        return "claude-code"
-    if os.environ.get("OPENCODE"):
-        return "opencode"
-    return None
-
-
-def is_subagent_payload(payload):
-    """Is this hook call from a worker: started by `sisi delegate`, or marked by the host as a subagent? Kept here
-    (not in workers.py) so the per-tool hooks need not import the worker code."""
-    if os.environ.get("SISI_WORKER_RUN"):
-        return True
-    if not isinstance(payload, dict):
-        return False
-    if payload.get("agent_id") or payload.get("agentId") or payload.get("agent_transcript_path"):
-        return True
-    tp = str(payload.get("transcript_path") or "")
-    return "/subagents/" in tp or tp.endswith("/subagents")
-
-
-def session_id():
-    return os.environ.get("SISI_SESSION_ID") or None
-
-
-PERSONAL = ("learn", "quarantine", "units")  # what the person told or taught sisi: personal data, the rest is scratch
-
-
-def file_path(name):
-    if name in PERSONAL:
-        return paths.personal(FILES[name])
-    return paths.state_file(FILES.get(name, name))
-
-
-def read_stdin(wait=None):
-    """What a hook was sent on stdin. A hook's stdin always ends; if it does not (an inherited pipe nobody closes),
-    give up after `wait` seconds (SISI_STDIN_WAIT, default 5) rather than hold the session or a test forever."""
-    import select, sys
-    f = sys.stdin
-    if f is None or f.isatty():
-        return ""
-    try:
-        fd = f.fileno()
-    except (AttributeError, ValueError, OSError):
-        return f.read()  # an in-memory stand-in
-    try:
-        wait = float(os.environ.get("SISI_STDIN_WAIT", "5")) if wait is None else wait
-    except ValueError:
-        wait = 5.0
-    end, chunks = time.time() + wait, []
-    while True:
-        left = end - time.time()
-        if left <= 0 or not select.select([fd], [], [], left)[0]:
-            break
-        b = os.read(fd, 65536)
-        if not b:
-            break
-        chunks.append(b)
-    return b"".join(chunks).decode("utf-8", "replace")
-
-
-def append(name, rec):
-    if name in ("learn", "quarantine"):
-        _migrate_learn()
-    path = file_path(name)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    line = json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n"
-    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-    try:
-        os.write(fd, line.encode())  # one write call: appends stay whole lines
-    finally:
-        os.close(fd)
-
-
-def read(name):
-    if name in ("learn", "quarantine"):
-        _migrate_learn()
-    path = file_path(name)
-    out = []
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                try:
-                    out.append(json.loads(line))
-                except ValueError:
-                    pass
-    except OSError:
-        pass
-    return out
-
-
-def stamp(extra):
-    rec = {"ts": now(), "cwd": os.getcwd(), "tool": tool(), "session": session_id()}
-    rec.update(extra)
-    return rec
-
-
-DEFAULTS = {"gate": {"enabled": True, "budget_s": 120, "max_blocks": 3},
-            "verify": {"default_timeout_s": 60, "fast_limit_s": 60},
-            "retro": {"required": True},
-            "orchestrate": {"enabled": True, "direct_calls": 6, "direct_chars": 30000, "extension": 10, "route_window_min": 15},
-            "scratch": {"session_max_age_days": 30, "prune_every": 20, "prune_max_delete": 1000,
-                        "prune_budget_s": 0.25}}
+# Every setting there is. The person overrides one under "core" in config.json in their store.
+DEFAULTS = {"gate": True, "meter": True, "direct_calls": 8, "direct_extension": 8,
+            "rules_lines": 30, "rules_chars": 2500, "organize_after": 8, "research_days": 7}
 
 
 def config():
-    """Built-in defaults, then config.default.json in the product, then the person's config.json (personal data)."""
-    cfg = json.loads(json.dumps(DEFAULTS))
-    for p in (os.path.join(paths.REPO, "config.default.json"), paths.personal("config.json")):
-        try:
-            with open(p, encoding="utf-8") as f:
-                over = json.load(f)
-        except (OSError, ValueError):
-            continue
-        for k, v in over.items():
-            if isinstance(v, dict) and isinstance(cfg.get(k), dict):
-                cfg[k].update(v)
-            else:
-                cfg[k] = v
-    if os.environ.get("SISI_RETRO_REQUIRED", "").lower() in ("0", "false", "no"):
-        cfg.setdefault("retro", {})["required"] = False
+    cfg = dict(DEFAULTS)
+    try:
+        mine = json.loads(read(os.path.join(DATA, "config.json")) or "{}").get("core") or {}
+        cfg.update({k: v for k, v in mine.items() if k in DEFAULTS})
+    except (ValueError, AttributeError):
+        pass
     return cfg
 
 
-def safe_id(sid):
-    return re.sub(r"[^A-Za-z0-9_.-]", "_", str(sid))[:128] or "unknown"
+def data(*parts):
+    path = os.path.join(DATA, *parts)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return path
 
 
-def session_path(sid):
-    return os.path.join(paths.state(), "sessions", safe_id(sid) + ".json")
-
-
-def load_session(sid):
+def read(path, default=""):
     try:
-        with open(session_path(sid), encoding="utf-8") as f:
-            d = json.load(f)
-        return d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
-        return {}
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return default
 
 
-def save_session(sid, rec):
-    p = session_path(sid)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    tmp = p + ".tmp%d" % os.getpid()
+def write(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(rec, f)
-    os.replace(tmp, p)
+        f.write(text)
+    os.replace(tmp, path)
 
 
-def _transcript_alive(session_file, cutoff):
-    """True when the transcript this session record names was written to since `cutoff`: the
-    session is still going on in the host even though sisi has not touched its record."""
-    try:
-        with open(session_file, encoding="utf-8") as f:
-            tp = json.load(f).get("transcript_path")
-        return isinstance(tp, str) and os.stat(os.path.expanduser(tp)).st_mtime >= cutoff
-    except (OSError, ValueError, AttributeError):
-        return False
+def append(path, line):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.write(line.rstrip("\n") + "\n")
 
 
-def prune_sessions(now=None, active_ids=(), force=False):
-    """Remove session-state files older than the configured age. Runs on a counter kept in
-    scratch (every Nth session start, first run included), never on a scheduler. Bounded:
-    stops after the configured time budget or deletion count, and a later start continues.
-    Never deletes the file of a session named active (callers pass the current session's id)
-    nor of one whose transcript the host has written to within the age. Returns the number
-    of files removed."""
-    cfg = config().get("scratch", {})
-    d = os.path.join(paths.state(), "sessions")
-    counter_file = os.path.join(d, ".prune-counter")
-    count = 0
+def git(args, cwd, timeout=15):
     try:
-        with open(counter_file, encoding="utf-8") as f:
-            count = int(f.read().strip() or 0)
-    except (OSError, ValueError):
-        count = 0
-    count += 1
-    try:
-        os.makedirs(d, exist_ok=True)
-        with open(counter_file, "w", encoding="utf-8") as f:
-            f.write(str(count))
-    except OSError:
-        pass
-    every = max(1, int(cfg.get("prune_every", 20)))
-    if not force and (count - 1) % every != 0:
-        return 0  # not this start's turn: the first start and every Nth after it sweep
-    now = time.time() if now is None else now
-    cutoff = now - float(cfg.get("session_max_age_days", 30)) * 86400
-    keep = {safe_id(s) + ".json" for s in active_ids if s}
-    budget = float(cfg.get("prune_budget_s", 0.25))
-    max_delete = int(cfg.get("prune_max_delete", 1000))
-    removed, deadline, unfinished = 0, time.time() + budget, False
-    try:
-        with os.scandir(d) as it:
-            for e in it:
-                if removed >= max_delete or time.time() > deadline:
-                    unfinished = True
-                    break
-                if not e.name.endswith(".json") or e.name in keep:
-                    continue
-                try:
-                    if e.is_file(follow_symlinks=False) and e.stat().st_mtime < cutoff:
-                        if _transcript_alive(e.path, cutoff):
-                            continue  # the host is still writing this session's transcript
-                        os.unlink(e.path)
-                        removed += 1
-                except OSError:
-                    pass
-    except OSError:
-        pass
-    if unfinished:  # out of budget with files left: the next start continues the sweep
+        r = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout
+    except (OSError, subprocess.SubprocessError):
+        return 1, ""
+
+
+def commit(message, *paths):
+    """One commit in the person's store holding only these paths, so the change can be undone on its own."""
+    if not os.path.isdir(os.path.join(DATA, ".git")):
+        git(["init", "-q"], DATA)
+    rel = [os.path.relpath(p, DATA) for p in paths]
+    git(["add", "--"] + rel, DATA)
+    git(["-c", "user.name=sisi", "-c", "user.email=sisi@localhost", "commit", "-q", "-m", message, "--"] + rel, DATA)
+
+
+def project_root(cwd=None):
+    """The project a folder belongs to. Every checkout of one repository is the same project."""
+    cwd = cwd or os.getcwd()
+    rc, out = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd)
+    if rc == 0 and os.path.basename(out.strip()) == ".git":
+        return os.path.dirname(out.strip())
+    return os.path.abspath(cwd)
+
+
+def project_key(cwd=None):
+    root = project_root(cwd)
+    return "%s-%s" % (os.path.basename(root) or "root", hashlib.sha1(root.encode()).hexdigest()[:8])
+
+
+def snapshot(cwd):
+    """A fingerprint of the working tree: the commit, what is uncommitted, what is untracked. "" outside git."""
+    rc, status = git(["status", "--porcelain"], cwd)
+    if rc != 0:
+        return ""
+    head, diff = git(["rev-parse", "HEAD"], cwd)[1], git(["diff", "HEAD"], cwd)[1]
+    return hashlib.sha1((head + status + diff).encode()).hexdigest()[:16]
+
+
+def _session_path(sid):
+    return os.path.join(STATE, "core-sessions", "".join(c for c in str(sid) if c.isalnum() or c in "-_")[:80] + ".json")
+
+
+@contextlib.contextmanager
+def session(sid):
+    """Read, change and write one session's state under a lock: parallel tool calls run their hooks at once."""
+    path = _session_path(sid)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            with open(counter_file, "w", encoding="utf-8") as f:
-                f.write("0")
-        except OSError:
-            pass
-    return removed
+            state = json.loads(read(path) or "{}")
+        except ValueError:
+            state = {}
+        yield state
+        write(path, json.dumps(state))
 
 
-def log_error(where, exc):
-    try:
-        append("errors.log", {"ts": now(), "where": where, "error": repr(exc)})
-    except Exception:
-        pass
+def current_session(cwd=None):
+    """The session a command typed by an agent belongs to: the id session start exported, else the most
+    recently active session of this project. None when there is none (a person at a terminal)."""
+    if os.environ.get("SISI_SESSION_ID"):
+        return os.environ["SISI_SESSION_ID"]
+    folder, key, best = os.path.join(STATE, "core-sessions"), project_key(cwd), (0, None)
+    for name in os.listdir(folder) if os.path.isdir(folder) else []:
+        path = os.path.join(folder, name)
+        if name.endswith(".json") and os.path.getmtime(path) > best[0]:
+            try:
+                if json.loads(read(path) or "{}").get("project") == key:
+                    best = (os.path.getmtime(path), name[:-5])
+            except ValueError:
+                pass
+    return best[1]

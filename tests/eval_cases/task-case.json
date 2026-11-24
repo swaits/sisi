@@ -1,1 +1,0 @@
-{"id": "synth-task", "kind": "task", "source": {"unit": "synthetic", "learning": ""}, "project": {"repo": "@REPO@", "start_commit": "@START@", "fix_commit": "@FIX@"}, "request": "make value.txt contain fixed", "checks": [{"id": "value", "cmd": "grep -qx fixed value.txt", "expect": {"exit": 0}}], "tags": ["synthetic"], "split": "dev", "added": "2026-01-01"}

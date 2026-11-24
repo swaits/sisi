@@ -1,25 +1,4 @@
-# Python caches
 __pycache__/
 *.pyc
-*.pyo
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# sisi run-time state in a project: only the contract and the project's risk table are tracked
-.sisi/*
-!.sisi/contract.json
-!.sisi/risk.json
-
-# scratch for delegated work
 .agent-work/
-
-# editors and operating systems
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
-.crush/
+.sisi/

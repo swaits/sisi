@@ -1,4 +1,0 @@
-{
-  "rules": ["stay-inside-the-lines", "verify-enough", "report-plainly", "define-done", "close-with-retro"],
-  "note": "Non-negotiable rules: a learning cycle must never replace or disable these. They carry verification before done, truthful reporting, and this governance itself. Changing them is product work by the owner, never a cycle."
-}
