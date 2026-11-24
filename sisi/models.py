@@ -118,6 +118,7 @@ def claim(s, text):
     for name in s.get("picked") or []:
         if any(re.search(r"(?<![a-z0-9.-])%s(?![a-z0-9.-])" % re.escape(n), text.lower()) for n in (name, name.rsplit("/", 1)[-1])):
             s["picked"].remove(name)
+            s.setdefault("starts", {}).setdefault(name, []).append(time.time())  # `sisi judge` times the job from here
             s.setdefault("workers_since", []).append(name)
             return True
     return False
@@ -130,8 +131,27 @@ def out(r, skip, bad, today):
             else "out until " + until[0] if until else "")
 
 
-def choose(text, cls, skip=(), review=None, rand=None, today=None):
-    """One worker of this class, by a wheel weighted by table order (the first of n has weight n, the last 1)."""
+def median(v):
+    v = sorted(v)
+    return (v[len(v) // 2] + v[(len(v) - 1) // 2]) / 2
+
+
+def speeds():
+    """Each worker's last 10 timed minutes from the outcomes, oldest first."""
+    out = {}
+    for line in store.read(store.data("outcomes.jsonl")).splitlines():
+        try:
+            o = json.loads(line)
+            if type(o["minutes"]) is int and o["minutes"] > 0:
+                out.setdefault(short(o["worker"]), []).append(o["minutes"])
+        except (ValueError, KeyError, TypeError):
+            pass
+    return {w: v[-10:] for w, v in out.items()}
+
+
+def choose(text, cls, skip=(), review=None, rand=None, today=None, speed=None):
+    """One worker of this class, by a wheel weighted by table order (the first of n has weight n, the last 1)
+    times its speed: the fastest candidate's median minutes over its own, at least 0.25 (1 with no timed jobs)."""
     table_rows, today = rows(text), today or time.strftime("%Y-%m-%d")
     bad = next((maker(r) for r in table_rows if short(r[0]) == short(review)), None) if review else None
     left = [r for r in table_rows if cls in r[2].lower() and not out(r, skip, bad, today)]
@@ -140,8 +160,11 @@ def choose(text, cls, skip=(), review=None, rand=None, today=None):
     if rand is None:
         import random
         rand = random.random
-    x = rand() * len(left) * (len(left) + 1) / 2
-    for weight, r in zip(range(len(left), 0, -1), left):
+    med = {short(r[0]): median(speed[short(r[0])]) for r in left if (speed or {}).get(short(r[0]))}
+    fast = min(med.values(), default=1)
+    weights = [w * max(0.25, fast / med[short(r[0])]) if short(r[0]) in med else w for w, r in zip(range(len(left), 0, -1), left)]
+    x = rand() * sum(weights)
+    for weight, r in zip(weights, left):
         x -= weight
         if x < 0:
             return r
@@ -167,7 +190,8 @@ def pick(args, cwd=None, rand=None):
     if review is not None and not any(short(r[0]) == short(review) for r in rows(text)):
         print("sisi pick: %r is not a worker in the models table; --review-of names the worker whose work is reviewed." % review)
         return 1
-    r = choose(text, cls, skip, review, rand)
+    speed = speeds()
+    r = choose(text, cls, skip, review, rand, speed=speed)
     if not r:
         bad = next((maker(x) for x in rows(text) if short(x[0]) == short(review)), None)
         print("sisi pick: every worker of class %s is out or excluded: %s." % (cls, "; ".join(
@@ -182,6 +206,8 @@ def pick(args, cwd=None, rand=None):
     if store.config()["shell_workers"] or not command(r):
         print("how to call it: " + r[1])
     print("good at, bad at: %s\nnotes: %s" % (r[4], r[5]))
+    t = speed.get(short(r[0]))
+    print("speed: median %g min over %d timed jobs" % (median(t), len(t)) if t else "speed: no timed jobs yet")
     return 0
 
 
@@ -190,7 +216,8 @@ def outcomes(n):
     for line in store.read(store.data("outcomes.jsonl")).splitlines()[-n:]:
         try:
             o = json.loads(line)
-            out.append("%s  %s  %s  %s" % (o["ts"][:10], o["worker"], o["verdict"], o["why"]))
+            out.append("%s  %s  %s  %s%s" % (o["ts"][:10], o["worker"], o["verdict"],
+                       "(%d min)  " % o["minutes"] if type(o.get("minutes")) is int else "", o["why"]))
         except (ValueError, KeyError):
             pass
     return out
@@ -221,14 +248,27 @@ def research_record(answer_file):
 
 
 def judge(args, cwd=None):
-    """`sisi judge WORKER good|bad "<why>"`: how a delegation went."""
-    if len(args) != 3 or args[1] not in ("good", "bad") or len(args[2].split()) < 3:
-        print('usage: sisi judge WORKER good|bad "<what it did well or badly, in a sentence>"')
+    """`sisi judge WORKER good|bad "<why>" [--minutes N]`: how a delegation went, and how long it took (from the
+    pick's start in this session unless --minutes says)."""
+    minutes = None
+    if "--minutes" in args:
+        i = args.index("--minutes")
+        v, args = (args[i + 1:i + 2] or [""])[0], args[:i] + args[i + 2:]
+        minutes = int(v) if re.fullmatch(r"[1-9]\d*", v) else 0
+    if len(args) != 3 or args[1] not in ("good", "bad") or len(args[2].split()) < 3 or minutes == 0:
+        print('usage: sisi judge WORKER good|bad "<what it did well or badly, in a sentence>" [--minutes N]')
         return 1
+    sid = store.current_session(cwd)
+    if sid:
+        with store.session(sid) as s:
+            starts = s.get("starts", {}).get(short(args[0]))
+            if starts:
+                began = starts.pop(0)
+                minutes = minutes or max(1, int((time.time() - began) / 60))
     log = store.data("outcomes.jsonl")
-    store.append(log, json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "worker": args[0], "verdict": args[1],
-                                  "why": " ".join(args[2].split()),
-                                  "project": os.path.basename(store.project_root(cwd))}, sort_keys=True))
+    store.append(log, json.dumps(dict({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "worker": args[0], "verdict": args[1],
+                                       "why": " ".join(args[2].split()), "project": os.path.basename(store.project_root(cwd))},
+                                      **{"minutes": minutes} if minutes else {}), sort_keys=True))
     store.commit("delegation judged", log)
     print("recorded.")
     return 0
