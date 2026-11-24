@@ -86,6 +86,11 @@ def build_rulebook():
         text += "\n" + HEAD_USER + "\n" + "\n".join(mine) + "\n"
     out = store.data("generated", "core.md")
     store.write(out, text)
+    try:  # the copies of it that sisi put into a tool's real instructions file follow
+        from . import install
+        install.refresh(out)
+    except Exception:
+        pass  # this runs inside hooks: it must never raise
     return out
 
 

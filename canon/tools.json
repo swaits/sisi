@@ -1,0 +1,8 @@
+{
+  "shell": ["bash", "shell", "exec_command", "run_terminal_command", "run_command", "run_shell_command"],
+  "read": ["read", "read_file", "list_dir"],
+  "edit": ["edit", "write", "multiedit", "notebookedit", "apply_patch", "patch", "search_replace", "write_file", "edit_file"],
+  "search": ["grep", "glob", "grep_search", "search"],
+  "web": ["webfetch", "websearch", "web_fetch", "web_search", "read_url_content", "search_web"],
+  "delegate": ["agent", "task", "workflow", "spawn_agent", "spawn_subagent", "subagent", "subagent_spawn", "invoke_subagent"]
+}

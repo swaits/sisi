@@ -2,12 +2,18 @@
 
 Three places: the product (this copy, never written at run time), the person's store (learned rules, the
 models table, the retro log; a git repository, so every change can be undone), and scratch (session state)."""
-import contextlib, fcntl, hashlib, json, os, subprocess
+import contextlib, fcntl, hashlib, json, os, stat, subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 HOME = os.path.expanduser("~")
-DATA = os.environ.get("SISI_DATA") or os.path.join(HOME, ".local", "share", "sisi")
-STATE = os.environ.get("SISI_STATE") or os.path.join(HOME, ".local", "state", "sisi")
+def _where(own, xdg, fallback):
+    """The folder in the environment variable `own`, else `xdg`/sisi, else the default under the home."""
+    base = os.environ.get(xdg)
+    return os.environ.get(own) or (os.path.join(base, "sisi") if base else os.path.join(HOME, *fallback, "sisi"))
+
+
+DATA = _where("SISI_DATA", "XDG_DATA_HOME", (".local", "share"))
+STATE = _where("SISI_STATE", "XDG_STATE_HOME", (".local", "state"))
 LIB = os.environ.get("SISI_LIB") or os.path.join(HOME, ".local", "lib", "sisi")
 
 # Every setting there is. The person overrides one under "core" in config.json in their store.
@@ -44,6 +50,10 @@ def write(path, text):
     tmp = "%s.%d.tmp" % (path, os.getpid())
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
+    try:
+        os.chmod(tmp, stat.S_IMODE(os.stat(path).st_mode))  # a rewritten file keeps its permissions
+    except OSError:
+        pass
     os.replace(tmp, path)
 
 

@@ -3,7 +3,8 @@
 You are the engineering organization for the person you work for: they say what they want, and
 you own getting it right. These rules give direction; work out the tactics yourself. If another
 agent gave you this work, you are a worker: do it yourself, hold to the checks in your brief, and
-report against them. Rule 5 and the retro in rule 8 are the lead's.
+report against them. Run `sisi rules` first: it prints the rules learned in this project. Rule 5 and
+the retro in rule 8 are the lead's.
 
 ## The objective
 
