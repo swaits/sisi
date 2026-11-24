@@ -47,8 +47,7 @@ ASK = ("In the background, give the output of `sisi models research` to a resear
        "answer with `sisi models research --record FILE`.")
 
 
-def table():
-    return store.data("models.md")
+def table(): return store.data("models.md")
 
 
 def age_days():
@@ -58,12 +57,18 @@ def age_days():
         return None
 
 
-def stale():
-    """One line when the table is missing or old, else ""."""
+def stale(mark=None):
+    """One line when the table is missing, old, or missed a worker, else ""."""
+    who = re.sub(r"[^\w./:+-]", "", str(store.read(store.data("models.stale")) if mark is None else mark), flags=re.A)[:80]
+    if mark is not None and who:
+        try:
+            store.write(store.data("models.stale"), who + "\n")
+        except Exception:  # best effort: a refusal never depends on it
+            pass
     age = age_days()
     if age is None or age > store.config()["research_days"]:
         return "sisi: " + ("there is no models table yet. " if age is None else "the models table is %d days old. " % age) + ASK
-    return ""
+    return ("sisi: a delegation named `%s`, which the models table does not list. " % who + ASK) if who and not known(store.read(table()), who) else ""
 
 
 KEYS = ("worker", "how", "use", "cost", "good", "notes", "maker")  # a column is known by its header's first word
@@ -83,13 +88,10 @@ def rows(text):
     return out
 
 
-def usable(text):
-    return any(re.search(r"routine|ordinary|hard", r[2].lower()) for r in rows(text))
+def usable(text): return any(re.search(r"routine|ordinary|hard", r[2].lower()) for r in rows(text))
 
 
-def short(cell):
-    w = str(cell).split()
-    return w[0].lower() if w else ""
+def short(cell): return (str(cell).split() or [""])[0].lower()
 
 
 def maker(r):
@@ -99,9 +101,7 @@ def maker(r):
     return r[6].lower() or (m.group() if "/" in name and m else r[1].lower().replace(name, "") or name)
 
 
-def command(row):
-    """A row that is called by a shell command line (it has <brief> in it, and is not a host subagent)."""
-    return "<brief>" in row[1] and "host subagent" not in row[1].lower()
+def command(row): return "<brief>" in row[1] and "host subagent" not in row[1].lower()
 
 
 def is_call(command_line):
@@ -116,12 +116,15 @@ def is_call(command_line):
     return False
 
 
+def known(table_text, text): return claim({"picked": [short(r[0]) for r in rows(table_text)]}, text, True)
+
+
 def claim(s, text, segment=False):
     """Spend the pick that this delegation's model text names; False when none of the picks fits. With `segment` (the
     host names its models shortly: `fast` for `maker-fast-2`) one whole `-` segment of a picked id's last `/` part that has a letter fits."""
     for name in s.get("picked") or []:
         if any(re.search(r"(?<![a-z0-9.-])%s(?![a-z0-9.-])" % re.escape(n), text.lower()) for n in (name, name.rsplit("/", 1)[-1])) or (
-                segment and re.search("[a-z]", text) and text.lower() in name.rsplit("/", 1)[-1].split("-")):
+                segment and re.search("[a-z]", text.lower()) and text.lower() in name.rsplit("/", 1)[-1].split("-")):
             s["picked"].remove(name)
             starts = s["starts"] if isinstance(s.get("starts"), dict) else {}
             starts[name] = (starts[name] if isinstance(starts.get(name), list) else []) + [time.time()]
@@ -253,6 +256,7 @@ def research_record(answer_file):
     if len(lines) > 42 or len(text) > 12000:
         return "the answer is too long (at most 40 rows and 12,000 characters)"
     store.write(table(), text + "\n")
+    os.path.isfile(store.data("models.stale")) and os.remove(store.data("models.stale"))
     store.commit("models table researched", table())
     print("models table recorded: %d workers." % (len(lines) - 2))
     return None
@@ -301,12 +305,9 @@ def run(args, cwd=None):
                 print("\n" + stale())
         return 0
     if args == ["research"]:
-        print(research_brief())
-        return 0
+        return print(research_brief()) or 0
     if len(args) == 3 and args[:2] == ["research", "--record"]:
         why = research_record(args[2])
-        if why:
-            print("sisi models: %s. Nothing was changed." % why)
-        return 1 if why else 0
+        return (print("sisi models: %s. Nothing was changed." % why) or 1) if why else 0
     print("usage: sisi models | sisi models research [--record FILE]")
     return 1

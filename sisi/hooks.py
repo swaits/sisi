@@ -12,23 +12,18 @@ DIRECT = ("shell", "read", "edit", "search", "web")  # the classes of tool call 
 METER = ("sisi: %d direct tool calls this turn (the limit is %d). Delegate the rest: `sisi models` lists your "
          "workers; brief one and judge what comes back. If doing this yourself really costs less than briefing "
          "it, say why first: `sisi direct \"<reason>\"` allows %d more.\n")
-GATE = ("sisi: this piece of work changed things and has no retro yet. Run `sisi retro`: it prints what "
-        "happened. Set that against the objective and record the gap and the improvement, or that there was "
-        "none. If the work is not finished and you are only pausing (for the person, for background work), say "
-        "so instead: `sisi retro --later \"<what it waits for>\"`.")
+GATE = ("sisi: this piece of work changed things and has no retro yet. Run `sisi retro`: it prints what happened. Set that against the objective and record the gap and the improvement, or that there was none. "
+        "If the work is not finished and you are only pausing (for the person, for background work), say so instead: `sisi retro --later \"<what it waits for>\"`.")
 NODONE = ("sisi: nothing starts before done is recorded. Work out what the person wants and what they will need "
           "next, then: sisi done --goal \"<their goal>\" --check \"<a check that can fail>\" [--check ...] "
           "--next \"<what comes next and what you do about it>\"\n")
-NOPICK = ("sisi: this delegation goes to a worker the wheel did not give you. sisi pick routine|ordinary|hard gives "
-          "you one for this task (--review-of WORKER for a review, --not WORKER if one is out); one pick, one "
-          "delegation.\n")
+NOPICK = ("sisi: this delegation goes to a worker the wheel did not give you. sisi pick routine|ordinary|hard gives you one for this task "
+          "(--review-of WORKER for a review, --not WORKER if one is out); one pick, one delegation.\n")
+UNKNOWN = "sisi: the worker you named is not in the models table, so the table is out of date. Rebuild it now with a research worker (`sisi models research` prints the brief; `sisi models research --record FILE` records the answer), then run `sisi pick`.\n"
 NOSHELL = "sisi: do not shell out to a worker; start it with the host's delegation tool.\n"
-FAILED = ("sisi: check %s failed. A failed check is a gap: record it with `sisi retro --gap \"<where it fell "
-          "short>\" --cause \"<the root cause>\" --improve \"<the rule that prevents it>\" --term <term>`.")
-OPEN = ("sisi: these checks have no verdict yet: %s. Give each one: sisi done --pass N \"<evidence>\" or --fail N "
-        "\"<why>\". If the work is only pausing: sisi retro --later \"<what it waits for>\".")
-LATE = ("%s was started %s and has not reported. Check it now: if it is dead or no longer wanted, cancel it with the "
-        "host's tool and record `sisi judge WORKER bad \"<why>\"`; if it reported, judge it.")
+FAILED = "sisi: check %s failed. A failed check is a gap: record it with `sisi retro --gap \"<where it fell short>\" --cause \"<the root cause>\" --improve \"<the rule that prevents it>\" --term <term>`."
+OPEN = "sisi: these checks have no verdict yet: %s. Give each one: sisi done --pass N \"<evidence>\" or --fail N \"<why>\". If the work is only pausing: sisi retro --later \"<what it waits for>\"."
+LATE = "%s was started %s and has not reported. Check it now: if it is dead or no longer wanted, cancel it with the host's tool and record `sisi judge WORKER bad \"<why>\"`; if it reported, judge it."
 
 # The names each host gives a hook's fields; the first one present (and of the right type) wins.
 FIELDS = (("session_id", str, ("session_id", "sessionId", "conversation_id", "conversationId")),
@@ -156,9 +151,12 @@ def watch(p):
         if kind == "delegate" or shell:
             target = ti.get("target") if isinstance(ti.get("target"), dict) else {}
             names = (ti.get("model"),) if tool == "agent" else (ti.get("model"), target.get("model"), ti.get("agent"))
-            text = command if shell else str(next((n for n in names if n), ""))  # tool_input.model may be a short name: a segment
-            if tool != "workflow" and models.usable(store.read(models.table())) and not models.claim(s, text, not shell and bool(names[0])):
-                sys.stderr.write(say(NOPICK))
+            text = command if shell else next((n for n in names if n and isinstance(n, str)), "")  # tool_input.model may be a short name: a segment
+            table_text = store.read(models.table())
+            if tool != "workflow" and models.usable(table_text) and not models.claim(s, text, not shell and bool(names[0])):
+                unknown = not shell and text.strip() and not models.known(table_text, text)
+                unknown and models.stale(text)
+                sys.stderr.write(say(UNKNOWN if unknown else NOPICK))
                 return 2
             s["delegations_since"] = s.get("delegations_since", 0) + 1
             s.pop("paused", None)
