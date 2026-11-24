@@ -161,7 +161,7 @@ def speeds():
 
 def choose(text, cls, skip=(), review=None, rand=None, today=None, speed=None):
     """One worker of this class, by a wheel weighted by table order (the first of n has weight n, the last 1)
-    times its speed: the fastest candidate's median minutes over its own, squared, at least 0.02 (1 with no timed jobs)."""
+    times its speed: the fastest candidate's median minutes over its own, cubed, at least 0.02 (1 with no timed jobs)."""
     table_rows, today = rows(text), today or time.strftime("%Y-%m-%d")
     bad = next((maker(r) for r in table_rows if short(r[0]) == short(review)), None) if review else None
     left = [r for r in table_rows if r[2].strip().lower() == cls and not out(r, skip, bad, today)]
@@ -172,7 +172,7 @@ def choose(text, cls, skip=(), review=None, rand=None, today=None, speed=None):
         rand = random.random
     med = {short(r[0]): median(speed[short(r[0])]) for r in left if (speed or {}).get(short(r[0]))}
     fast = min(med.values(), default=1)
-    weights = [w * max(0.02, (fast / med[short(r[0])]) ** 2) if short(r[0]) in med else w for w, r in zip(range(len(left), 0, -1), left)]
+    weights = [w * max(0.02, (fast / med[short(r[0])]) ** 3) if short(r[0]) in med else w for w, r in zip(range(len(left), 0, -1), left)]
     x = rand() * sum(weights)
     for weight, r in zip(weights, left):
         x -= weight
