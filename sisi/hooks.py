@@ -18,6 +18,15 @@ GATE = ("sisi: this piece of work changed things and has no retro yet. Run `sisi
         "happened. Set that against the objective and record the gap and the improvement, or that there was "
         "none. If the work is not finished and you are only pausing (for the person, for background work), say "
         "so instead: `sisi retro --later \"<what it waits for>\"`.")
+NODONE = ("sisi: nothing starts before done is recorded. Work out what the person wants and what they will need "
+          "next, then: sisi done --goal \"<their goal>\" --check \"<a check that can fail>\" [--check ...] "
+          "--next \"<what comes next and what you do about it>\"\n")
+NOPICK = ("sisi: this delegation goes to a worker the wheel did not give you. sisi pick routine|ordinary|hard gives "
+          "you one for this task (--review-of WORKER for a review, --not WORKER if one is out); one pick, one "
+          "delegation.\n")
+NOSHELL = "sisi: do not shell out to a worker; start it with the host's delegation tool.\n"
+OPEN = ("sisi: these checks have no verdict yet: %s. Give each one: sisi done --pass N \"<evidence>\" or --fail N "
+        "\"<why>\". If the work is only pausing: sisi retro --later \"<what it waits for>\".")
 
 
 def payload():
@@ -79,16 +88,30 @@ def watch(p):
     sid, tool = p.get("session_id"), str(p.get("tool_name") or "")
     if p.get("hook_event_name") not in (None, "PreToolUse") or not sid or subagent(p):
         return 0
-    command = str((p.get("tool_input") or {}).get("command") or "")
-    cfg = store.config()
+    ti = p.get("tool_input") if isinstance(p.get("tool_input"), dict) else {}
+    command, cfg = str(ti.get("command") or ""), store.config()
     with store.session(sid) as s:
         _begin(s, p.get("cwd") or os.getcwd())
         if s.get("worker"):
             return 0
-        if delegation(tool):
+        if tool == "Bash" and OWN.fullmatch(command):
+            return 0
+        shell = tool == "Bash" and models.is_call(command)
+        if shell and not cfg["shell_workers"]:
+            sys.stderr.write(NOSHELL)
+            return 2
+        if (delegation(tool) or shell or tool in EDITS) and not s.get("done"):
+            sys.stderr.write(NODONE)
+            return 2
+        if delegation(tool) or shell:
+            target = ti.get("target") if isinstance(ti.get("target"), dict) else {}
+            text = command if shell else str((target if tool.endswith("delegate_task") else ti).get("model") or "")
+            if tool != "Workflow" and store.read(models.table()) and not models.claim(s, text):
+                sys.stderr.write(NOPICK)
+                return 2
             s["delegations_since"] = s.get("delegations_since", 0) + 1
             return 0
-        if tool not in DIRECT or (tool == "Bash" and OWN.fullmatch(command)):
+        if tool not in DIRECT:
             return 0
         limit = cfg["direct_calls"] + s.get("extra", 0)
         if cfg["meter"] and s.get("direct", 0) >= limit:
@@ -121,9 +144,19 @@ def gate(p, for_subagent=False):
         return 0
     with store.session(sid) as s:
         _begin(s, cwd)
+        if s.get("worker"):
+            return 0
+        checks = (s.get("done") or {}).get("checks") or []
+        unsaid = ["%d. %s" % (i, c["text"]) for i, c in enumerate(checks, 1) if not c["verdict"]]
+        failed = any(c["verdict"] == "fail" for c in checks)
         worked = s.get("changed") or store.snapshot(cwd) != s.get("snapshot")
-        if s.get("worker") or not worked or s.get("blocks", 0) >= 2:
+        if checks and not unsaid and not failed and not worked:
+            from . import retro
+            retro.record(s, cwd, {})  # every check passed and nothing changed: the work closes itself
+            return 0
+        reason = OPEN % "; ".join(unsaid) if unsaid and not s.get("later") else GATE if worked or failed else ""
+        if not reason or s.get("blocks", 0) >= 2:
             return 0
         s["blocks"] = s.get("blocks", 0) + 1
-    print(json.dumps({"decision": "block", "reason": GATE}))
+    print(json.dumps({"decision": "block", "reason": reason}))
     return 0

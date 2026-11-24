@@ -3,6 +3,12 @@ import os, sys, time
 
 HELP = """sisi: a self-improvement loop for AI coding agents.
 
+Before and after the work
+  sisi done --goal G --check C [--check C ...] --next N
+                                   record what done means and what the person will need next; nothing starts before
+  sisi done --pass N EVIDENCE | --fail N WHY
+                                   give a check its verdict; `sisi done` alone shows it
+
 The learning loop
   sisi retro                       what happened in this piece of work, to set against the objective
   sisi retro --gap G --cause C --improve I [--scope user]
@@ -19,6 +25,8 @@ Delegation
   sisi models                      the workers you have: what each is good at and what it costs
   sisi models research [--record FILE]
                                    the brief for a research worker to rebuild that table; record its answer
+  sisi pick routine|ordinary|hard [--review-of WORKER] [--not WORKER ...]
+                                   the wheel gives you one worker of that class; one pick, one delegation
   sisi judge WORKER good|bad WHY   how a delegation went
   sisi direct REASON               allow yourself more direct tool calls this turn, with the reason
 
@@ -30,7 +38,7 @@ Hooks (the agent tool calls these): sisi tick | prompt | watch | gate
 
 Your rules, models table and retro log live in ~/.local/share/sisi, a git repository. Settings: "core" in
 its config.json (gate, meter, direct_calls, direct_extension, rules_lines, rules_chars, organize_after,
-research_days)."""
+research_days, shell_workers)."""
 
 
 def main(argv):
@@ -49,6 +57,10 @@ def main(argv):
         return retro.run(args)
     if cmd == "rules":
         return rules.run(args)
+    if cmd == "done":
+        return retro.done(args)
+    if cmd == "pick":
+        return models.pick(args)
     if cmd == "learn":
         return rules.learn(args)
     if cmd == "models":

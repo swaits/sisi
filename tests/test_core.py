@@ -3,15 +3,43 @@
 Learning: work is done, the retro is forced, its improvement is a rule in the next session, the rules are
 organized and the change can be undone. Delegation: the lead is stopped when it should be delegating, and the
 models table is researched, read and kept fresh."""
-import glob, hashlib, json, os, shutil, subprocess, sys, tempfile, time, unittest
+import glob, hashlib, json, os, random, shutil, subprocess, sys, tempfile, time, unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GAP = ("--gap", "the export dropped rows with empty names until the person noticed",
        "--cause", "no check compared the row counts before and after")
 
 
+HEADER = "| worker | how to call it | use for | cost | good at, bad at | notes |\n|---|---|---|---|---|---|\n"
+GOAL = ("--goal", "export every row without losing any with empty names", "--check", "row counts match before and after the export",
+        "--check", "an empty name still exports as a row", "--next", "the person will want the same for imports: follow-up")
+WORKERS = HEADER + (
+    "| agy (Gemini) | `agy --print \"<brief>\"` | routine | free | fast | |\n"
+    "| zai-coding-plan/glm-5.4 | `opencode run -m zai-coding-plan/glm-5.4 \"<brief>\"` | ordinary | flat | edits | the default |\n"
+    "| sonnet (Sonnet 5.5) | host subagent model `sonnet` | hard | per use | everything | |\n")
+FIXTURE = HEADER + (
+    "| zai-coding-plan/glm-5.4 | `opencode run -m zai-coding-plan/glm-5.4 \"<brief>\"` | ordinary | flat | edits | |\n"
+    "| zai-coding-plan/glm-5.3-flash | `opencode run -m zai-coding-plan/glm-5.3-flash \"<brief>\"` | ordinary | flat | cheap edits | |\n"
+    "| muse/muse-wonder-1.0 | `muse exec --model muse-wonder-1.0 \"<brief>\"` | ordinary | flat | research | out until 2999-01-01 |\n"
+    "| muse/muse-ember-1.0 | `muse exec --model muse-ember-1.0 \"<brief>\"` | ordinary | flat | checks | out until 2000-01-01 |\n"
+    "| sonnet (Sonnet 5.5) | host subagent model `sonnet` | ordinary, hard | per use | everything | |\n"
+    "| opus (Opus 5.5) | host subagent model `opus` | hard | per use | hardest | |\n")
+
+
+def tree():
+    """A fingerprint of the product tree, so a test that writes into it is caught."""
+    out = hashlib.sha1()
+    for p in sorted(glob.glob(os.path.join(REPO, "sisi", "*")) + glob.glob(os.path.join(REPO, "canon", "*"))):
+        if os.path.isfile(p):
+            with open(p, "rb") as f:
+                out.update(p.encode() + f.read())
+    return out.hexdigest()
+
+
 class Core(unittest.TestCase):
     def setUp(self):
+        before = tree()
+        self.addCleanup(lambda: self.assertEqual(tree(), before, "a test wrote into the product tree"))
         self.tmp = tempfile.mkdtemp(prefix="sisi-test-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.data = os.path.join(self.tmp, "data")
@@ -40,6 +68,20 @@ class Core(unittest.TestCase):
     def tool(self, name, sid="s1", **fields):
         return self.hook("watch", sid=sid, hook_event_name="PreToolUse", tool_name=name, **fields)
 
+    def done(self, sid="s1", *extra):
+        rc, out, _ = self.sisi("done", *(extra or GOAL), sid=sid)
+        self.assertEqual(rc, 0, out)
+
+    def table(self, text):
+        self.write(os.path.join(self.data, "models.md"), text) if os.path.isdir(self.data) else (
+            os.makedirs(self.data), self.write(os.path.join(self.data, "models.md"), text))
+
+    def state(self, sid="s1"):
+        return json.loads(self.read(self.tmp, "state", "core-sessions", sid + ".json"))
+
+    def records(self):
+        return [json.loads(l) for l in self.read(self.data, "retro.jsonl").splitlines()]
+
     def read(self, *parts):
         with open(os.path.join(*parts), encoding="utf-8") as f:
             return f.read()
@@ -55,10 +97,11 @@ class Core(unittest.TestCase):
         self.hook("tick")
         self.hook("prompt", prompt="add the export")
         self.assertEqual(self.hook("gate")[1], "")                       # nothing changed: nothing is asked
+        self.done()
         self.tool("Edit")
         self.assertIn('"block"', self.hook("gate")[1])                   # work was done: the retro is forced
         report = self.sisi("retro", sid="s1")[1]
-        self.assertIn("The objective: In this order: stay inside the lines", report)
+        self.assertIn("The objective: Maximize the long-term, verified value", report)
         self.assertIn("you made 1 tool call(s) yourself", report)
         rc, out, _ = self.sisi("retro", *GAP, "--improve", "Compare row counts before and after every export change", sid="s1")
         self.assertEqual(rc, 0, out)
@@ -74,6 +117,7 @@ class Core(unittest.TestCase):
 
     def test_a_retro_needs_real_sentences_and_no_gap_needs_its_evidence(self):
         self.hook("tick")
+        self.done()
         self.tool("Write")
         for args in (["--gap", "bad"], ["--no-gap", "fine"], GAP + ("--improve", "be careful"), ["--later", "x"],
                      GAP + ("--improve", "Compare the row counts every time", "--scope", "everyone")):
@@ -85,6 +129,7 @@ class Core(unittest.TestCase):
     def test_later_lets_unfinished_work_pause_until_it_changes_again(self):
         self.hook("tick")
         self.hook("prompt", prompt="start")
+        self.done()
         self.tool("Write")
         self.assertEqual(self.sisi("retro", "--later", "the person's answer about the format", sid="s1")[0], 0)
         self.assertEqual(self.hook("gate")[1], "")
@@ -132,6 +177,7 @@ class Core(unittest.TestCase):
     def test_the_lead_is_stopped_when_it_should_be_delegating(self):
         self.hook("tick")
         self.hook("prompt", prompt="build it")
+        self.done()
         for _ in range(8):
             self.assertEqual(self.tool("Read")[0], 0)
         rc, _, err = self.tool("Bash", tool_input={"command": "grep -r x ."})
@@ -183,6 +229,172 @@ class Core(unittest.TestCase):
         old = time.time() - 9 * 86400
         os.utime(os.path.join(self.data, "models.md"), (old, old))
         self.assertIn("9 days old", self.hook("tick", sid="s3")[1])
+
+    # done, the wheel, the numbers
+
+    def test_nothing_starts_before_done_is_recorded(self):
+        self.table(WORKERS)
+        self.hook("tick")
+        self.hook("prompt", prompt="build it")
+        rc, _, err = self.tool("Agent", tool_input={"model": "sonnet"})
+        self.assertEqual((rc, "nothing starts before done is recorded" in err), (2, True))
+        self.assertEqual(self.tool("Edit")[0], 2)
+        self.assertEqual(self.tool("Write")[0], 2)
+        self.assertEqual(self.tool("Workflow")[0], 2)
+        self.assertEqual(self.tool("Read")[0], 0)
+        self.assertEqual(self.tool("Bash", tool_input={"command": "sisi done"})[0], 0)
+        for bad in (["--goal", "too short", "--check", "a check that can fail", "--next", "follow-up work later"],
+                    ["--goal", "export every row without losing any", "--next", "follow-up work later"],
+                    ["--pass", "1", "it worked"], ["--bogus"]):
+            self.assertEqual(self.sisi("done", *bad, sid="s1")[0], 1, bad)
+        rc, out, _ = self.sisi("done", *GOAL, sid="s1")
+        self.assertEqual(rc, 0)
+        self.assertIn("2. an empty name still exports as a row", out)
+        self.assertEqual(self.tool("Edit")[0], 0)
+        self.assertEqual(self.tool("Agent", tool_input={"model": "sonnet"})[0], 2)         # no pick yet
+        self.assertEqual(self.sisi("pick", "hard", sid="s1")[0], 0)
+        self.assertEqual(self.tool("Agent", tool_input={"model": "sonnet"})[0], 0)
+        self.assertEqual(self.tool("Workflow")[0], 0)                                      # a workflow is not matched
+
+    def test_the_gate_wants_a_verdict_for_every_check_then_closes_or_forces_the_retro(self):
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        self.tool("Edit")
+        out = self.hook("gate")[1]
+        self.assertIn("these checks have no verdict yet: 1. row counts match before and after export; 2. an empty", out.replace("the export", "export"))
+        self.assertIn('"block"', self.hook("gate")[1])
+        self.assertEqual(self.hook("gate")[1], "")                                         # at most two blocks, whatever the cause
+        self.assertEqual(self.sisi("done", "--pass", "1", "counts equal at 120 rows", sid="s1")[0], 0)
+        self.assertEqual(self.sisi("done", "--fail", "2", "the row was dropped", sid="s1")[0], 0)
+        self.assertEqual(self.sisi("done", "--pass", "3", "no such check", sid="s1")[0], 1)
+        self.hook("prompt", prompt="again")
+        self.assertIn("no retro yet", self.hook("gate")[1])                                # changed and failed: the retro
+        self.assertEqual(self.sisi("retro", "--no-gap", "the person accepted it first time and every check passed", sid="s1")[0], 1)
+        self.assertEqual(self.sisi("retro", *GAP, "--improve", "Compare row counts before and after every export change", sid="s1")[0], 0)
+        rec = self.records()[-1]
+        self.assertEqual((rec["unit"]["checks_pass"], rec["unit"]["checks_fail"], rec["done"]["checks"][1]["verdict"]), (1, 1, "fail"))
+        self.assertIn("without losing any", rec["goal"])
+        self.assertNotIn("done", self.state())
+        # nothing changed and every check passed: the gate closes the piece of work itself
+        self.hook("prompt", prompt="and now")
+        self.done("s1", "--goal", "list the empty names in the export", "--check", "each empty name appears once", "--next", "nothing: a one-off report")
+        self.assertEqual(self.sisi("done", "--pass", "1", "listed 3 names once each", sid="s1")[0], 0)
+        self.assertEqual(self.hook("gate")[1], "")
+        self.assertEqual(len(self.records()), 2)
+        self.assertEqual(self.records()[-1]["unit"]["checks_pass"], 1)
+        self.assertNotIn("gap", self.records()[-1])
+        self.assertNotIn("done", self.state())
+        self.assertEqual(self.hook("gate")[1], "")
+        self.assertEqual(len(self.records()), 2)                                           # closed once
+
+    def test_the_wheel_gives_only_what_is_in_and_follows_table_order(self):
+        sys.path.insert(0, REPO)
+        from sisi import models
+        name = lambda r: r[0].split()[0].lower()
+        for _ in range(300):
+            self.assertNotIn("muse-wonder", name(models.choose(FIXTURE, "ordinary", rand=random.random)))   # out until 2999
+            self.assertNotEqual(name(models.choose(FIXTURE, "ordinary", skip=["zai-coding-plan/glm-5.4"], rand=random.random)), "zai-coding-plan/glm-5.4")
+            self.assertNotIn("glm", name(models.choose(FIXTURE, "ordinary", review="zai-coding-plan/glm-5.4", rand=random.random)))
+            self.assertIsNone(models.choose(FIXTURE, "hard", review="sonnet", rand=random.random))     # both are claude
+        picked = lambda x: name(models.choose(FIXTURE, "ordinary", rand=lambda: x))
+        # four candidates (the expired "out until" is back in), weights 4, 3, 2, 1 of 10
+        self.assertEqual([picked(x) for x in (0.0, 0.39, 0.4, 0.69, 0.7, 0.89, 0.9, 0.999)],
+                         ["zai-coding-plan/glm-5.4"] * 2 + ["zai-coding-plan/glm-5.3-flash"] * 2 + ["muse/muse-ember-1.0"] * 2 + ["sonnet"] * 2)
+        self.assertEqual(name(models.choose(FIXTURE, "ordinary", review="zai-coding-plan/glm-5.4", rand=lambda: 0.0)), "muse/muse-ember-1.0")
+        self.assertIsNone(models.choose(FIXTURE, "routine", rand=lambda: 0.0))
+        self.assertEqual(models.maker("agy", ""), "agy")
+        self.assertEqual(models.maker("opencode-go/gpt-6-luna", "`opencode run`"), "gpt")
+        self.assertEqual(models.maker("sonnet", "host subagent model `sonnet`"), "claude")
+
+    def test_pick_prints_the_worker_and_remembers_it(self):
+        self.table(FIXTURE)
+        self.hook("tick")
+        rc, out, _ = self.sisi("pick", "hard", "--not", "opus", sid="s1")
+        self.assertEqual(rc, 0)
+        self.assertIn("sonnet", out)
+        self.assertIn("start it with the host's delegation tool", out)
+        self.assertEqual(self.state()["picked"], ["sonnet"])
+        rc, out, _ = self.sisi("pick", "hard", "--not", "opus", "--not", "sonnet", sid="s1")
+        self.assertEqual((rc, "out or excluded" in out), (1, True))
+        self.assertEqual(self.sisi("pick", "easy")[0], 1)
+        self.assertEqual(self.sisi("pick")[0], 1)
+
+    def test_a_delegation_needs_a_pick_and_one_pick_buys_one_delegation(self):
+        self.table(WORKERS)
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        self.assertEqual(self.sisi("pick", "hard", sid="s1")[0], 0)
+        self.assertEqual(self.tool("Agent", tool_input={"model": "sonnet", "prompt": "use agy"})[0], 0)
+        rc, _, err = self.tool("Agent", tool_input={"model": "sonnet"})
+        self.assertEqual((rc, "the wheel did not give you" in err), (2, True))             # the pick is spent
+        self.assertEqual(self.tool("Agent", tool_input={"prompt": "no model"})[0], 2)
+        self.assertEqual(self.sisi("pick", "ordinary", sid="s1")[0], 0)
+        self.assertEqual(self.tool("Agent", tool_input={"model": "sonnet"})[0], 2)         # a different worker than picked
+        self.assertEqual(self.tool("mcp__t3__delegate_task", tool_input={"target": {"model": "ZAI-coding-plan/GLM-5.4"}})[0], 0)
+        self.assertEqual(self.tool("mcp__t3__delegate_task", tool_input={"target": {"model": "zai-coding-plan/glm-5.4"}})[0], 2)
+        self.assertEqual(self.tool("Bash", tool_input={"command": "ls"})[0], 0)            # not a worker command
+        # no table: nothing about picks is enforced
+        os.remove(os.path.join(self.data, "models.md"))
+        self.assertEqual(self.tool("Agent", tool_input={"model": "sonnet"})[0], 0)
+
+    def test_a_worker_is_not_started_from_the_shell_unless_the_person_allows_it(self):
+        self.table(WORKERS)
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        shell = {"command": 'opencode run -m zai-coding-plan/glm-5.4 "x"'}
+        rc, out, _ = self.sisi("pick", "ordinary", sid="s1")
+        self.assertIn("zai-coding-plan/glm-5.4", out)
+        self.assertNotIn("opencode run", out)                                              # no command line by default
+        rc, _, err = self.tool("Bash", tool_input=shell)                                   # denied even with a pick
+        self.assertEqual((rc, "do not shell out to a worker" in err), (2, True))
+        self.assertEqual(self.tool("mcp__t3__delegate_task", tool_input={"target": {"model": "zai-coding-plan/glm-5.4"}})[0], 0)
+        self.write(os.path.join(self.data, "config.json"), json.dumps({"core": {"shell_workers": True}}))
+        self.assertIn("opencode run -m zai-coding-plan/glm-5.4", self.sisi("pick", "ordinary", sid="s1")[1])
+        self.assertEqual(self.tool("Bash", tool_input={"command": 'opencode run -m other/model "x"'})[0], 2)  # needs the pick
+        self.assertEqual(self.tool("Bash", tool_input=shell)[0], 0)
+        self.assertEqual(self.tool("Bash", tool_input=shell)[0], 2)                        # one pick, one delegation
+        s = self.state()
+        self.assertEqual((s.get("direct", 0), s["delegations_since"]), (0, 2))             # free on the meter, counted
+
+    def test_a_worker_is_never_asked_for_done_or_a_pick(self):
+        self.table(WORKERS)
+        self.hook("tick", sid="w")
+        self.hook("prompt", sid="w", prompt="You are a worker. Do this task yourself.")
+        for name, fields in (("Edit", {}), ("Agent", {}), ("Workflow", {}), ("mcp__t3__delegate_task", {}),
+                             ("Bash", {"tool_input": {"command": 'opencode run -m x/y "z"'}})):
+            self.assertEqual(self.tool(name, sid="w", **fields)[0], 0, name)
+        self.assertEqual(self.hook("gate", sid="w")[1], "")
+        self.hook("tick")
+        self.hook("prompt", prompt="lead")
+        self.assertEqual(self.tool("Edit", agent_id="a1")[0], 0)                           # the host's subagent
+        self.assertEqual(self.tool("Agent", agent_id="a1")[0], 0)
+
+    def test_the_retro_shows_the_done_statement_and_the_trend(self):
+        self.hook("tick")
+        self.done()
+        self.sisi("done", "--fail", "1", "the counts differ by two rows", sid="s1")
+        log = os.path.join(self.data, "retro.jsonl")
+        rec = lambda m, n, f, gap: json.dumps({"ts": "2026-01-01T00:00:00", "project": "p", "unit": {
+            "minutes": m, "messages": n, "direct": 1, "delegations": 1, "commits": 0, "checks_pass": 1, "checks_fail": f}, **({"gap": "g"} if gap else {"no-gap": "n"})})
+        self.write(log, json.dumps({"ts": "2026-01-01T00:00:00", "gap": "an old record without numbers"}) + "\n" + rec(10, 2, 0, False) + "\n")
+        out = self.sisi("retro", sid="s1")[1]
+        self.assertIn("export every row without losing any", out)                         # the done statement
+        self.assertIn("[fail: the counts differ by two rows]", out)
+        self.assertIn("follow-up", out)
+        self.assertNotIn("measured", out)                                                 # one numbered record is not a trend
+        self.write(log, self.read(log) + "\n".join(rec(m, n, f, g) for m, n, f, g in ((20, 4, 1, True), (30, 6, 0, False), (40, 8, 2, True))) + "\n")
+        out = self.sisi("retro", sid="s1")[1]
+        self.assertIn("measured", out)
+        self.assertRegex(out, r"median 25 min.*median 5 messages.*3 checks failed.*2 with a gap")
+
+    def test_the_new_objective_is_the_one_the_retro_reads(self):
+        sys.path.insert(0, REPO)
+        from sisi import rules
+        self.assertTrue(rules.objective().startswith("Maximize the long-term, verified value of what you deliver"))
+        self.assertTrue(rules.objective().endswith("Judge by outcomes, never by activity."))
 
     # setting up
 
