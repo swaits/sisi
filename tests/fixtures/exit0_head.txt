@@ -1,0 +1,9 @@
+## Outcome and scope
+Grade how well this repository (the product `sisi`) meets one part of its specification. The 42 requirements  -m zai-coding-plan/glm-5.4
+exit: 0
+--- stdout ---
+`.agent-work/grade/A.json` is written and `python3 .agent-work/grade/check_chunk.py A` prints `ok 42` (exit 0).
+
+**Counts (42):** met 3, partial 31, missing 0, not-applicable 8.
+
+- **Met:** R-3.2-9, R-3.3-1, R-3.3-2 (the gate's send-back and unverified release; the scorecard with no aggregate).

@@ -659,7 +659,7 @@ def smoke(driver, timeout=None):
         shutil.rmtree(tmp, ignore_errors=True)
     text = out + "\n" + err
     res = {"output": " ".join(text.split())[:600], "seconds": round(time.time() - started, 1)}
-    fail = workers.classify_failure(text, rc, extra_signatures(driver))
+    fail = workers.classify_failure(workers.failure_text(out, err, rc), rc, extra_signatures(driver))
     if fail is not None:
         kind = {"auth": "login", "limit": "quota"}.get(fail[0], "error")
         return dict(res, ok=False, kind=kind, note=fail[1])

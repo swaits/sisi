@@ -53,9 +53,10 @@ or learned from judged results. The strategy is [canon/orchestration.md](../cano
   or `sisi delegate`). `--explain` says why, briefly, and why the rest were passed over.
 - `sisi delegate brief` prints the delegation-contract template (eight parts);
   `sisi delegate check FILE` lists the parts a brief lacks.
-- `sisi delegate --kind K --difficulty N --brief FILE [--worker W] [--review-of W] [--cwd DIR]`
+- `sisi delegate --kind K --difficulty N --brief FILE [--worker W] [--review-of W] [--cwd DIR] [--timeout-min N]`
   runs a brief through the worker's own CLI when the host has no delegation of its own. A brief
-  lacking outcome, acceptance or the files it may change is refused.
+  lacking outcome, acceptance or the files it may change is refused. `--timeout-min N` (1 to 120)
+  sets the time limit of this run in place of `workers.timeout_s` (default 15 minutes).
 - `sisi delegate judge` is the only way a result enters the ledger: by run id for
   `sisi delegate` runs, or directly (`--worker --type --difficulty`) for work run any other way.
   It carries outcome, the strongest check applied, minutes, tokens, cost, retry-of, and project,
@@ -161,7 +162,13 @@ When a worker fails for a reason that is not about its work (a quota, limit, log
 arriving as a delegation result or as a host notice), the hooks record it down until the reset time in the
 message, mark its pending run `superseded` and hand the agent the router's next worker. The agent is told to
 fall back at once with the same brief and neither ask the person nor report it. `sisi delegate` itself says
-the same when only host-native workers remain. Models discovery finds that it had not seen are named once at
+the same when only host-native workers remain. A failure is read from the end of what a worker printed, never
+from everything it read: `workers.failure_text` returns the last 1,500 characters of each stream, and nothing
+when the run exited 0 and printed more than 4,000 (it did its work; a short exit-0 message such as a limit
+notice is still read). Every classifier (a run, a model listing, a smoke run of a learned tool, a provider's
+own phrases, a learned tool's phrases, the hooks on a host delegation result) reads that text. The shell hook
+acts only on a command that really runs `sisi delegate` and only on a line that begins with a worker id and
+` is unavailable (`, the last one. Models discovery finds that it had not seen are named once at
 session start as unproven. Settings under `orchestrate`: `direct_calls`, `direct_chars`, `extension`,
 `route_window_min`. Mechanics: [design.md](design.md) section 9.
 

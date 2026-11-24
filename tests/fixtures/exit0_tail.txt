@@ -1,0 +1,6 @@
+exit=0
+39 {'partial': 34, 'missing': 4, 'met': 1}
+evidence paths and test names resolve
+B.json is git-ignored (untracked output)
+> build · glm-5.4
+

@@ -3,7 +3,8 @@
 A worker's unavailability reaches a main session as the result of a delegation tool call (the after-tool
 hook) or as a later notice that a background or delegated task failed (the prompt hook). Both run the same
 failure classifier (workers.classify_failure). Unavailability is never a quality judgement: nothing here
-reads a rejected result, and a result that merely mentions a limit in a long report is not a failure.
+reads a rejected result, and a result that merely mentions a limit in a long report is not a failure: only the last
+workers.FAILURE_TAIL_CHARS characters of a message are classified, the same reading `sisi delegate` gives a run's output.
 
 What the agent is told, in at most six lines: which worker is out and until when, the router's next pick for the
 same kind of work with its mechanism line (a host-native worker when every other provider is down), to fall
@@ -51,10 +52,18 @@ def failure_notice(prompt):
     return None
 
 
+_NOTE_LINE = re.compile(r"^([\w.:@+/-]+) is unavailable \(.*$", re.M)
+
+
 def shell_notice(output):
-    """A `sisi delegate` run that already recorded a worker as unavailable: (worker, text) from its output."""
-    m = re.search(r"(\S+) is unavailable \(([^)]*)\)", output or "")
-    return (m.group(1), output) if m else None
+    """A `sisi delegate` run that already recorded a worker as unavailable: (worker, its note line) from the output.
+    Only a line that begins with a worker id and ` is unavailable (` is a note (source text or a report that merely
+    prints the words is not), and the last such line is the one that decides: the run's final state."""
+    notes = _NOTE_LINE.findall(output or "")
+    if not notes:
+        return None
+    last = [m for m in _NOTE_LINE.finditer(output)][-1]
+    return last.group(1), last.group(0)
 
 
 def fmt_time(ts):
@@ -89,8 +98,9 @@ def handle(m, sid, cwd, text, own_model=None, worker=None, run_id=None, record=T
     mark its pending run superseded; remember it in the meter for the question-dialog check; return the fallback
     text, or None when the text is not an unavailability. Never raises past the caller's guard."""
     from . import orchestration
-    worker = worker or workers.identify_worker(text)
+    worker = worker or workers.identify_worker(text)  # the whole message may name the worker
     cand = workers.resolve_worker(worker, workers._cached_candidates()[0]) if worker else None
+    text = (text or "")[-workers.FAILURE_TAIL_CHARS:]  # a failure message is the last thing a tool says; the rest is what it read
     failure = workers.failure_for(text, cand)  # with the worker's provider's phrases and its learned driver's
     if failure is None:
         return None
