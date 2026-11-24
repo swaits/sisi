@@ -41,7 +41,7 @@ Hooks (the agent tool calls these): sisi tick | prompt | watch | gate
 
 Your rules, models table and retro log live in ~/.local/share/sisi ($SISI_DATA, else $XDG_DATA_HOME/sisi), a git repository. Settings: "core" in
 its config.json (gate, meter, direct_calls, direct_extension, rules_lines, rules_chars, organize_after,
-research_days, shell_workers)."""
+research_days, shell_workers, worker_minutes)."""
 
 
 def main(argv):
@@ -66,11 +66,8 @@ def main(argv):
     if cmd in ("install", "uninstall", "release", "update", "rollback", "doctor"):
         from . import install
         return getattr(install, cmd)()
-    if cmd == "rulebook":
-        print(rules.build_rulebook())
-        return 0
-    if cmd == "version":
-        print(store.read(os.path.join(store.ROOT, "VERSION")).strip())
+    if cmd in ("rulebook", "version"):
+        print(rules.build_rulebook() if cmd == "rulebook" else store.read(os.path.join(store.ROOT, "VERSION")).strip())
         return 0
     print(HELP)
     return 0 if cmd in ("help", "--help", "-h") else 1

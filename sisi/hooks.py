@@ -27,7 +27,8 @@ FAILED = ("sisi: check %s failed. A failed check is a gap: record it with `sisi 
           "short>\" --cause \"<the root cause>\" --improve \"<the rule that prevents it>\" --term <term>`.")
 OPEN = ("sisi: these checks have no verdict yet: %s. Give each one: sisi done --pass N \"<evidence>\" or --fail N "
         "\"<why>\". If the work is only pausing: sisi retro --later \"<what it waits for>\".")
-
+LATE = ("%s was started %s and has not reported. Check it now: if it is dead or no longer wanted, cancel it with the "
+        "host's tool and record `sisi judge WORKER bad \"<why>\"`; if it reported, judge it.")
 
 # The names each host gives a hook's fields; the first one present (and of the right type) wins.
 FIELDS = (("session_id", str, ("session_id", "sessionId", "conversation_id", "conversationId")),
@@ -196,17 +197,19 @@ def gate(p, for_subagent=False):
         return 0
     with store.session(sid) as s:
         _begin(s, cwd)
-        if s.get("worker") or s.get("paused"):
+        if s.get("worker"):
             return 0
-        checks = (s.get("done") or {}).get("checks") or []
-        unsaid = ["%d. %s" % (i, c["text"]) for i, c in enumerate(checks, 1) if not c["verdict"]]
-        failed = [str(i) for i, c in enumerate(checks, 1) if c["verdict"] == "fail"]
-        worked = s.get("changed") or store.snapshot(cwd) != s.get("snapshot")
-        if checks and not unsaid and not failed and not worked:
-            from . import retro
-            retro.record(s, cwd, {})  # every check passed and nothing changed: the work closes itself
-            return 0
-        reason = OPEN % "; ".join(unsaid) if unsaid else GATE if worked else FAILED % ", ".join(failed) if failed else ""
+        reason = " ".join("sisi: " + LATE % (w, time.strftime("%H:%M", time.localtime(t))) for w, t in models.overdue(s))
+        if not reason and not s.get("paused"):
+            checks = (s.get("done") or {}).get("checks") or []
+            unsaid = ["%d. %s" % (i, c["text"]) for i, c in enumerate(checks, 1) if not c["verdict"]]
+            failed = [str(i) for i, c in enumerate(checks, 1) if c["verdict"] == "fail"]
+            worked = s.get("changed") or store.snapshot(cwd) != s.get("snapshot")
+            if checks and not unsaid and not failed and not worked:
+                from . import retro
+                retro.record(s, cwd, {})  # every check passed and nothing changed: the work closes itself
+                return 0
+            reason = OPEN % "; ".join(unsaid) if unsaid else GATE if worked else FAILED % ", ".join(failed) if failed else ""
         if not reason or s.get("blocks", 0) >= 2:
             return 0
         s["blocks"] = s.get("blocks", 0) + 1

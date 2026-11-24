@@ -61,10 +61,8 @@ def age_days():
 def stale():
     """One line when the table is missing or old, else ""."""
     age = age_days()
-    if age is None:
-        return "sisi: there is no models table yet. " + ASK
-    if age > store.config()["research_days"]:
-        return "sisi: the models table is %d days old. %s" % (age, ASK)
+    if age is None or age > store.config()["research_days"]:
+        return "sisi: " + ("there is no models table yet. " if age is None else "the models table is %d days old. " % age) + ASK
     return ""
 
 
@@ -131,6 +129,13 @@ def claim(s, text, segment=False):
             s.setdefault("workers_since", []).append(name)
             return True
     return False
+
+
+def overdue(s):
+    """Open delegations older than `worker_minutes`: [(worker, its oldest such start)]. A bad or future start is none."""
+    mins, starts = store.config()["worker_minutes"], s.get("starts")
+    old = lambda v: [t for t in v if type(t) in (int, float) and math.isfinite(t) and t <= time.time() - 60 * mins] if isinstance(v, list) else []
+    return [(w, min(old(v))) for w, v in (starts.items() if isinstance(starts, dict) and type(mins) in (int, float) else []) if old(v)]
 
 
 def out(r, skip, bad, today):

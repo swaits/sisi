@@ -1237,6 +1237,38 @@ class Core(unittest.TestCase):
 
     # the standing constraints
 
+    def test_the_gate_blocks_on_a_worker_that_was_started_and_never_reported(self):
+        self.table(WORKERS)
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        self.assertEqual((self.sisi("pick", "hard", sid="s1")[0], self.tool("Agent", tool_input={"model": "sonnet"})[0]), (0, 0))
+
+        def began(minutes):  # the clock: sonnet's open job began this long ago
+            with open(os.path.join(self.tmp, "state", "core-sessions", "s1.json"), "r+") as f:
+                st = json.load(f)
+                st["starts"]["sonnet"] = [time.time() - minutes * 60] if type(minutes) is int else minutes
+                f.seek(0), f.truncate(), json.dump(st, f)
+        late = lambda: "has not reported" in self.hook("gate")[1]
+        began(5)
+        self.assertFalse(late())                                                         # younger than the limit
+        for bad in (["x"], [time.time() + 3600], [float("nan")], "x", [None]):          # malformed or future: never a block, never a crash
+            began(bad)
+            self.assertFalse(late(), bad)
+        began(16)
+        self.hook("prompt", prompt="go on")
+        rc, out, _ = self.hook("gate")
+        self.assertEqual((rc, '"block"' in out, "sonnet was started" in out, "judge WORKER bad" in out), (0, True, True, True), out)
+        self.sisi("retro", "--later", "waiting for sonnet", sid="s1")
+        began(16)                                                                        # a retro ends the stored starts; this one is still open
+        self.hook("prompt", prompt="and again")
+        self.assertTrue(late())                                                          # a pause does not silence it
+        self.assertTrue(late())
+        self.assertFalse(late())                                                         # at most two blocks in a turn
+        self.hook("prompt", prompt="again")
+        self.assertEqual(self.sisi("judge", "sonnet", "bad", "cancelled, never reported", sid="s1")[0], 0)
+        self.assertFalse(late())
+
     def test_the_spec_is_unchanged(self):
         for line in self.read(REPO, "docs", "spec", "SHA256SUMS").splitlines():
             digest, rel = line.split()

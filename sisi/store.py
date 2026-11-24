@@ -18,7 +18,8 @@ LIB = os.environ.get("SISI_LIB") or os.path.join(HOME, ".local", "lib", "sisi")
 
 # Every setting there is. The person overrides one under "core" in config.json in their store.
 DEFAULTS = {"gate": True, "meter": True, "direct_calls": 8, "direct_extension": 8,
-            "rules_lines": 30, "rules_chars": 4000, "organize_after": 8, "research_days": 7, "shell_workers": False}
+            "rules_lines": 30, "rules_chars": 4000, "organize_after": 8, "research_days": 7, "shell_workers": False,
+            "worker_minutes": 15}
 
 
 def config():
@@ -97,9 +98,7 @@ def project_root(cwd=None):
     """The project a folder belongs to. Every checkout of one repository is the same project."""
     cwd = cwd or os.getcwd()
     rc, out = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd)
-    if rc == 0 and os.path.basename(out.strip()) == ".git":
-        return os.path.dirname(out.strip())
-    return os.path.abspath(cwd)
+    return os.path.dirname(out.strip()) if rc == 0 and os.path.basename(out.strip()) == ".git" else os.path.abspath(cwd)
 
 
 def project_key(cwd=None):

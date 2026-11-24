@@ -163,8 +163,7 @@ def run(args, cwd=None):
     cwd = cwd or os.getcwd()
     sid = store.current_session(cwd)
     if not args:
-        report(sid, cwd)
-        return 0
+        return report(sid, cwd) or 0
     opt = _options(args)
     scope, term, better = [(opt or {}).pop(k, None) for k in ("scope", "term", "better")]
     scope = scope or rules.PROJECT
