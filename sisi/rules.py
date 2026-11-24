@@ -27,6 +27,7 @@ Rewrite both lists so they serve that objective best:
 - Lines marked [owner ...] are the person's own words. Keep what each one asks for. You may tighten the
   wording or merge them, and the result stays marked [owner <date>].
 - Keep the [source date] mark at the end of every line.
+- A `better` that recurs across retros has earned a rule: add it, worded as an instruction, marked [retro <date>].
 - Each list: at most %(lines)d lines and %(chars)d characters. Fewer is better.
 
 Answer with exactly this shape and nothing else:

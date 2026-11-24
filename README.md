@@ -17,7 +17,8 @@ and a delegation to a worker the wheel did not give is refused. One pick, one de
 person will need next: delegating or editing is refused until then. Every check needs a verdict
 (`sisi done --pass N` or `--fail N`) before the turn ends; a turn that changed things, or failed a check,
 is sent to the retro, and any other closes itself. Each record in `retro.jsonl` carries the numbers
-(minutes, messages, tool calls, delegations, checks) and `sisi retro` shows their trend.
+(minutes, messages, tool calls, delegations, checks) and the `term` it fell short on (`value`, `evidence`, `time`, `cost`,
+`attention` or `learning`: the terms of the objective), and `sisi retro` lays the facts out under those terms and shows their trend.
 
 ## Install
 
@@ -68,8 +69,9 @@ its limits are.
 | `sisi done --pass N "…"` / `--fail N "…"` | Give a check its verdict and evidence; `sisi done` alone shows it |
 | `sisi pick routine\|ordinary\|hard [--review-of WORKER] [--not WORKER]` | The wheel gives one worker; a review goes to a different maker |
 | `sisi retro` | Print what happened in this piece of work, to set against the objective |
-| `sisi retro --gap … --cause … --improve … [--scope user]` | Record the gap; the improvement is a rule at once |
-| `sisi retro --no-gap …` / `--later …` | Nothing fell short; or the work is not finished yet |
+| `sisi retro --gap … --cause … --improve … --term T [--scope user]` | Record the gap and the term of the objective it fell short on; the improvement is a rule at once |
+| `sisi retro --no-gap … --term T --better …` | Nothing fell short, but work can always be done better: name the term and the one concrete thing that would have scored better (recorded, not a rule) |
+| `sisi retro --later …` | The work is not finished yet |
 | `sisi learn [--project] "…"` | The person's own words become a rule at once |
 | `sisi rules` / `sisi rules organize [--record FILE]` / `sisi rules revert` | See the learned rules; have a worker organize them; undo the last change |
 | `sisi models` / `sisi models research [--record FILE]` | The workers table; have a worker rebuild it |

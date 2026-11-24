@@ -11,9 +11,9 @@ Before and after the work
 
 The learning loop
   sisi retro                       what happened in this piece of work, to set against the objective
-  sisi retro --gap G --cause C --improve I [--scope user]
+  sisi retro --gap G --cause C --improve I --term T [--scope user]
                                    record the gap; the improvement becomes a rule at once
-  sisi retro --no-gap TEXT | --later TEXT
+  sisi retro --no-gap TEXT --term T --better B | --later TEXT
                                    nothing fell short; or the work is not finished yet
   sisi learn [--project] TEXT      the person's own words become a rule at once
   sisi rules                       the learned rules in force here

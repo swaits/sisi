@@ -6,15 +6,21 @@ from . import rules, store
 DONE_USAGE = """usage: sisi done --goal "<the goal in their words, 5+ words>" --check "<a check that can fail, 4+ words>" [--check ...] \\
                   --next "<what they will need next and what you do about it: now, room, follow-up or drop; 4+ words>"
        sisi done --pass N "<evidence>" | --fail N "<why>"      sisi done: show it"""
-FLAGS = ("--gap", "--cause", "--improve", "--no-gap", "--later", "--scope")
+FLAGS = ("--gap", "--cause", "--improve", "--no-gap", "--later", "--scope", "--term", "--better")
+TERMS = {"value": "what the person wanted", "evidence": "verified by checks that fit the risk", "time": "elapsed time",
+         "cost": "compute and tool cost", "attention": "the person's attention", "learning": "getting better at the next piece of work"}
+TERM_HELP = "--term is one of: %s." % ", ".join(TERMS)
 SECRET = re.compile(r"\b(sk-[a-z0-9_-]{16,}|gh[pousr]_[a-z0-9]{20,}|xox[abp]-[a-z0-9-]{10,}|akia[0-9a-z]{16}|[a-f0-9]{40,})|\b(password|passwd|secret|token|api[_-]?key)\s*[:=]\s*\S+", re.I)
 USAGE = """Record one of these:
   sisi retro --gap "<where the work fell short of the objective, with the evidence>" \\
              --cause "<the root cause>" \\
-             --improve "<the instruction that would have prevented it, worded as a rule>" [--scope user]
+             --improve "<the instruction that would have prevented it, worded as a rule>" --term TERM [--scope user]
       The improvement becomes a rule at once: in this project, or with --scope user in all your work.
-  sisi retro --no-gap "<what shows the work met the objective>"
-  sisi retro --later "<what the unfinished work is waiting for>\""""
+  sisi retro --no-gap "<what shows the work met the objective>" --term TERM \\
+             --better "<one concrete thing that would have scored better on that term, 5+ words>"
+      TERM is where the work fell short, or could most have scored better: %s.
+      A piece of work can always be done better; the better is recorded, not made a rule.
+  sisi retro --later "<what the unfinished work is waiting for>\"""" % "; ".join("%s = %s" % kv for kv in TERMS.items())
 
 
 def clean(text):
@@ -32,13 +38,18 @@ def counts(state, cwd):
 
 def facts(state, cwd):
     n, dirty = counts(state, cwd), store.git(["status", "--porcelain"], cwd)[1].splitlines()
-    out = ["  time: %d minutes since %s" % (n["minutes"], "the last retro" if state.get("retro_at") else "the session began"),
-           "  the person wrote %d message(s) in that time: read them again. Was any a correction, or something "
-           "they had to say twice?" % n["messages"],
-           "  changed: %d commit(s), %d file(s) uncommitted" % (n["commits"], len(dirty)),
-           "  you made %d tool call(s) yourself and %d delegation(s)" % (n["direct"], n["delegations"])]
+    d = show(state["done"]) if state.get("done") else ["(no done recorded)"]
+    named = fell(_records()[-10:])
+    out = ["time (measured): %d minutes since %s" % (n["minutes"], "the last retro" if state.get("retro_at") else "the session began"),
+           "cost (measured): you made %d tool call(s) yourself and %d delegation(s); workers used: %s" % (
+               n["direct"], n["delegations"], ", ".join(state.get("workers_since") or []) or "none")]
     out += ['  you extended your own direct work: "%s"' % r for r in state.get("reasons_since") or []]
-    return out
+    out += ["attention (measured): the person wrote %d message(s) in that time: read them again. Was any a correction, "
+            "or something they had to say twice?" % n["messages"],
+            "evidence (measured): %d check(s) passed, %d failed" % (n["checks_pass"], n["checks_fail"])] + d[1:-1]
+    out += ["value (judged): did the person get what they wanted? changed: %d commit(s), %d file(s) uncommitted" % (n["commits"], len(dirty)),
+            d[0], d[-1]]
+    return out + ["learning (measured): last 10 pieces of work named: %s" % (named or "none yet")]
 
 
 def show(d):
@@ -47,23 +58,36 @@ def show(d):
             + ["next: " + d["next"]])
 
 
-def trend():
-    """The measured trend over the records that carry numbers: the last 10 pieces of work and the 10 before."""
-    units = []
+def _records():
+    out = []
     for line in store.read(store.data("retro.jsonl")).splitlines():
         try:
-            if isinstance(json.loads(line).get("unit"), dict):
-                units.append(json.loads(line))
-        except (ValueError, AttributeError):
+            if isinstance(json.loads(line), dict):
+                out.append(json.loads(line))
+        except ValueError:
             pass
+    return out
+
+
+def fell(group):
+    """How many of these records named each term, e.g. "time 4, attention 2" (old records carry none)."""
+    return ", ".join("%s %d" % (k, n) for k in TERMS for n in [sum(r.get("term") == k for r in group)] if n)
+
+
+def trend():
+    """The measured trend, by term, over the records that carry numbers: the last 10 pieces of work and the 10 before."""
+    records = _records()
+    units = [r for r in records if isinstance(r.get("unit"), dict)]
     median = lambda v: (lambda s: (s[(len(s) - 1) // 2] + s[len(s) // 2]) / 2.0)(sorted(v))
     out = []
     for label, group in (("last", units[-10:]), ("before", units[-20:-10])):
         if group:
             u = [r["unit"] for r in group]
-            out.append("  %s %d: median %g min, median %g messages, %d checks failed, %d with a gap" % (
-                label, len(group), median([x.get("minutes", 0) for x in u]), median([x.get("messages", 0) for x in u]),
-                sum(x.get("checks_fail", 0) for x in u), sum("gap" in r for r in group)))
+            out.append("  %s %d: time median %g min; cost median %g calls; attention median %g messages; evidence %d checks failed" % (
+                label, len(group), median([x.get("minutes", 0) for x in u]),
+                median([x.get("direct", 0) + x.get("delegations", 0) for x in u]), median([x.get("messages", 0) for x in u]),
+                sum(x.get("checks_fail", 0) for x in u)))
+    out.append("  fell short on: %s" % (fell(records[-10:]) or "nothing named yet"))
     return ["measured (pieces of work with numbers):"] + out if len(units) >= 2 else []
 
 
@@ -72,10 +96,8 @@ def report(sid, cwd):
     if sid:
         with store.session(sid) as s:
             state = dict(s)
-    print("sisi retro: what happened in this piece of work.")
+    print("sisi retro: what happened in this piece of work, by term of the objective.")
     print("\n".join(facts(state, cwd)))
-    if state.get("done"):
-        print("\n" + "\n".join(show(state["done"])))
     print("\nThe objective: %s" % rules.objective())
     print("\nSet what happened against the objective, term by term. Where did the work fall short, why, and what "
           "instruction would have prevented it? Name the root cause; general advice is not an improvement.\n")
@@ -155,15 +177,24 @@ def run(args, cwd=None):
         report(sid, cwd)
         return 0
     opt = _options(args)
-    scope = (opt or {}).pop("scope", rules.PROJECT)
+    scope, term, better = [(opt or {}).pop(k, None) for k in ("scope", "term", "better")]
+    scope = scope or rules.PROJECT
     kind = (None if not opt or scope not in (rules.USER, rules.PROJECT)
             else "later" if set(opt) == {"later"} and _words(opt, "later", 3)
             else "no-gap" if set(opt) == {"no-gap"} and _words(opt, "no-gap", 5)
             else "gap" if set(opt) == {"gap", "cause", "improve"} and all(_words(opt, k, 4) for k in opt) else None)
-    if kind is None or len(opt.get("improve", "")) > 400:
+    if kind is None or len(opt.get("improve", "")) > 400 or (kind == "later" and (term or better)) or (kind != "no-gap" and better):
         print("sisi retro: that is not a retro yet (each part needs a real sentence; an improvement is at most "
               "400 characters).\n" + USAGE)
         return 1
+    if kind != "later" and term not in TERMS:
+        print("sisi retro: name the term of the objective where the work fell short, or could most have scored better. " + TERM_HELP)
+        return 1
+    if kind == "no-gap" and len((better or "").split()) < 5:
+        print("sisi retro: a piece of work can always be done better. Add --better \"<one concrete thing that would have "
+              "scored better on %s, 5+ words>\"; it is recorded, not made a rule." % term)
+        return 1
+    opt.update({"term": term} if kind == "gap" else {"term": term, "better": clean(better)} if kind == "no-gap" else {})
     if sid:
         with store.session(sid) as s:
             if kind == "no-gap" and any(c["verdict"] == "fail" for c in (s.get("done") or {}).get("checks", [])):

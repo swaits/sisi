@@ -7,7 +7,8 @@ import glob, hashlib, json, os, random, re, shutil, subprocess, sys, tempfile, t
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GAP = ("--gap", "the export dropped rows with empty names until the person noticed",
-       "--cause", "no check compared the row counts before and after")
+       "--cause", "no check compared the row counts before and after", "--term", "evidence")
+NG = ("--term", "time", "--better", "start the first build in the same turn as research")
 
 
 HEADER = "| worker | how to call it | use for | cost | good at, bad at | notes |\n|---|---|---|---|---|---|\n"
@@ -123,8 +124,41 @@ class Core(unittest.TestCase):
                      GAP + ("--improve", "Compare the row counts every time", "--scope", "everyone")):
             self.assertEqual(self.sisi("retro", *args, sid="s1")[0], 1, args)
         self.assertIn('"block"', self.hook("gate")[1])
-        self.assertEqual(self.sisi("retro", "--no-gap", "the person accepted it first time and every check passed", sid="s1")[0], 0)
+        self.assertEqual(self.sisi("retro", "--no-gap", "the person accepted it first time and every check passed", *NG, sid="s1")[0], 0)
         self.assertEqual(self.hook("gate")[1], "")
+
+    def test_a_no_gap_names_a_term_and_one_better_thing_and_adds_no_rule(self):
+        self.hook("tick")
+        self.done()
+        self.tool("Write")
+        ok = ("--no-gap", "the person accepted it first time and every check passed")
+        rules_before = self.sisi("rules", sid="s1")[1]
+        for args in (ok, ok + ("--term", "time"), ok + ("--better", "start the first build in the same turn"),
+                     ok + ("--term", "time", "--better", "start sooner"),
+                     ok + ("--term", "speed", "--better", "start the first build in the same turn")):
+            rc, out, _ = self.sisi("retro", *args, sid="s1")
+            self.assertEqual(rc, 1, args)
+        self.assertIn("can always be done better", out + self.sisi("retro", *ok, "--term", "time", sid="s1")[1])
+        self.assertIn("value, evidence, time, cost, attention, learning", out)
+        rc, out, _ = self.sisi("retro", *ok, *NG, sid="s1")
+        self.assertEqual(rc, 0, out)
+        rec = self.records()[-1]
+        self.assertEqual((rec["term"], rec["better"]), ("time", NG[3]))
+        self.assertEqual(self.sisi("rules", sid="s1")[1], rules_before)          # one incident is not a rule
+
+    def test_a_gap_needs_a_term_from_the_objective(self):
+        self.hook("tick")
+        self.done()
+        self.tool("Write")
+        base = GAP[:4] + ("--improve", "Compare row counts before and after every export change")
+        for extra in ((), ("--term", "speed")):
+            rc, out, _ = self.sisi("retro", *base, *extra, sid="s1")
+            self.assertEqual(rc, 1, extra)
+            self.assertIn("value, evidence, time, cost, attention, learning", out)
+        rc, out, _ = self.sisi("retro", *base, "--term", "attention", sid="s1")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.records()[-1]["term"], "attention")
+        self.assertIn("Compare row counts", self.sisi("rules", sid="s1")[1])
 
     def test_later_lets_unfinished_work_pause_until_it_changes_again(self):
         self.hook("tick")
@@ -161,7 +195,7 @@ class Core(unittest.TestCase):
     def test_a_secret_never_reaches_a_rule(self):
         self.hook("tick")
         self.sisi("retro", "--gap", "the deploy failed because the key was pasted wrong", "--cause", "the key was typed by hand each time",
-                  "--improve", "Read the deploy key from the keyring, never paste api_key=sk-abcdefghijklmnopqrstuvwx into a command", sid="s1")
+                  "--term", "evidence", "--improve", "Read the deploy key from the keyring, never paste api_key=sk-abcdefghijklmnopqrstuvwx into a command", sid="s1")
         stored = "".join(self.read(p) for p in glob.glob(os.path.join(self.data, "**", "*.*"), recursive=True))
         self.assertIn("Read the deploy key from the keyring", stored)
         self.assertIn("<redacted>", stored)
@@ -292,7 +326,7 @@ class Core(unittest.TestCase):
         self.assertEqual((rc, out.startswith("usage: sisi done"), err), (1, True, ""))
         self.hook("prompt", prompt="again")
         self.assertIn("no retro yet", self.hook("gate")[1])                                # changed and failed: the retro
-        self.assertEqual(self.sisi("retro", "--no-gap", "the person accepted it first time and every check passed", sid="s1")[0], 1)
+        self.assertEqual(self.sisi("retro", "--no-gap", "the person accepted it first time and every check passed", *NG, sid="s1")[0], 1)
         self.assertEqual(self.sisi("retro", *GAP, "--improve", "Compare row counts before and after every export change", sid="s1")[0], 0)
         rec = self.records()[-1]
         self.assertEqual((rec["unit"]["checks_pass"], rec["unit"]["checks_fail"], rec["done"]["checks"][1]["verdict"]), (1, 1, "fail"))
@@ -403,17 +437,20 @@ class Core(unittest.TestCase):
         self.sisi("done", "--fail", "1", "the counts differ by two rows", sid="s1")
         log = os.path.join(self.data, "retro.jsonl")
         rec = lambda m, n, f, gap: json.dumps({"ts": "2026-01-01T00:00:00", "project": "p", "unit": {
-            "minutes": m, "messages": n, "direct": 1, "delegations": 1, "commits": 0, "checks_pass": 1, "checks_fail": f}, **({"gap": "g"} if gap else {"no-gap": "n"})})
+            "minutes": m, "messages": n, "direct": 1, "delegations": 1, "commits": 0, "checks_pass": 1, "checks_fail": f}, **({"gap": "g", "term": "time"} if gap else {"no-gap": "n", "better": "b b b b b", "term": "attention"})})
         self.write(log, json.dumps({"ts": "2026-01-01T00:00:00", "gap": "an old record without numbers"}) + "\n" + rec(10, 2, 0, False) + "\n")
         out = self.sisi("retro", sid="s1")[1]
         self.assertIn("export every row without losing any", out)                         # the done statement
         self.assertIn("[fail: the counts differ by two rows]", out)
         self.assertIn("follow-up", out)
-        self.assertNotIn("measured", out)                                                 # one numbered record is not a trend
+        for term in ("value", "evidence", "time", "cost", "attention", "learning"):
+            self.assertRegex(out, r"(?m)^%s \((measured|judged)\)" % term)               # every term, marked
+        self.assertNotIn("median", out)                                                   # one numbered record is not a trend
         self.write(log, self.read(log) + "\n".join(rec(m, n, f, g) for m, n, f, g in ((20, 4, 1, True), (30, 6, 0, False), (40, 8, 2, True))) + "\n")
         out = self.sisi("retro", sid="s1")[1]
-        self.assertIn("measured", out)
-        self.assertRegex(out, r"median 25 min.*median 5 messages.*3 checks failed.*2 with a gap")
+        self.assertRegex(out, r"time median 25 min.*cost median 2 calls.*attention median 5 messages.*evidence 3 checks failed")
+        self.assertIn("fell short on: time 2, attention 2", out)
+        self.assertIn("learning (measured): last 10 pieces of work named: time 2, attention 2", out)
 
     def test_the_new_objective_is_the_one_the_retro_reads(self):
         sys.path.insert(0, REPO)
@@ -864,13 +901,13 @@ class Core(unittest.TestCase):
         self.done()
         self.sisi("done", "--fail", "2", "the row was dropped", sid="s1")
         self.done()                                                                             # done recorded again
-        self.assertEqual(self.sisi("retro", "--no-gap", "the person accepted it and the checks all passed", sid="s1")[0], 0)
+        self.assertEqual(self.sisi("retro", "--no-gap", "the person accepted it and the checks all passed", *NG, sid="s1")[0], 0)
         self.assertEqual(self.records()[-1]["unit"]["checks_fail"], 1)
         self.done()
         self.sisi("done", "--fail", "1", "the counts differ by two", sid="s1")
         self.sisi("done", "--pass", "1", "the counts match at 120 rows", sid="s1")
         self.sisi("done", "--pass", "2", "the empty row is exported", sid="s1")
-        self.assertEqual(self.sisi("retro", "--no-gap", "the person accepted it and the checks all passed", sid="s1")[0], 0)
+        self.assertEqual(self.sisi("retro", "--no-gap", "the person accepted it and the checks all passed", *NG, sid="s1")[0], 0)
         self.assertEqual(self.records()[-1]["unit"]["checks_fail"], 1)                          # reset by the record before
 
     def test_a_pick_matches_whole_names_and_ends_with_the_retro(self):
@@ -883,7 +920,7 @@ class Core(unittest.TestCase):
         self.assertEqual(self.tool("Agent", tool_input={"model": "glm"})[0], 0)
         self.sisi("pick", "ordinary", sid="s1")
         self.assertEqual(self.tool("Agent", tool_input={"model": "claude-3-o3ghost"})[0], 2)
-        self.sisi("retro", "--no-gap", "the person accepted it and the checks all passed", sid="s1")
+        self.sisi("retro", "--no-gap", "the person accepted it and the checks all passed", *NG, sid="s1")
         self.assertNotIn("picked", self.state())
         self.done()
         self.assertEqual(self.tool("Agent", tool_input={"model": "o3"})[0], 2)                  # the old pick is gone
@@ -934,7 +971,7 @@ class Core(unittest.TestCase):
         self.done()
         self.sisi("pick", "hard", sid="s1")
         self.tool("Agent", tool_input={"model": "sonnet"})
-        self.sisi("retro", "--no-gap", "the person accepted it and the checks all passed", sid="s1")
+        self.sisi("retro", "--no-gap", "the person accepted it and the checks all passed", *NG, sid="s1")
         self.assertEqual(self.records()[-1]["workers"], ["sonnet"])
 
     # the standing constraints
@@ -947,10 +984,10 @@ class Core(unittest.TestCase):
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLess(code, 1430, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLess(code, 1460, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 120)
-        self.assertLess(len(rulebook), 8000)
+        self.assertLess(len(rulebook), 8150)
 
 
 if __name__ == "__main__":

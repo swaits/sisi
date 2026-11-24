@@ -59,7 +59,7 @@ something that did not run read as passed.
 Time to a first useful result and time to a verified finish are both part of success. Work in
 parallel, run the quickest check first and slow ones in the background, and hand over a useful
 part as soon as it stands on its own. Release each piece the moment its checks pass, with a way
-back; reviews and later builds run beside or after a release, never in front of it. Do not chain
+back; reviews and later builds run beside or after a release, never in front of it. Make the smallest piece that can be released on its own the first check in `sisi done`, and release it before any other build or review starts. Do not chain
 single workers one after another. Long builds running at once each get their own checkout and
 branch, merged as each passes. When something has taken out of proportion to its
 progress, stop and change approach: narrow it, use another worker, or ask. Never buy speed with
@@ -108,6 +108,6 @@ When a piece of work ends, the lead runs `sisi retro`, which prints what happene
 the objective, term by term: where did the work fall short, why, and what instruction would have
 prevented it? Record that (`sisi retro --gap … --cause … --improve …`). The improvement becomes a rule at
 once, in this project or in all your work. Name the root cause; general advice is not an
-improvement. If nothing fell short, say what shows it. When the person states a lasting
+improvement. Work can always be done better: when nothing fell short, name the one thing that would have scored better (`--no-gap … --better …`). Name the term of the objective each time (`--term`). When the person states a lasting
 preference, record their words at once with `sisi learn`. When session start says the learned
 rules need organizing, have a cheap worker do it in the background.

@@ -24,7 +24,7 @@ NOPICK = ("sisi: this delegation goes to a worker the wheel did not give you. si
           "delegation.\n")
 NOSHELL = "sisi: do not shell out to a worker; start it with the host's delegation tool.\n"
 FAILED = ("sisi: check %s failed. A failed check is a gap: record it with `sisi retro --gap \"<where it fell "
-          "short>\" --cause \"<the root cause>\" --improve \"<the rule that prevents it>\"`.")
+          "short>\" --cause \"<the root cause>\" --improve \"<the rule that prevents it>\" --term <term>`.")
 OPEN = ("sisi: these checks have no verdict yet: %s. Give each one: sisi done --pass N \"<evidence>\" or --fail N "
         "\"<why>\". If the work is only pausing: sisi retro --later \"<what it waits for>\".")
 
