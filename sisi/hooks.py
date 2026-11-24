@@ -208,7 +208,7 @@ def gate(p, for_subagent=False):
                 from . import retro
                 retro.record(s, cwd, {})  # every check passed and nothing changed: the work closes itself
                 return 0
-            reason = OPEN % "; ".join(unsaid) if unsaid else GATE if worked else FAILED % ", ".join(failed) if failed else ""
+            reason = "" if unsaid and models.waiting(s) else OPEN % "; ".join(unsaid) if unsaid else GATE if worked else FAILED % ", ".join(failed) if failed else ""
         if not reason or s.get("blocks", 0) >= 2:
             return 0
         s["blocks"] = s.get("blocks", 0) + 1

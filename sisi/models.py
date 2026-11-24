@@ -141,6 +141,11 @@ def overdue(s):
     return [(w, min(old(v))) for w, v in (starts.items() if isinstance(starts, dict) and type(mins) in (int, float) else []) if old(v)]
 
 
+def waiting(s):
+    """A delegation of this piece of work is open: started and not yet judged."""
+    return isinstance(s.get("starts"), dict) and any(isinstance(v, list) and v for v in s["starts"].values())
+
+
 def out(r, skip, bad, today):
     """Why this worker is off the wheel, "" when it is on."""
     until = [d for d in re.findall(r"out until (\d{4}-\d{2}-\d{2})", " ".join(r).lower()) if d > today]

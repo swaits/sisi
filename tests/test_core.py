@@ -1428,6 +1428,27 @@ class Core(unittest.TestCase):
         self.assertEqual(self.sisi("judge", "sonnet", "bad", "cancelled, never reported", sid="s1")[0], 0)
         self.assertFalse(late())
 
+    def test_a_lead_waiting_on_a_worker_that_is_not_late_is_not_stopped_for_open_checks(self):
+        self.table(WORKERS)
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        self.assertIn("no verdict yet", self.hook("gate")[1])                              # no delegation open: blocked as before
+        self.assertEqual(self.sisi("pick", "hard", sid="s1")[0], 0)
+        self.assertEqual(self.tool("Agent", tool_input={"model": "sonnet"})[0], 0)
+        for turn in range(5):                                                              # each wake-up of the lead is a request
+            self.hook("prompt", prompt="the delegated task finished %d" % turn)
+            self.assertEqual(self.hook("gate")[1], "", turn)                               # started, not judged, not late: waiting
+        with open(os.path.join(self.tmp, "state", "core-sessions", "s1.json"), "r+") as f:
+            st = json.load(f)
+            st["starts"]["sonnet"] = [time.time() - 16 * 60]
+            f.seek(0), f.truncate(), json.dump(st, f)
+        self.hook("prompt", prompt="still nothing")
+        self.assertIn("has not reported", self.hook("gate")[1])                            # late: the LATE message as before
+        self.assertEqual(self.sisi("judge", "sonnet", "good", "reported and was checked", sid="s1")[0], 0)
+        self.hook("prompt", prompt="judged")
+        self.assertIn("no verdict yet", self.hook("gate")[1])                              # judged: no delegation open again
+
     def test_the_spec_is_unchanged(self):
         for line in self.read(REPO, "docs", "spec", "SHA256SUMS").splitlines():
             digest, rel = line.split()
