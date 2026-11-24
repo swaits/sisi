@@ -394,7 +394,7 @@ class Core(unittest.TestCase):
         sys.path.insert(0, REPO)
         from sisi import rules
         self.assertTrue(rules.objective().startswith("Maximize the long-term, verified value of what you deliver"))
-        self.assertTrue(rules.objective().endswith("Judge by outcomes, never by activity."))
+        self.assertTrue(rules.objective().endswith("a gain on one measure must not hide a loss on another."))
 
     # setting up
 
