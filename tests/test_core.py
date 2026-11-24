@@ -998,13 +998,13 @@ class Core(unittest.TestCase):
         src = self.source("1.0.0")
         self.assertEqual(run(os.path.join(src, "bin", "sisi"), "update").returncode, 1)         # nothing released yet: nothing recorded
         self.assertEqual(run(os.path.join(src, "bin", "sisi"), "release").returncode, 0)        # a checkout with no remote
-        self.assertFalse(os.path.exists(os.path.join(self.env["SISI_LIB"], "current", "SOURCE")))
+        self.assertEqual(self.read(self.env["SISI_LIB"], "current", "SOURCE").split("\n")[0], "")                  # no remote to record
         rc = run(os.path.join(src, "bin", "sisi"), "update")
         self.assertEqual((rc.returncode, "does not record where it came from" in rc.stdout), (1, True))
         mine = os.path.join(self.tmp, "mine")
         subprocess.run(["git", "clone", "-q", src, mine], check=True, capture_output=True)      # the person's checkout, with its remote
         self.assertEqual(run(os.path.join(mine, "bin", "sisi"), "release").returncode, 0)
-        self.assertEqual(self.read(self.env["SISI_LIB"], "current", "SOURCE").strip(), src)
+        self.assertEqual(self.read(self.env["SISI_LIB"], "current", "SOURCE").split("\n")[0], src)
         self.sisi("learn", "Always keep what the person wrote")
         self.write(os.path.join(self.data, "models.md"), WORKERS)
         self.write(os.path.join(self.data, "retro.jsonl"), '{"gap": "g"}\n')
@@ -1013,7 +1013,7 @@ class Core(unittest.TestCase):
         rc = run(os.path.join(mine, "bin", "sisi"), "update")
         self.assertEqual(rc.returncode, 0, rc.stdout + rc.stderr)
         self.assertEqual(run(os.path.join(self.env["SISI_LIB"], "current", "bin", "sisi"), "version").stdout.strip(), "2.0.0")
-        self.assertEqual(self.read(self.env["SISI_LIB"], "current", "SOURCE").strip(), src)     # and it can update again
+        self.assertEqual(self.read(self.env["SISI_LIB"], "current", "SOURCE").split("\n")[0], src)     # and it can update again
         self.assertEqual({n: self.read(self.data, n) for n in keep}, keep)
         self.assertIn("Always keep what the person wrote", self.read(self.data, "generated", "core.md"))
         self.assertEqual(os.listdir(env["TMPDIR"]), [])                                         # the fetched copy is gone
@@ -1037,6 +1037,25 @@ class Core(unittest.TestCase):
             r = run(installed, "release")
             self.assertEqual((r.returncode, sorted(os.listdir(os.path.join(lib, "releases")))), (1, folders), (source, r.stdout))
             self.assertIn("run it from the source checkout", r.stdout)
+
+    def test_release_through_the_installed_command_finds_a_checkout_whose_remote_is_a_url(self):
+        run = lambda exe, *a: subprocess.run([sys.executable, exe] + list(a), cwd=self.proj, env=self.env, capture_output=True, text=True,
+                                             stdin=subprocess.DEVNULL)
+        lib, src, url = self.env["SISI_LIB"], self.source("1.0.0"), "https://example.invalid/sisi.git"
+        subprocess.run(["git", "remote", "add", "origin", url], cwd=src, check=True, capture_output=True)
+        self.assertEqual(run(os.path.join(src, "bin", "sisi"), "release").returncode, 0)
+        self.assertEqual(self.read(lib, "current", "SOURCE").split("\n")[:2], [url, src])      # the remote on line one, the checkout on line two
+        self.source("2.0.0")                                                             # the checkout changes
+        r = run(os.path.join(lib, "current", "bin", "sisi"), "release")
+        self.assertEqual((r.returncode, self.read(lib, "current", "VERSION").strip()), (0, "2.0.0"), r.stdout)
+        folders = sorted(os.listdir(os.path.join(lib, "releases")))
+        self.write(os.path.join(lib, "current", "SOURCE"), url + "\n")                    # an old one-line SOURCE
+        r = run(os.path.join(lib, "current", "bin", "sisi"), "release")
+        self.assertEqual((r.returncode, "run it from the source checkout" in r.stdout, sorted(os.listdir(os.path.join(lib, "releases")))), (1, True, folders))
+        self.write(os.path.join(lib, "current", "SOURCE"), url + "\n" + src + "\n")
+        shutil.rmtree(src)                                                               # the recorded checkout is gone
+        r = run(os.path.join(lib, "current", "bin", "sisi"), "release")
+        self.assertEqual((r.returncode, sorted(os.listdir(os.path.join(lib, "releases")))), (1, folders), r.stdout)
 
     def test_doctor_says_how_every_tool_stands(self):
         names = [h["name"] for h in json.loads(self.read(REPO, "canon", "harnesses.json"))]

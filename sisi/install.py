@@ -227,9 +227,9 @@ def _switch(dest):
 def release():
     """Run the tests, then make this copy the one the hooks run. The four newest releases are kept. Run through the
     installed command (a copy in the releases folder) it releases the checkout that copy came from, if there is one."""
-    folder, src = os.path.join(store.LIB, "releases"), store.read(os.path.join(store.ROOT, "SOURCE")).strip()
+    folder, src = os.path.join(store.LIB, "releases"), (store.read(os.path.join(store.ROOT, "SOURCE")).split("\n") + ["", ""])[1].strip()
     if store.ROOT.startswith(os.path.realpath(folder) + os.sep):  # the installed command: a copy of it ships nothing new
-        if src and os.path.isfile(os.path.join(src, "bin", "sisi")):  # the checkout this copy records it came from
+        if src and os.path.isfile(os.path.join(src, "bin", "sisi")):  # SOURCE: the remote's url, then the checkout's path
             print("sisi release: this is the installed copy; releasing from %s instead." % src)
             return subprocess.run([sys.executable, os.path.join(src, "bin", "sisi"), "release"]).returncode
         print("sisi release: run it from the source checkout.")
@@ -240,8 +240,7 @@ def release():
     name = time.strftime("%Y%m%dT%H%M%S", time.gmtime()) + "%03dZ" % (time.time() % 1 * 1000)  # two in one second differ
     dest = os.path.join(folder, name)
     shutil.copytree(store.ROOT, dest, ignore=shutil.ignore_patterns(".git", ".agent-work", ".sisi", "__pycache__"))
-    if _source():
-        store.write(os.path.join(dest, "SOURCE"), _source() + "\n")
+    store.write(os.path.join(dest, "SOURCE"), "%s\n%s\n" % (_source(), os.path.abspath(store.ROOT)))
     _switch(dest)
     subprocess.run([os.path.join(dest, "bin", "sisi"), "rulebook"])
     for old in sorted(os.listdir(folder))[:-4]:
@@ -268,7 +267,7 @@ def rollback():
 
 def update():
     """Fetch the newest sisi from where the release in use came from, and release it. No checkout needed."""
-    url = store.read(os.path.join(_current(), "SOURCE")).strip()
+    url = store.read(os.path.join(_current(), "SOURCE")).split("\n")[0].strip()
     if not url:
         print("sisi update: the release in use does not record where it came from. Run `sisi release` from a checkout that has a remote.")
         return 1
