@@ -135,6 +135,24 @@ ERROR_SIGNATURES = (
 )
 
 
+# A worker's output holds everything it read, so a phrase anywhere in it says nothing about the worker. A tool's own
+# failure message is the last thing it prints, and a tool that failed to start prints little. So a failure is read only
+# from the last FAILURE_TAIL_CHARS of each stream, and a run that exited 0 and printed more than QUIET_SUCCESS_CHARS
+# did its work: nothing of it is read for failure (a short exit-0 message such as a limit notice still is).
+FAILURE_TAIL_CHARS = 1500
+QUIET_SUCCESS_CHARS = 4000
+
+
+def failure_text(out, err, returncode=0):
+    """The only text any failure classifier may read for a command sisi ran itself: the last FAILURE_TAIL_CHARS of
+    standard output plus the last FAILURE_TAIL_CHARS of standard error; "" when the run exited 0 and printed more than
+    QUIET_SUCCESS_CHARS in total."""
+    out, err = out or "", err or ""
+    if returncode == 0 and len(out) + len(err) > QUIET_SUCCESS_CHARS:
+        return ""
+    return out[-FAILURE_TAIL_CHARS:] + "\n" + err[-FAILURE_TAIL_CHARS:]
+
+
 def classify_failure(text, returncode=0, extra=None):
     """(reason, note, retry_after_s) for a run or listing that never got to do the work, else None.
     reason is one of auth, limit, missing, error. Text decides even when the exit status is 0.
@@ -272,9 +290,9 @@ def _parse_models(driver, out):
     return models
 
 
-def _parse_usage(driver, out, err):
+def _parse_usage(driver, out, err, rc=0):
     """(allowance_pct_left, allowance_text, failure) from a tool's own usage command where it has one."""
-    failure = classify_failure((out or "") + "\n" + (err or ""))
+    failure = classify_failure(failure_text(out, err, rc))
     if failure and failure[0] == "auth":
         return None, None, failure
     if driver.get("usage_kind") == "muse-json":
@@ -313,7 +331,7 @@ def _discover_tool(driver):
         if rc is None:
             entry.update(usable=False, reason="could not run its model list command")
             return entry
-        failure = classify_failure(out + "\n" + err, rc)
+        failure = classify_failure(failure_text(out, err, rc), rc)
         models = _parse_models(driver, out)
         if failure and failure[0] == "auth":
             entry.update(usable=False, reason=failure[1], failure_reason="auth", models=models)
@@ -326,13 +344,13 @@ def _discover_tool(driver):
     if driver.get("auth_probe") and entry["usable"]:
         rc, out, err = _run_quiet(driver["auth_probe"])
         if rc is not None:
-            failure = classify_failure(out + "\n" + err, rc)
+            failure = classify_failure(failure_text(out, err, rc), rc)
             if failure and failure[0] == "auth":
                 entry.update(usable=False, reason=failure[1], failure_reason="auth")
     if driver.get("usage") and entry["usable"]:
         rc, out, err = _run_quiet(driver["usage"])
         if rc is not None:
-            left, text, failure = _parse_usage(driver, out, err)
+            left, text, failure = _parse_usage(driver, out, err, rc)
             if failure:
                 entry.update(usable=False, reason=failure[1], failure_reason=failure[0])
             else:
@@ -1450,7 +1468,7 @@ def _down_keys(cand, reason):
     return keys
 
 
-def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, review_of=None, brief_path=None):
+def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, review_of=None, brief_path=None, timeout_s=None):
     """Run the brief on the chosen worker, falling through to the next choice on unavailability.
     Returns (run_record, final_text, notes) or (None, None, notes)."""
     notes = []
@@ -1458,7 +1476,7 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
     transcript = _transcript_path(run_id)
     cfg = workers_cfg()
     try:
-        timeout = float(cfg.get("timeout_s", DEFAULT_RUN_TIMEOUT_S))
+        timeout = float(timeout_s if timeout_s is not None else cfg.get("timeout_s", DEFAULT_RUN_TIMEOUT_S))
     except (TypeError, ValueError):
         timeout = DEFAULT_RUN_TIMEOUT_S
     tried = []
@@ -1525,10 +1543,11 @@ def run_delegation(candidates, kind, difficulty, prompt, cwd, explicit=None, rev
                          % (cand["worker"], timeout, transcript))
             return None, None, notes
         _append_transcript(transcript, cand["worker"], cmd, out, err, rc)
-        failure = failure_for(out + "\n" + err, cand, rc)
+        tail = failure_text(out, err, rc)  # a failure is read from the end of the output, never from what the worker read
+        failure = failure_for(tail, cand, rc)
         if failure is not None:
             reason, note, retry = failure
-            until = parse_reset(out + "\n" + err)  # the time the message itself names, when it names one
+            until = parse_reset(tail)  # the time the message itself names, when it names one
             if until is None and reason == "limit":
                 until = _D.limit_until(cand)  # else the provider's allowance probe, when one is defined
             record_down(_down_keys(cand, reason), reason, note, retry_after_s=None if until else retry, until_ts=until,
@@ -2058,7 +2077,7 @@ def cmd_delegate(args=()):
     setup = _route_setup(args)
     brief = _opt(args, "--brief")
     if setup is None or not brief:
-        print("usage: sisi delegate --kind K --difficulty 1|2|3 --brief FILE [--worker W] [--review-of W] [--cwd DIR]")
+        print("usage: sisi delegate --kind K --difficulty 1|2|3 --brief FILE [--worker W] [--review-of W] [--cwd DIR] [--timeout-min N]")
         return 1
     kind, difficulty = setup
     try:
@@ -2077,6 +2096,13 @@ def cmd_delegate(args=()):
     if not os.path.isdir(cwd):
         print("sisi delegate: not a folder: %s" % cwd, file=sys.stderr)
         return 1
+    timeout_s = None
+    if any(a == "--timeout-min" or a.startswith("--timeout-min=") for a in args):
+        minutes = _opt(args, "--timeout-min", "")
+        if not re.fullmatch(r"\d{1,3}", minutes or "") or not 1 <= int(minutes) <= 120:
+            print("sisi delegate: --timeout-min wants a whole number of minutes from 1 to 120", file=sys.stderr)
+            return 1
+        timeout_s = int(minutes) * 60
     candidates = build_candidates()
     spent = _D.apply_allowances(candidates)
     explicit = None
@@ -2093,7 +2119,7 @@ def cmd_delegate(args=()):
         candidates, _cold, _excluded = routable_candidates(candidates, read_records())
     rec, final, notes = run_delegation(candidates, kind, difficulty, prompt, cwd,
                                        explicit=explicit, review_of=_opt(args, "--review-of"),
-                                       brief_path=os.path.abspath(brief))
+                                       brief_path=os.path.abspath(brief), timeout_s=timeout_s)
     for n in notes:
         print(n)
     if rec is None:

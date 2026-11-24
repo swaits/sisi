@@ -763,7 +763,7 @@ def after(payload, host=None):
         _project(m, cwd)
         if kind == "delegation":
             return _after_delegation(payload, ev, sid, m, sess, cwd, host, tool)
-        if shell and re.search(r"\bsisi\b.*\bdelegate\b", cmd or "", re.S):  # alone or inside a longer command line
+        if shell and runs_sisi_delegate(cmd):  # alone or inside a longer command line
             from . import fallback
             note = fallback.shell_notice(_flat(payload))
             if note:  # `sisi delegate` recorded the worker down itself; hand over the fallback in the same breath
@@ -792,6 +792,15 @@ def after(payload, host=None):
             m["chars"] += n
             _event(m, sid, "chars", tool=tool, chars=n)
     return out
+
+
+_DELEGATE_RUN = re.compile(r"^(?:\w+=\S*\s+)*(?:\S*/)?sisi\s+delegate(?!\S)(?!\s+(?:judge|brief|check|guide|amend|recent)\b)")
+
+
+def runs_sisi_delegate(cmd):
+    """Does this shell command really run `sisi delegate` (as the first word of one of its commands), as opposed to
+    only naming it in a path, an argument or text? The subcommands that run no worker do not count."""
+    return any(_DELEGATE_RUN.match(seg.strip()) for seg in re.split(r"\n|;|&&|\|\||\||&", cmd or ""))
 
 
 def _flat(payload):

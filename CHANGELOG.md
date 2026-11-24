@@ -6,8 +6,18 @@ All notable changes to this project are recorded here. The format follows
 
 ## Unreleased
 
+### Fixed
+
+- A worker that finished its work is no longer recorded as unavailable because the files it read contain a
+  failure phrase: a failure is read only from the last 1,500 characters of each output stream, and a run that
+  exited 0 with more than 4,000 characters printed is not classified (`workers.failure_text`, used by
+  `sisi delegate`, model listings, learned-tool smoke runs, provider phrases and the after-tool hooks). The shell
+  hook acts only on a real `sisi delegate` command and on a line that begins with a worker id and
+  ` is unavailable (`.
+
 ### Added
 
+- `sisi delegate --timeout-min N` (1 to 120) sets the time limit of one run in place of `workers.timeout_s`.
 - Workers that appear after install become routable: the host's own listing and delegation calls, new command-line
   tools (`sisi workers learn`), per-provider plans, allowance probes, failure phrases and the owner's vouch
   (`sisi workers plan|allowance|signature|vouch`). Learned tools that switch off approvals and allowance probes are
