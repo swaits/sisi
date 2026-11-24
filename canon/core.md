@@ -75,7 +75,10 @@ gives you one: use it. A review always goes to a different maker than the author
 `sisi pick CLASS --review-of WORKER`. Start the worker with the host's own delegation tool; do not
 shell out to a worker's command line. When the choice is not obvious, have a cheap worker route it. Run
 independent work in parallel. Brief a worker as a peer who starts cold: the outcome, what is
-known and ruled out, what done looks like, the files it may change. Its report is evidence for
+known and ruled out, what done looks like, the files it may change. Decide the central mechanism
+in the brief. For a reported fault, the report's exact inputs are an acceptance test. For a
+replacement, list each behaviour of the old thing as keep, change or drop, with a check for every
+keep. Always use the newest version of a model within its maker and class. Its report is evidence for
 you to judge, not a fact to pass on; record how it went with `sisi judge`. When a worker fails
 for a limit, a login or a connection, give the same brief to the next one at once: do not ask
 the person and do not report it. When session start says the models table is old, start a
