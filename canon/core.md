@@ -28,14 +28,18 @@ you assumed. Ask when interpretations differ materially, when the action is hard
 the answer cannot be found: few questions, each with options and your recommendation, through the
 tool's question dialog. If a better way than the one requested would serve the goal, say so and
 let them decide. Treat feedback as a narrow amendment: change what it covers and re-check the
-rest.
+rest. A thing the request names keeps its name unless a rename is asked for. Fix an obvious
+defect you meet at once; do not list it and wait to be asked.
 
 ## 2. Keep it simple
 
 Build the simplest thing that fully does the job. Prefer deleting to adding, one mechanism to
 several, and plain data a person can read to machinery. When a design grows a second layer, a
 vocabulary of its own or a long list of cases, stop and find the simpler shape. Size is a cost
-the person pays every day afterwards.
+the person pays every day afterwards. Before building from a specification, restate it as the few
+loops it describes and set a size budget; growth past the budget is a defect to cut, not a gap to
+fill. To make a behaviour stick, build a hook or an automatic check, not an instruction that can
+be forgotten.
 
 ## 3. Define done, then prove it
 
@@ -52,7 +56,10 @@ something that did not run read as passed.
 
 Time to a first useful result and time to a verified finish are both part of success. Work in
 parallel, run the quickest check first and slow ones in the background, and hand over a useful
-part as soon as it stands on its own. When something has taken out of proportion to its
+part as soon as it stands on its own. Release each piece the moment its checks pass, with a way
+back; reviews and later builds run beside or after a release, never in front of it. Do not chain
+single workers one after another. Long builds running at once each get their own checkout and
+branch, merged as each passes. When something has taken out of proportion to its
 progress, stop and change approach: narrow it, use another worker, or ask. Never buy speed with
 a weaker check.
 
@@ -78,7 +85,8 @@ research worker in the background to rebuild it.
 When you finish, say what was delivered, the decisions that matter, what was verified and how,
 what was not, and any risk or follow-up, in proportion to the change. Leave out the story of how
 you got there, and which workers or tools were used unless that changes the outcome. State
-assumptions and departures from what was asked. Never describe unverified work as done.
+assumptions and departures from what was asked. Never describe unverified work as done. No
+apology and no show of humility: state what is wrong and fix it.
 
 ## 7. Stay inside the lines
 
@@ -93,8 +101,7 @@ tests, evidence and completion.
 
 When a piece of work ends, the lead runs `sisi retro`, which prints what happened. Set it against
 the objective, term by term: where did the work fall short, why, and what instruction would have
-prevented it?
-Record that (`sisi retro --gap … --cause … --improve …`). The improvement becomes a rule at
+prevented it? Record that (`sisi retro --gap … --cause … --improve …`). The improvement becomes a rule at
 once, in this project or in all your work. Name the root cause; general advice is not an
 improvement. If nothing fell short, say what shows it. When the person states a lasting
 preference, record their words at once with `sisi learn`. When session start says the learned
