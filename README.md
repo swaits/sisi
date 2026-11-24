@@ -11,7 +11,7 @@ organizes the rules.
 It routes by a models table: which workers you have, what each is good at, what it costs. A research worker
 rebuilds that table when it gets old, and every judged delegation feeds the next research. The lead does not
 choose the worker: `sisi pick CLASS` spins a wheel over the workers of that class (a capability tier: each model is
-in exactly one class, so the wheel never mixes tiers; weighted by table order and by speed),
+in exactly one class, so the wheel never mixes tiers; weighted by table order and by the square of the speed ratio),
 and a delegation to a worker the wheel did not give is refused. One pick, one delegation. A host that names its models
 shortly (Claude Code's `Agent` tool says `sonnet`) may give one whole segment of the picked model id, so name a worker
 by its full model id (`claude-sonnet-5-5`); anywhere else the name must match whole.

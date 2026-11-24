@@ -578,12 +578,20 @@ class Core(unittest.TestCase):
         name = lambda r: r[0]
         spins = lambda speed: [name(models.choose(table, "ordinary", rand=lambda: i / 1000, speed=speed)) for i in range(1000)]
         self.assertEqual(spins(None).count("fast"), 333)                                 # table order alone: weights 2 and 1
-        self.assertEqual(spins({"slow": [60] * 3, "fast": [10, 10]}).count("fast"), 666)  # slow is floored at 0.25: 0.5 against 1
-        self.assertEqual(spins({"slow": [60, 61, 62], "fast": [10]}).count("fast"), 666)
+        self.assertEqual(spins({"slow": [600] * 3, "fast": [10, 10]}).count("fast"), 961)  # slow is floored at 0.02: 0.04 against 1
+        self.assertEqual(spins({"slow": [60, 61, 62], "fast": [10]}).count("fast"), 948)  # the speed ratio squared: 2 * (10/61)**2 against 1
         self.assertEqual(spins({"fast": [10]}).count("fast"), 333)                       # slow has no timed jobs: factor 1, table order
-        self.assertEqual(spins({"slow": [20], "fast": [10]}).count("fast"), 500)         # factor 0.5: weights 1 and 1
-        self.assertEqual(name(models.choose(table, "ordinary", rand=lambda: 0.33, speed={"slow": [60], "fast": [10]})), "slow")
-        self.assertEqual(name(models.choose(table, "ordinary", rand=lambda: 0.34, speed={"slow": [60], "fast": [10]})), "fast")
+        self.assertEqual(spins({"slow": [20], "fast": [10]}).count("fast"), 666)         # factor 0.25: weights 0.5 and 1
+        self.assertEqual(name(models.choose(table, "ordinary", rand=lambda: 0.05, speed={"slow": [60], "fast": [10]})), "slow")
+        self.assertEqual(name(models.choose(table, "ordinary", rand=lambda: 0.06, speed={"slow": [60], "fast": [10]})), "fast")
+
+    def test_a_much_slower_worker_first_in_the_table_rarely_wins(self):
+        sys.path.insert(0, REPO)
+        from sisi import models
+        table = HEADER + "| slow | `slow \"<brief>\"` | ordinary | flat | x | |\n| fast | `fast \"<brief>\"` | ordinary | flat | x | |\n"
+        rng = random.Random(7)
+        wins = [models.choose(table, "ordinary", rand=rng.random, speed={"slow": [45], "fast": [9]})[0] for _ in range(2000)]
+        self.assertLess(wins.count("slow"), 200)                                         # 2 * (9/45)**2 = 0.08 against 1: about 7%; it was a third
 
     def test_pick_and_models_show_the_minutes(self):
         self.table(WORKERS)
