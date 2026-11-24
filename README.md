@@ -19,8 +19,8 @@ by its full model id (`claude-sonnet-5-5`); anywhere else the name must match wh
 **Done.** Nothing starts before `sisi done` has recorded the goal, the checks that decide success and what the
 person will need next: delegating or editing is refused until then. Every check needs a verdict
 (`sisi done --pass N` or `--fail N`) before the turn ends; a turn that changed things, or failed a check,
-is sent to the retro, and any other closes itself. Each record in `retro.jsonl` carries the numbers
-(minutes, messages, tool calls, delegations, checks) and the `term` it fell short on (`value`, `evidence`, `time`, `cost`,
+is sent to the retro, and any other closes itself. Each record in `retro.jsonl` carries `session_id`, `retro_seconds` (when demanded),
+the numbers (minutes, messages, tool calls, delegations, checks) and the `term` it fell short on (`value`, `evidence`, `time`, `cost`,
 `attention` or `learning`: the terms of the objective), and `sisi retro` lays the facts out under those terms and shows their trend.
 
 ## Install
@@ -88,7 +88,8 @@ its limits are.
 - **The product** (this repository): the code in `sisi/`, the rulebook in `canon/core.md`. The same for
   everyone. `SPEC.md` is what it aims at.
 - **Your store** (`$SISI_DATA`, else `$XDG_DATA_HOME/sisi`, else `~/.local/share/sisi`; a git repository): `rules/user.md` and `rules/projects/*.md` (what
-  was learned), `models.md` (your workers), `retro.jsonl` and `outcomes.jsonl` (what happened). All plain
+  was learned), `models.md` (your workers), `retro.jsonl` (each piece of work: session, `retro_seconds`, counts, goal, term)
+  and `outcomes.jsonl` (each judged delegation: session, `project_key`, `model`, `started`/`ended`, minutes, verdict, why). All plain
   text you can read and edit.
 - **The rulebook every session loads** is generated from the two: `canon/core.md`, then your learned rules.
 - **Scratch** (session state, bytecode): `$SISI_STATE`, else `$XDG_STATE_HOME/sisi`, else `~/.local/state/sisi`.

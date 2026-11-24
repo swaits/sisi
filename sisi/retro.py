@@ -1,6 +1,6 @@
 """The retro: what happened, set against the objective; the gap, its cause, and the instruction that would have
 prevented it. That instruction becomes a learned rule at once."""
-import json, os, re, time
+import json, math, os, re, time
 from . import rules, store
 
 DONE_USAGE = """usage: sisi done --goal "<the goal in their words, 5+ words>" --check "<a check that can fail, 4+ words>" [--check ...] \\
@@ -95,19 +95,24 @@ def report(sid, cwd):
         print("\n" + "\n".join(trend()))
 
 
-def record(s, cwd, opt):
+def record(s, cwd, opt, sid=None):
     """Append one record for the piece of work in this session state, and begin the next one."""
-    d, now = s.get("done") or {}, time.time()
-    entry = dict(opt, ts=time.strftime("%Y-%m-%dT%H:%M:%S"), project=os.path.basename(store.project_root(cwd)),
-                 unit=counts(s, cwd), goal=d.get("goal", ""), workers=s.get("workers_since", []))
+    d, now, dem = s.get("done") or {}, time.time(), s.get("retro_demanded")
+    entry = dict(opt, ts=time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now)),
+                 project=os.path.basename(store.project_root(cwd)), unit=counts(s, cwd),
+                 goal=d.get("goal", ""), workers=s.get("workers_since", []))
     if d:
         entry["done"] = d
+    if sid:
+        entry["session_id"] = sid
+    if type(dem) in (int, float) and math.isfinite(dem) and dem <= now:
+        entry["retro_seconds"] = max(0, int(round(now - dem)))
     log = store.data("retro.jsonl")
     store.append(log, json.dumps(entry, sort_keys=True))
     store.commit("retro recorded", log)
     s["snapshot"], s["changed"], s["retro_at"] = store.snapshot(cwd), False, now
     for key in ("prompts_since", "direct_since", "delegations_since", "reasons_since", "workers_since", "done", "paused",
-                "fails_since", "picked", "starts"):
+                "fails_since", "picked", "starts", "retro_demanded"):
         s.pop(key, None)
 
 
@@ -193,7 +198,7 @@ def run(args, cwd=None):
             if kind == "later":
                 s["paused"] = True
             else:
-                record(s, cwd, opt)
+                record(s, cwd, opt, sid)
     elif kind != "later":
         record({}, cwd, dict(opt, scope=scope) if kind == "gap" else opt)
     if kind == "gap":

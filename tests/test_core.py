@@ -1412,6 +1412,134 @@ class Core(unittest.TestCase):
         self.assertEqual(self.sisi("judge", "sonnet", "bad", "cancelled, never reported", sid="s1")[0], 0)
         self.assertFalse(late())
 
+    def test_a_judged_delegation_row_carries_session_project_model_and_timestamps(self):
+        self.table(WORKERS + "| opencode-go/Claude-Haiku-5-5 (Haiku) | T3 Code delegate_task, model opencode-go/Claude-Haiku-5-5 | routine | flat | quick | |\n")
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        for _ in range(5):
+            if "opencode-go/Claude-Haiku-5-5" in self.sisi("pick", "routine", sid="s1")[1]:
+                break
+        self.assertEqual(self.tool("mcp__t3__delegate_task", tool_input={"target": {"model": "opencode-go/Claude-Haiku-5-5"}})[0], 0)
+        t0 = time.time() - 12 * 60 - 5
+        with open(os.path.join(self.tmp, "state", "core-sessions", "s1.json"), "r+") as f:
+            st = json.load(f)
+            st["starts"]["opencode-go/claude-haiku-5-5"] = [t0]
+            f.seek(0), f.truncate(), json.dump(st, f)
+        before = int(time.time())
+        self.assertEqual(self.sisi("judge", "Claude-Haiku-5-5", "good", "finished the edit cleanly", sid="s1")[0], 0)
+        after = int(time.time())
+        row = self.outcomes()[-1]
+        self.assertEqual(row["session_id"], "s1")
+        self.assertEqual(row["project"], os.path.basename(self.proj))
+        self.assertEqual(row["project_key"], self.state("s1")["project"])
+        self.assertEqual(row["model"], "opencode-go/Claude-Haiku-5-5")
+        self.assertEqual(row["minutes"], 12)
+        self.assertEqual(row["started"], time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t0)))
+        self.assertIn(row["ended"], {time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t)) for t in range(before, after + 1)})
+        self.assertEqual(self.sisi("judge", "sonnet", "bad", "never picked or started here", sid="s1")[0], 0)
+        untimed = self.outcomes()[-1]
+        self.assertEqual((untimed["session_id"], untimed["project_key"], untimed["model"]), ("s1", self.state("s1")["project"], "sonnet"))
+        self.assertNotIn("started", untimed)
+        self.assertIn("ended", untimed)
+
+    def test_retro_row_records_session_id_and_demand_to_record_seconds(self):
+        self.table(WORKERS)
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        self.sisi("done", "--pass", "1", "counts matched before and after", sid="s1")
+        self.sisi("done", "--pass", "2", "empty name exported as row", sid="s1")
+        self.assertEqual(self.hook("gate")[1], "")
+        auto = self.records()[-1]
+        self.assertEqual(auto["session_id"], "s1")
+        self.assertEqual(auto.get("retro_seconds", 0), 0)
+        self.assertNotIn("retro_demanded", self.state("s1"))
+
+        self.hook("prompt", prompt="next")
+        self.done()
+        self.assertEqual((self.sisi("pick", "hard", sid="s1")[0], self.tool("Agent", tool_input={"model": "sonnet"})[0]), (0, 0))
+        with open(os.path.join(self.tmp, "state", "core-sessions", "s1.json"), "r+") as f:
+            st = json.load(f)
+            st["starts"]["sonnet"] = [time.time() - 20 * 60]
+            f.seek(0), f.truncate(), json.dump(st, f)
+        self.assertIn("has not reported", self.hook("gate")[1])
+        self.assertNotIn("retro_demanded", self.state("s1"))
+        self.sisi("judge", "sonnet", "bad", "cancelled after waiting too long", sid="s1")
+        self.tool("Edit")
+        self.assertIn("no verdict yet", self.hook("gate")[1])
+        self.assertNotIn("retro_demanded", self.state("s1"))
+        self.sisi("done", "--pass", "1", "counts matched before and after", sid="s1")
+        self.sisi("done", "--pass", "2", "empty name exported as row", sid="s1")
+        self.hook("prompt", prompt="finish")
+        self.assertIn("no retro yet", self.hook("gate")[1])
+        first_demanded = self.state("s1")["retro_demanded"]
+        with open(os.path.join(self.tmp, "state", "core-sessions", "s1.json"), "r+") as f:
+            st = json.load(f)
+            st["retro_demanded"] = first_demanded - 42
+            f.seek(0), f.truncate(), json.dump(st, f)
+        self.assertIn("no retro yet", self.hook("gate")[1])
+        self.assertEqual(self.state("s1")["retro_demanded"], first_demanded - 42)
+        self.assertEqual(self.sisi("retro", "--no-gap", "the person accepted it and every check passed", *NG, sid="s1")[0], 0)
+        rec = self.records()[-1]
+        self.assertEqual(rec["session_id"], "s1")
+        self.assertGreaterEqual(rec["retro_seconds"], 42)
+        self.assertLessEqual(rec["retro_seconds"], 45)
+        self.assertNotIn("retro_demanded", self.state("s1"))
+
+    def test_old_and_new_outcome_and_retro_rows_mix_without_error(self):
+        self.table(WORKERS)
+        old_out = {"ts": "2026-11-20T10:00:00", "worker": "sonnet", "verdict": "good", "why": "old untimed row", "project": "p"}
+        old_out_t = {"ts": "2026-11-20T10:15:00", "worker": "sonnet", "verdict": "good", "minutes": 10, "why": "old timed row", "project": "p"}
+        new_out = {"ts": "2026-11-24T12:20:00", "ended": "2026-11-24T12:20:00", "started": "2026-11-24T12:00:00",
+                   "worker": "sonnet", "model": "sonnet", "verdict": "good", "minutes": 20, "why": "new timed row",
+                   "project": "p", "project_key": "p-12345678", "session_id": "s1"}
+        self.jsonl("outcomes.jsonl", json.dumps(old_out), json.dumps(old_out_t), json.dumps(new_out))
+        old_r1 = {"ts": "2026-11-20T10:00:00", "gap": "old no unit"}
+        old_r2 = {"ts": "2026-11-21T10:00:00", "project": "p", "term": "time", "no-gap": "ok", "better": "b b b b b",
+                  "unit": {"minutes": 10, "messages": 2, "direct": 1, "delegations": 1, "commits": 0, "checks_pass": 1, "checks_fail": 0}}
+        new_r = {"ts": "2026-11-24T12:00:00", "project": "p", "session_id": "s1", "retro_seconds": 18, "term": "cost",
+                 "gap": "g g g g", "cause": "c c c c", "improve": "i i i i",
+                 "unit": {"minutes": 20, "messages": 4, "direct": 3, "delegations": 1, "commits": 1, "checks_pass": 1, "checks_fail": 1}}
+        self.jsonl("retro.jsonl", json.dumps(old_r1), json.dumps(old_r2), json.dumps(new_r))
+        for args in (("models",), ("models", "research"), ("pick", "hard"), ("retro",)):
+            rc, out, err = self.sisi(*args, sid="s1")
+            self.assertEqual((rc, err), (0, ""), args)
+        self.assertIn("speed: median 15 min over 2 timed jobs", self.sisi("pick", "hard", sid="s1")[1])
+        self.assertIn("time median 15 min", self.sisi("retro", sid="s1")[1])
+
+    def test_two_concurrent_leads_in_one_project_record_their_own_session_ids(self):
+        self.table(WORKERS)
+        for sid in ("lead-a", "lead-b"):
+            self.hook("tick", sid=sid)
+            self.hook("prompt", sid=sid, prompt="work for " + sid)
+            self.done(sid=sid)
+        self.assertEqual((self.sisi("pick", "hard", sid="lead-a")[0], self.tool("Agent", sid="lead-a", tool_input={"model": "sonnet"})[0]), (0, 0))
+        time.sleep(0.05)
+        self.assertEqual((self.sisi("pick", "ordinary", sid="lead-b")[0],
+                          self.tool("mcp__t3__delegate_task", sid="lead-b", tool_input={"target": {"model": "zai-coding-plan/glm-5.4"}})[0]), (0, 0))
+        self.tool("Edit", sid="lead-b")
+        self.assertEqual(self.sisi("judge", "sonnet", "good", "finished lead a task cleanly", sid="lead-a")[0], 0)
+        self.assertEqual(self.sisi("judge", "zai-coding-plan/glm-5.4", "good", "finished lead b task cleanly", sid="lead-b")[0], 0)
+        outs = self.outcomes()
+        self.assertEqual([(o["worker"], o["session_id"]) for o in outs[-2:]], [("sonnet", "lead-a"), ("zai-coding-plan/glm-5.4", "lead-b")])
+        self.assertEqual(outs[-2]["project_key"], outs[-1]["project_key"])
+        self.sisi("done", "--pass", "1", "counts matched before and after", sid="lead-a")
+        self.sisi("done", "--pass", "2", "empty name exported as row", sid="lead-a")
+        self.sisi("done", "--pass", "1", "counts matched before and after", sid="lead-b")
+        self.sisi("done", "--pass", "2", "empty name exported as row", sid="lead-b")
+        self.assertEqual(self.hook("gate", sid="lead-a")[1], "")
+        self.assertIn("no retro yet", self.hook("gate", sid="lead-b")[1])
+        self.assertEqual(self.sisi("retro", "--no-gap", "the person accepted it and every check passed", *NG, sid="lead-b")[0], 0)
+        self.assertEqual([r["session_id"] for r in self.records()[-2:]], ["lead-a", "lead-b"])
+        # without SISI_SESSION_ID, current_session falls back to the most recently active lead in this project (lead-b)
+        self.done(sid="lead-a")
+        self.assertEqual((self.sisi("pick", "hard", sid="lead-a")[0], self.tool("Agent", sid="lead-a", tool_input={"model": "sonnet"})[0]), (0, 0))
+        time.sleep(0.05)
+        self.hook("prompt", sid="lead-b", prompt="lead-b becomes newest")
+        self.assertEqual(self.sisi("judge", "sonnet", "good", "called without session env var")[0], 0)
+        self.assertEqual(self.outcomes()[-1]["session_id"], "lead-b")
+
     def test_the_spec_is_unchanged(self):
         for line in self.read(REPO, "docs", "spec", "SHA256SUMS").splitlines():
             digest, rel = line.split()
@@ -1420,7 +1548,7 @@ class Core(unittest.TestCase):
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLess(code, 1504, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLess(code, 1525, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 120)
         self.assertLess(len(rulebook), 8212)

@@ -197,7 +197,7 @@ def gate(p, for_subagent=False):
         _begin(s, cwd)
         if s.get("worker"):
             return 0
-        reason = " ".join("sisi: " + LATE % (w, time.strftime("%H:%M", time.localtime(t))) for w, t in models.overdue(s))
+        reason, demand = " ".join("sisi: " + LATE % (w, time.strftime("%H:%M", time.localtime(t))) for w, t in models.overdue(s)), False
         if not reason and not s.get("paused"):
             checks = (s.get("done") or {}).get("checks") or []
             unsaid = ["%d. %s" % (i, c["text"]) for i, c in enumerate(checks, 1) if not c["verdict"]]
@@ -205,11 +205,13 @@ def gate(p, for_subagent=False):
             worked = s.get("changed") or store.snapshot(cwd) != s.get("snapshot")
             if checks and not unsaid and not failed and not worked:
                 from . import retro
-                retro.record(s, cwd, {})  # every check passed and nothing changed: the work closes itself
+                retro.record(s, cwd, {}, sid)  # every check passed and nothing changed: the work closes itself
                 return 0
             reason = OPEN % "; ".join(unsaid) if unsaid else GATE if worked else FAILED % ", ".join(failed) if failed else ""
+            demand = bool(reason and not unsaid)
         if not reason or s.get("blocks", 0) >= 2:
             return 0
         s["blocks"] = s.get("blocks", 0) + 1
+        demand and s.setdefault("retro_demanded", time.time())
     print(json.dumps({"decision": "block", "reason": say(reason)}))
     return 0
