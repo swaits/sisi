@@ -22,8 +22,13 @@ List only workers the host's delegation tool can actually start: check the host'
 Answer with exactly this and nothing else. First a markdown table of at most 40 rows, the cheapest capable
 worker first within each level, with these columns:
 | worker | maker | how to call it | use for | cost | good at, bad at | notes |
-"maker" is the company or lab that trained the model, lower case, one word. "use for" is one or more of: routine,
-ordinary, hard. "how to call it" is exact: the host delegation tool's provider and model id (T3 Code's
+"maker" is the company or lab that trained the model, lower case, one word. "use for" is exactly one of: routine,
+ordinary, hard. It is the model's capability class, not a list of tasks it could do. Routine is the small, fast,
+cheap tier (the level of a maker's smallest current model); ordinary is the mid tier (a maker's main everyday
+model); hard is the top tier (a maker's strongest model). Place each model by comparing it with its peers from
+other makers (benchmarks and the maker's own positioning), so that every class holds models of like strength from
+several makers. A model that seems to fit two classes goes in the lower one only if it truly performs at that
+level, never in both. "how to call it" is exact: the host delegation tool's provider and model id (T3 Code's
 delegate_task); the host's subagent model name where it has subagents; the full command line with <brief> where
 the brief goes only for a worker the host's tool cannot reach. A worker that is unavailable carries exactly
 `out until YYYY-MM-DD` in its notes.
@@ -154,7 +159,7 @@ def choose(text, cls, skip=(), review=None, rand=None, today=None, speed=None):
     times its speed: the fastest candidate's median minutes over its own, at least 0.25 (1 with no timed jobs)."""
     table_rows, today = rows(text), today or time.strftime("%Y-%m-%d")
     bad = next((maker(r) for r in table_rows if short(r[0]) == short(review)), None) if review else None
-    left = [r for r in table_rows if cls in r[2].lower() and not out(r, skip, bad, today)]
+    left = [r for r in table_rows if r[2].strip().lower() == cls and not out(r, skip, bad, today)]
     if not left:
         return None
     if rand is None:
@@ -186,7 +191,10 @@ def pick(args, cwd=None, rand=None):
         print("usage: sisi pick routine|ordinary|hard [--review-of WORKER] [--not WORKER ...]")
         return 1
     text = store.read(table())
-    mine = [r for r in rows(text) if cls in r[2].lower()]
+    mine = [r for r in rows(text) if r[2].strip().lower() == cls]
+    for r in rows(text):
+        if len(re.findall(r"routine|ordinary|hard", r[2].lower())) > 1:
+            print("%s is in more than one class and is on no wheel: rebuild the table" % short(r[0]))
     if review is not None and not any(short(r[0]) == short(review) for r in rows(text)):
         print("sisi pick: %r is not a worker in the models table; --review-of names the worker whose work is reviewed." % review)
         return 1
@@ -194,9 +202,10 @@ def pick(args, cwd=None, rand=None):
     r = choose(text, cls, skip, review, rand, speed=speed)
     if not r:
         bad = next((maker(x) for x in rows(text) if short(x[0]) == short(review)), None)
-        print("sisi pick: every worker of class %s is out or excluded: %s." % (cls, "; ".join(
+        again = {"routine": " Choose again from ordinary.", "ordinary": " Choose again from hard."}.get(cls, "")
+        print(("sisi pick: every worker of class %s is out or excluded: %s." % (cls, "; ".join(
             "%s (%s)" % (x[0], out(x, skip, bad, time.strftime("%Y-%m-%d"))) for x in mine)) if mine
-              else "sisi pick: the models table has no worker of class %s." % cls)
+              else "sisi pick: the models table has no worker of class %s." % cls) + again)
         return 1
     sid = store.current_session(cwd)
     if sid:
@@ -234,9 +243,9 @@ def research_record(answer_file):
     lines = [l for l in text.splitlines() if l.startswith("|")]
     if "| worker" not in text.lower() or "fallback order:" not in text.lower() or len(lines) < 3:
         return "the answer needs the table (a `| worker |` header and at least one row) and a `Fallback order:` line"
-    if not usable(text):
-        return "no row's \"use for\" cell names routine, ordinary or hard"
     for r in rows(text):
+        if len(re.findall(r"routine|ordinary|hard", r[2].lower())) != 1:
+            return "each row's \"use for\" must name exactly one of routine, ordinary or hard: | %s |" % " | ".join(r[:6])
         if re.search(r"out (?!until \d{4}-\d{2}-\d{2}(?!\d))(until|till)\b", r[5].lower()):
             return "a worker that is out needs exactly `out until YYYY-MM-DD` in its notes: | %s |" % " | ".join(r[:6])
     if len(lines) > 42 or len(text) > 12000:

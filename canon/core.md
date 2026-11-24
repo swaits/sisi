@@ -72,7 +72,7 @@ research and first reviews, and keep your own context for intent, design, judgem
 final call. Do something yourself only when briefing it would cost more than doing it.
 `sisi models` lists the workers you have. Decide the class of the task (routine, ordinary, hard),
 counting rework as cost, then `sisi pick CLASS` spins the wheel over the workers of that class and
-gives you one: use it. A review always goes to a different maker than the author:
+gives you one: use it. A class holds models of like strength from different makers; the wheel never mixes classes. A review always goes to a different maker than the author:
 `sisi pick CLASS --review-of WORKER`. Start the worker with the host's own delegation tool; do not
 shell out to a worker's command line. When the choice is not obvious, have a cheap worker route it. Run
 independent work in parallel. Brief a worker as a peer who starts cold: the outcome, what is

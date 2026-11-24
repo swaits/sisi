@@ -10,7 +10,8 @@ organizes the rules.
 **Delegation.** The lead agent is told to delegate everything, and is stopped when it does the work itself.
 It routes by a models table: which workers you have, what each is good at, what it costs. A research worker
 rebuilds that table when it gets old, and every judged delegation feeds the next research. The lead does not
-choose the worker: `sisi pick CLASS` spins a wheel over the workers of that class (weighted by table order and by speed),
+choose the worker: `sisi pick CLASS` spins a wheel over the workers of that class (a capability tier: each model is
+in exactly one class, so the wheel never mixes tiers; weighted by table order and by speed),
 and a delegation to a worker the wheel did not give is refused. One pick, one delegation.
 
 **Done.** Nothing starts before `sisi done` has recorded the goal, the checks that decide success and what the

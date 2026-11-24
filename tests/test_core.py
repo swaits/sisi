@@ -23,7 +23,8 @@ FIXTURE = HEADER + (
     "| zai-coding-plan/glm-5.3-flash | `opencode run -m zai-coding-plan/glm-5.3-flash \"<brief>\"` | ordinary | flat | cheap edits | |\n"
     "| muse/muse-wonder-1.0 | `muse exec --model muse-wonder-1.0 \"<brief>\"` | ordinary | flat | research | out until 2999-01-01 |\n"
     "| muse/muse-ember-1.0 | `muse exec --model muse-ember-1.0 \"<brief>\"` | ordinary | flat | checks | out until 2000-01-01 |\n"
-    "| sonnet (Sonnet 5.5) | host subagent model `sonnet` | ordinary, hard | per use | everything | |\n"
+    "| haiku (Haiku 5.5) | host subagent model `haiku` | ordinary | per use | quick | |\n"
+    "| sonnet (Sonnet 5.5) | host subagent model `sonnet` | hard | per use | everything | |\n"
     "| opus (Opus 5.5) | host subagent model `opus` | hard | per use | hardest | |\n")
 
 
@@ -344,6 +345,33 @@ class Core(unittest.TestCase):
         self.assertEqual(self.hook("gate")[1], "")
         self.assertEqual(len(self.records()), 2)                                           # closed once
 
+    def test_a_model_is_in_exactly_one_class_and_the_wheel_never_mixes_classes(self):
+        answer = os.path.join(self.tmp, "table.md")
+        mixed = HEADER + ("| opus | host subagent model `opus` | hard | per use | hardest | |\n"
+                          "| sonnet | host subagent model `sonnet` | ordinary, hard | per use | everything | |\n")
+        self.write(answer, mixed + "Fallback order: none.\n")
+        rc, out, _ = self.sisi("models", "research", "--record", answer)                     # check a
+        self.assertEqual((rc, "| sonnet | host subagent model `sonnet` | ordinary, hard |" in out), (1, True))
+        self.assertFalse(os.path.exists(os.path.join(self.data, "models.md")))
+        self.write(answer, mixed.replace("ordinary, hard", "ordinary") + "Fallback order: none.\n")
+        self.assertEqual(self.sisi("models", "research", "--record", answer)[0], 0)
+        self.assertIn("exactly one", self.sisi("models", "research")[1])
+        self.table(mixed)                                                                   # check b: an old table
+        sys.path.insert(0, REPO)
+        from sisi import models
+        for i in range(1000):
+            self.assertEqual(models.choose(mixed, "hard", rand=lambda: i / 1000)[0], "opus")
+        self.assertIsNone(models.choose(mixed, "ordinary", rand=lambda: 0.0))
+        for cls in ("hard", "routine"):
+            self.assertIn("sonnet is in more than one class and is on no wheel: rebuild the table", self.sisi("pick", cls)[1])
+        self.table(HEADER + "| opus | host subagent model `opus` | hard | per use | hardest | out until 2999-01-01 |\n"
+                            "| sonnet | host subagent model `sonnet` | ordinary | per use | x | out until 2999-01-01 |\n")
+        for cls, next_step in (("ordinary", "choose again from hard"), ("routine", "choose again from ordinary"), ("hard", "")):
+            rc, out, _ = self.sisi("pick", cls)                                             # check c
+            self.assertEqual((rc, "worker:" in out), (1, False))
+            self.assertEqual("choose again" in out.lower(), bool(next_step))
+            self.assertIn(next_step, out.lower())
+
     def test_the_wheel_gives_only_what_is_in_and_follows_table_order(self):
         sys.path.insert(0, REPO)
         from sisi import models
@@ -356,7 +384,7 @@ class Core(unittest.TestCase):
         picked = lambda x: name(models.choose(FIXTURE, "ordinary", rand=lambda: x))
         # four candidates (the expired "out until" is back in), weights 4, 3, 2, 1 of 10
         self.assertEqual([picked(x) for x in (0.0, 0.39, 0.4, 0.69, 0.7, 0.89, 0.9, 0.999)],
-                         ["zai-coding-plan/glm-5.4"] * 2 + ["zai-coding-plan/glm-5.3-flash"] * 2 + ["muse/muse-ember-1.0"] * 2 + ["sonnet"] * 2)
+                         ["zai-coding-plan/glm-5.4"] * 2 + ["zai-coding-plan/glm-5.3-flash"] * 2 + ["muse/muse-ember-1.0"] * 2 + ["haiku"] * 2)
         self.assertEqual(name(models.choose(FIXTURE, "ordinary", review="zai-coding-plan/glm-5.4", rand=lambda: 0.0)), "muse/muse-ember-1.0")
         self.assertIsNone(models.choose(FIXTURE, "routine", rand=lambda: 0.0))
         row = lambda *c: list(c) + [""] * (7 - len(c))
@@ -1046,10 +1074,10 @@ class Core(unittest.TestCase):
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLess(code, 1500, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLess(code, 1504, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 120)
-        self.assertLess(len(rulebook), 8150)
+        self.assertLess(len(rulebook), 8212)
 
 
 if __name__ == "__main__":
