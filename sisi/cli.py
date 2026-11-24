@@ -294,7 +294,7 @@ def main(argv):
         return cycle.cmd_cycle(args)
     if cmd == "approve":
         from . import cycle
-        return cycle.cmd_approve(args)
+        return cycle.cmd_approve(args)  # learning changes (P-N), learned drivers (drv-NAME), allowance probes (probe-NAME)
     if cmd == "oracle":
         return cmd_oracle()
     if cmd == "risk":

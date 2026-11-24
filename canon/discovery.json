@@ -1,0 +1,43 @@
+{
+  "comment": "Data for sisi/discovery.py: which flags switch off approvals, which names are never tools, and which names hint at an agent tool. A host's own tools (its capability listing and delegation tool, and where the provider and model sit in them) are in canon/orchestration-tools.json, the one description of a host's tools. Names of tools and hosts live in data, never in code. Paths are dotted keys into the tool's JSON.",
+  "blocking_constraint_words": ["disabled", "unavailable", "not installed", "not authenticated", "not signed in", "unsupported"],
+  "approval_bypass_patterns": [
+    "^--?dangerous",
+    "^--?yolo$",
+    "^--?always-approve$",
+    "^--?auto-approve",
+    "^--?allow-all",
+    "^--?skip-permissions",
+    "^--?no-sandbox",
+    "^--?bypass",
+    "^--?full-auto$",
+    "^--?force$",
+    "^--?auto$",
+    "^-y$",
+    "^--?yes$",
+    "^--?no-?confirm",
+    "^--?approval(-mode)?[=:]?(yolo|never|none|off)$",
+    "^(yolo|never|danger-full-access|bypass)$",
+    "^--?sandbox[=:]?(off|false|none|disabled|danger-full-access)$"
+  ],
+  "not_a_tool": ["sh", "bash", "zsh", "fish", "dash", "ksh", "csh", "tcsh", "env", "sudo", "doas", "su", "xargs",
+                 "python", "python3", "perl", "ruby", "node", "deno", "bun", "php", "lua", "awk", "sed", "eval",
+                 "exec", "nohup", "timeout", "time", "watch", "cmd", "powershell", "pwsh"],
+  "agent_name_hints": ["agent", "code", "coder", "copilot", "pilot", "assist", "ai", "llm", "gpt", "chat", "claw", "gen", "mind", "brain"],
+  "driver_format_help": {
+    "name": "short id of the tool, lowercase letters, digits, dot, dash, underscore",
+    "exe": "the command name as found on PATH (a bare name, no slash); must be the tool itself, never a shell or interpreter",
+    "run": "argument list that runs ONE task without interaction; first item is exe; exactly one item is the whole token {prompt}; other whole-token placeholders allowed: {model_flag} {effort_flag} {cwd_flag} {cwd}",
+    "list": "argument list that prints the model names one per line, or null",
+    "list_kind": "\"lines\"",
+    "model_flag": "the flag that chooses a model (for {model_flag}), or null",
+    "effort_flag": "the flag that chooses reasoning effort (for {effort_flag}), or null",
+    "cwd_flag": "the flag that sets the working folder (for {cwd_flag}), or null",
+    "plan": "\"free\", \"flat\" (a subscription with an allowance) or \"per-use\"; null when unknown",
+    "auth_signatures": "lowercase phrases its output contains when it is not logged in (6 to 80 characters each)",
+    "limit_signatures": "lowercase phrases its output contains when a quota or rate limit is hit",
+    "tokens_regex": "a regular expression with ONE group that captures the total token count from its output, or null",
+    "approvals_off_reason": "only when the tool cannot run without a flag that switches off approvals or its sandbox: say why",
+    "notes": "anything the next reader needs, one short paragraph"
+  }
+}

@@ -346,7 +346,7 @@ class ConfigDefault(SisiCase):
         for section in ("gate", "verify", "retro", "route", "unit", "orchestrate"):
             self.assertIn(section, cfg)
         self.assertEqual(sorted(cfg["orchestrate"]), ["direct_calls", "direct_chars", "enabled", "extension", "route_window_min"])
-        self.assertEqual(sorted(cfg["route"]), ["class_span", "price_blend_input_parts", "standing_floor"])
+        self.assertEqual(sorted(cfg["route"]), ["class_span", "explore_free_one_in", "price_blend_input_parts", "standing_floor"])
         self.assertEqual(cfg["unit"], {"stale_hours": 12})
         self.assertEqual(store.config()["orchestrate"]["direct_calls"], 6)
 

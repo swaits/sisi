@@ -101,15 +101,21 @@ def main(args=()):
                     store.save_session(sid, sess)
         except Exception as e:
             store.log_error("tick-workers", e)
-        try:
+        try:  # ONE line for new worker models and new command-line tools (each kind is announced once)
             sess3 = rec or store.load_session(sid)
-            from . import workers as _W3, workerid as _WI
+            from . import discovery, workers as _W3, workerid as _WI
             if not _WI.is_worker_session(payload, sess3, {}):
-                line = _W3.new_worker_line()
+                models = []
+                try:
+                    models = _W3.new_worker_names()
+                except Exception as ex:
+                    store.log_error("tick-new-workers", ex)
+                tools = discovery.new_tools()  # the first run only stores the list
+                line = discovery.new_line(models, tools)
                 if line:
                     sys.stdout.write(line + "\n")
         except Exception as e:
-            store.log_error("tick-new-workers", e)
+            store.log_error("tick-discovery", e)
         try:
             from . import cycle
             # cycle.due_notice carries both the due-cycle line and the pending-decision line (learning.pending_notice).

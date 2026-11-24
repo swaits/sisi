@@ -1,5 +1,5 @@
 {
-  "_about": "Host tool names the orchestration meter needs (sisi/orchestration.py). Per host: `delegation` tools start a worker (where the call carries the model and the brief text, as dotted paths into the tool's input); `exempt` tools are never counted as direct work (the question dialog, planning and to-do tools, messaging tools). Any other tool, including one named nowhere here, counts. `refuse` says how the host's before-tool hook refuses a call: `json-deny` prints the host's permission-deny JSON, `exit-2` exits with status 2 and the reason on standard error, `none` means the meter only counts there. `evidence` says how sure this entry is. A delegation entry's name may be a shell-style pattern (`*delegate_task`). `async` says how the tool's result marks a background launch: the dotted `path` into the result, the `running` values meaning \"still running\", and the `ids` paths whose values the later completion message will carry; `title` is the input path of the task's title, the other way that message names it. A listed tool with no `async` is a launch when its call returned in under five seconds with no report in the result.",
+  "_about": "Host tool names the orchestration meter needs (sisi/orchestration.py). Per host: `delegation` tools start a worker (where the call carries the model and the brief text, as dotted paths into the tool's input); `exempt` tools are never counted as direct work (the question dialog, planning and to-do tools, messaging tools). Any other tool, including one named nowhere here, counts. `refuse` says how the host's before-tool hook refuses a call: `json-deny` prints the host's permission-deny JSON, `exit-2` exits with status 2 and the reason on standard error, `none` means the meter only counts there. `evidence` says how sure this entry is. A delegation entry's name may be a shell-style pattern (`*delegate_task`). `async` says how the tool's result marks a background launch: the dotted `path` into the result, the `running` values meaning \"still running\", and the `ids` paths whose values the later completion message will carry; `title` is the input path of the task's title, the other way that message names it. A listed tool with no `async` is a launch when its call returned in under five seconds with no report in the result. `capability` tools list what the host can reach (providers and models, as dotted paths into the tool's result); a delegation entry that names a `provider` path says where the call carries the provider; both carry `reach`, the label under which what discovery learns is stored (sisi/discovery.py, read through orchestration.reach_specs). This file is the one description of a host's tools: sisi/orchestration.py and sisi/discovery.py both read it.",
   "claude-code": {
     "refuse": "json-deny",
     "evidence": "observed live (tools/live_orchestration_check.py)",
@@ -26,7 +26,23 @@
             "taskId",
             "childThreadId"
           ]
-        }
+        },
+        "provider": "target.providerInstanceId",
+        "reach": "t3-code"
+      }
+    },
+    "capability": {
+      "mcp__t3-code__orchestrator_capabilities": {
+        "reach": "t3-code",
+        "providers": "providers",
+        "provider": "providerInstanceId",
+        "kind": "driverKind",
+        "name": "displayName",
+        "models": "models",
+        "model": "id",
+        "label": "label",
+        "usable": "canRunChildTask",
+        "constraints": "constraints"
       }
     },
     "exempt": {

@@ -49,6 +49,37 @@ def hosts():
     return _HOSTS
 
 
+def _name_regex(name):
+    """A tool name from the data file as a case-insensitive regular expression: an exact name, a shell-style pattern
+    (`*delegate_task`, as `_matches` reads it), or a regular expression when it starts with `^`."""
+    n = str(name)
+    if n.startswith("^"):
+        return "(?i)" + n
+    if any(c in n for c in "*?["):
+        return "(?i)" + fnmatch.translate(n)
+    return "(?i)^" + re.escape(n) + "$"
+
+
+def reach_specs():
+    """What discovery needs of the hosts' tools, from the same data file the meter reads: one dict per `reach`
+    (the label what is learned is stored under) with "host" (the label), "capability_tool" and "delegation_tool"
+    (regular expressions), "capability" (dotted paths into the listing) and "delegation" ("tool_name", "provider"
+    and "model": dotted paths into the delegation tool's input). A reach lacking either tool is still returned."""
+    out = {}
+    for hd in hosts().values():
+        for name, spec in (hd.get("capability") or {}).items():
+            if isinstance(spec, dict) and spec.get("reach"):
+                r = out.setdefault(spec["reach"], {"host": spec["reach"]})
+                r.update(capability_tool=_name_regex(name), capability={k: v for k, v in spec.items() if k != "reach"})
+        for name, spec in (hd.get("delegation") or {}).items():
+            if isinstance(spec, dict) and spec.get("reach") and spec.get("provider"):
+                r = out.setdefault(spec["reach"], {"host": spec["reach"]})
+                r.update(delegation_tool=_name_regex(name),
+                         delegation={"tool_name": str(name).rsplit("__", 1)[-1].lstrip("*"), "provider": spec["provider"],
+                                     "model": spec.get("model")})
+    return list(out.values())
+
+
 def host_data(host):
     return hosts().get(host or "claude-code") or {}
 
@@ -668,10 +699,13 @@ def _before_delegation(payload, hd, tool, inp, host, sid, sess, m, c, cwd):
         return {"deny": route_text()}
     import uuid
     run_id = uuid.uuid4().hex[:8]
-    worker = model or own or "(inherited)"
+    provider = _dig(inp, spec.get("provider")) if spec.get("provider") else None
+    provider = provider.strip() if isinstance(provider, str) else ""
+    # a delegation that names a provider (the host's cross-provider tool) is the worker `provider/model`, as discovery names it
+    worker = ("%s/%s" % (provider, model) if provider and model and "/" not in model else model) or own or "(inherited)"
     against = None
     if route and route.get("worker"):
-        against = not workers.same_model(worker, route["worker"])
+        against = not workers.same_worker(worker, route["worker"], bool(provider))
     try:
         workers.append_record({"kind": "run", "id": run_id, "ts": round(now),
                                "type": (route or {}).get("kind"), "difficulty": (route or {}).get("difficulty"),

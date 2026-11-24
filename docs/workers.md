@@ -169,7 +169,7 @@ session start as unproven. Settings under `orchestrate`: `direct_calls`, `direct
 
 In the user store: `workers.json` (discovery cache), `delegations.jsonl` (the ledger),
 `worker-availability.json`, `worker-prices.json` and `model-strength.json` (worker facts),
-`worker-prefs.json` (avoid/prefer) and `worker-notes.json` (standing notes). When facts are missing or older than
+`worker-prefs.json` (avoid/prefer), `worker-notes.json` (standing notes) and `worker-drivers.json` (learned drivers). When facts are missing or older than
 `workers.facts_max_age_days` (default 30), session start prints one line asking for a fast,
 cheap worker to research current prices and benchmark standing and record them — an age check
 during normal use, never a scheduler. Settings live under `workers` in the config:
@@ -179,4 +179,16 @@ during normal use, never a scheduler. Settings live under `workers` in the confi
 ## What this does not do
 
 Prices and benchmark standing are only as fresh as their recorded source and date. A worker
-with no judged record, price or prior is listed but never routed to until evidence exists.
+with no judged record, price or prior is listed but never routed to until evidence exists, except a new worker from the section above, which is tried on routine work first.
+
+## Workers that appear later
+
+A worker that did not exist when sisi was installed becomes routable through ordinary use; nothing is scheduled. Host tool names are data (`canon/orchestration-tools.json`, shared with the orchestration meter), never code.
+
+- **From the host.** The after-tool hook reads the host's capability listing and delegation calls. Each provider the host says can run a task, and each model, is the worker `provider/model`; a provider the host disables is stored, never routable, and one missing from `discovery.drop_after_listings` listings (3) is dropped. A listing over `discovery.catalogue_over` models (8) is a catalogue: only models used, priced or with a standing are candidates. `sisi route` names the delegation tool and the ids to pass it. Your own `only` limit still decides what is routable.
+- **From PATH.** Session start compares the executables in the user-level folders on PATH (nothing is run) with the stored list and names new ones once, five at most (`discovery.path_refresh_s`, `discovery.path_every_starts`).
+- **A tool, learned as data.** `sisi workers learn NAME` prints the brief for a cheap worker to read the tool's help and write a small JSON driver; `--check FILE` validates, `--record FILE` stores it (`worker-drivers.json`) and runs one smoke task, `--verify` retries, `sisi workers forget NAME` removes it. The command is an argument list, never a shell. A name that collides with a built-in driver is refused. A command with a flag that switches off approvals or a sandbox runs nothing until the owner decides.
+- **Earning a place.** Such a worker is unproven until it has `MIN_ATTEMPTS` judged attempts: difficulty 1 only, a free or flat one gets one routine task in `route.explore_free_one_in` (3), and `sisi route`/`sisi delegate` say to check its result. Unknown plan counts as per-use.
+- **Providers.** A tool can carry several providers (the part of an id before the first slash), each with facts of its own that never reach another: `sisi workers plan PROVIDER flat|free|per-use --source S`; `sisi workers allowance PROVIDER --url|--command ...` (a probe: the key comes from a named command at probe time, goes in one request, and is never stored or printed; the smallest remaining window decides, the provider is down until every spent window resets; a failed probe changes nothing); `sisi workers signature PROVIDER --match TEXT --class auth|limit|missing|error` (the provider's own failure phrases, before the built-in ones). A limit marks that provider down until the time the error names, else the probe's reset.
+- **Vouching.** `sisi workers vouch WORKER --up-to 1|2|3 --why "OWNER'S WORDS"`: capable up to that difficulty on the owner's word, ranked with judged proof, shown by `--explain` as its own evidence; a thick bad record overrides it and its own thick record replaces it. Words not found in a message the owner typed count only to difficulty 2.
+- **The owner's decisions.** Learned drivers that switch off approvals (`drv-NAME`) and allowance probes (`probe-PROVIDER`) are decided with learning changes by one command, `sisi approve`: it lists all three kinds in full, and a decision needs the random word it prints typed at the controlling terminal. An agent's shell command is refused, whatever the id.

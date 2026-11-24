@@ -33,13 +33,11 @@ present; nothing here names one. Read on demand: `sisi delegate guide`.
   routine work measured proof outranks a benchmark: the cheapest worker with a judged
   record wins, and standing decides only when nobody has one. A thin record is a
   reason for care, not a verdict.
-- Always use the newest version of a given model (same maker and class) when it is usable,
-  never an older version of it: newer is almost always better and cheaper, so neither a
-  better old record nor a cheaper old plan brings the old one back. A newer release of a
-  different model or class never wins for being newer. A new version starts from its
-  predecessor's record. Never guess maker, class or release date from a name: hand the
-  output of `sisi workers classify` to a cheap, fast worker and record its answer; record
-  a maker's classes, most capable first, with `sisi workers classes`.
+- Always use the newest version of a given model (same maker and class) when it is usable, never
+  an older version of it: neither a better old record nor a cheaper old plan brings it back, and a
+  newer release of a different model or class never wins for being newer. A new version starts from its
+  predecessor's record. Never guess maker, class or release date from a name: hand `sisi workers
+  classify` to a cheap worker and record its answer; `sisi workers classes` records a maker's classes.
 - Ask `sisi route --kind K --difficulty N` before delegating; `--explain` says
   why. Difficulty is 1 routine, 2 ordinary, 3 hard. Say the guess out loud;
   the record shows how good the guesses were.
@@ -100,13 +98,14 @@ present; nothing here names one. Read on demand: `sisi delegate guide`.
 
 ## Keeping the picture current
 
-- What exists, what it costs, and how good it is all change. Discovery is
-  `sisi workers`; prices and benchmark standing are worker facts, each with
-  a source and a date, recorded with `sisi workers fact`.
-- When facts are missing or stale, hand the research itself to a fast, cheap
-  worker: find current prices and software-engineering benchmark standing,
-  then record them. Treat a newly appeared model as unproven: low-stakes
-  tasks first, checked one level more carefully, until its record is thick.
+- What exists, what it costs and how good it is change. Discovery is `sisi workers`; prices and
+  benchmark standing are worker facts with a source and a date (`sisi workers fact`). When facts are
+  missing or stale, hand the research to a fast, cheap worker. A newly appeared model is unproven:
+  low-stakes tasks first, checked one level more carefully, until its record is thick.
+- Workers appear after install: a new tool is named once (`sisi workers learn NAME` prints the brief
+  for the cheap worker that learns it) and the host's listing teaches its models; each is unproven
+  until judged. `sisi workers plan|allowance|signature|vouch` record a provider's facts and the
+  owner's word; a learned tool that switches off approvals, and an allowance probe, wait for `sisi approve`.
 - Orchestration legwork is delegable like any other legwork: discovery,
   price and benchmark research, routing lookups, first-pass review, and
   summarising the record can all go to a fast, cheap worker. The judgement
