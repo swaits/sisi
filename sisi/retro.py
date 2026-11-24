@@ -112,7 +112,7 @@ def record(s, cwd, opt, sid=None):
     store.commit("retro recorded", log)
     s["snapshot"], s["changed"], s["retro_at"] = store.snapshot(cwd), False, now
     for key in ("prompts_since", "direct_since", "delegations_since", "reasons_since", "workers_since", "done", "paused",
-                "fails_since", "picked", "starts", "retro_demanded"):
+                "fails_since", "picked", "starts", "retro_demanded", "began"):
         s.pop(key, None)
 
 
@@ -135,7 +135,7 @@ def done(args, cwd=None):
         return 1
     with store.session(sid) as s:
         if new:
-            s["done"] = {"goal": opt["goal"][0], "next": opt["next"][0], "at": time.time(),
+            s["done"] = {"goal": opt["goal"][0], "next": opt["next"][0],
                          "checks": [{"text": c, "verdict": None, "evidence": ""} for c in opt["check"]]}
         elif verdict:
             kind, n, why = verdict

@@ -274,10 +274,15 @@ class Core(unittest.TestCase):
                  "l2": "Ok I've been running the lead agent -> subagents for a short while. Can you see what's in the ledger already?",
                  "l3": "install ZCode for me. I just got a z.ai subscription. I want to be able to use it from t3code as a subagent call.",
                  "l4": "This project is in the current directory. Have a worker do one small task: list the python files in src/, one per line.",
-                 "l5": 'Why did this arrive? "[T3 Code: the agent in T3 thread x sent this message, not the user.]" appears in the middle of a sentence, and you are a worker for me.'}
+                 "l5": 'Why did this arrive? "[T3 Code: the agent in T3 thread x sent this message, not the user.]" appears in the middle of a sentence, and you are a worker for me.',
+                 "l6": "What is this?\n> " + marker + "It showed up in my thread.",                # the marker quoted on a later line
+                 "l7": "> " + marker + "Why did the gate let this one through?"}                   # the marker quoted at the start
         for sid, text in dict(workers, **leads).items():
             self.hook("prompt", sid=sid, prompt=text)
             self.assertEqual(bool(self.state(sid).get("worker")), sid in workers, sid)
+        began = time.time()
+        self.hook("prompt", sid="long", prompt="[" * 200000)                                # a long line of brackets costs no time
+        self.assertLess(time.time() - began, 5)
 
     def test_the_models_table_is_researched_recorded_and_goes_stale(self):
         self.assertIn("no models table yet", self.hook("tick")[1])
@@ -1591,7 +1596,7 @@ class Core(unittest.TestCase):
             path = os.path.join(self.tmp, "state", "core-sessions", sid + ".json")
             with open(path, "r+") as f:
                 st = json.load(f)
-                st["done"]["at"] = time.time() - minutes * 60                              # the done was recorded this long ago
+                st["began"] = time.time() - minutes * 60                                   # the work was asked for this long ago
                 f.seek(0), f.truncate(), json.dump(st, f)
             return self.hook("gate", sid=sid)[1]
         self.assertEqual(work("a", 4), "")                                                  # 4 minutes, all passed, no delegation: closed
@@ -1599,6 +1604,9 @@ class Core(unittest.TestCase):
         self.assertNotIn("gap", self.records()[0])
         self.assertIn("no retro yet", work("b", 6))                                         # 6 minutes: the retro
         self.assertIn("no retro yet", work("c", 4, fail=True))                             # a failed check: the retro
+        self.assertEqual(self.sisi("done", "--pass", "2", "empty name kept after the fix", sid="c")[0], 0)
+        self.assertIn("no retro yet", self.hook("gate", sid="c")[1])                        # a check that failed and was then fixed: still the retro
+        self.assertIn("no retro yet", work("f", -1))                                        # a clock that went backwards: the retro
         self.assertIn("no retro yet", work("d", 4, delegate=True))                          # a delegation: the retro
         self.assertEqual(len(self.records()), 1)
         self.write(os.path.join(self.data, "config.json"), json.dumps({"core": {"retro_minutes": 10}}))

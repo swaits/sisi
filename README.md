@@ -19,7 +19,7 @@ by its full model id (`claude-sonnet-5-5`); anywhere else the name must match wh
 **Done.** Nothing starts before `sisi done` has recorded the goal, the checks that decide success and what the
 person will need next: delegating or editing is refused until then. Every check needs a verdict
 (`sisi done --pass N` or `--fail N`) before the turn ends; a turn that changed things, or failed a check,
-is sent to the retro, and any other closes itself. Each record in `retro.jsonl` carries `session_id`, `retro_seconds` (when demanded),
+is sent to the retro, and any other closes itself, as does work that took under `retro_minutes`, passed every check and delegated nothing. While a delegated job is open and not late, a stop is not held up for checks without a verdict. Each record in `retro.jsonl` carries `session_id`, `retro_seconds` (when demanded),
 the numbers (minutes, messages, tool calls, delegations, checks) and the `term` it fell short on (`value`, `evidence`, `time`, `cost`,
 `attention` or `learning`: the terms of the objective), and `sisi retro` lays the facts out under those terms and shows their trend.
 
@@ -96,7 +96,7 @@ its limits are.
   Releases live in `$SISI_LIB`, else `~/.local/lib/sisi`.
 
 Settings go under `"core"` in `config.json` in your store: `gate`, `meter`, `direct_calls` (8),
-`direct_extension` (8), `rules_lines` (30), `rules_chars` (4000), `organize_after` (8), `research_days` (7),
+`direct_extension` (8), `rules_lines` (30), `rules_chars` (4000), `organize_after` (8), `research_days` (7), `worker_minutes` (15),
 `shell_workers` (false), `retro_minutes` (5: work that passed every check, delegated nothing and took less than this many minutes from `sisi done` closes without a retro). Workers are started with the host's own delegation tool, so by default a shell command
 that starts a worker (`opencode`, `muse`, `agy`: the first word of a command line in your models table) is
 refused. Set `"shell_workers": true` to allow it: it is then free on the meter, and needs a pick like any

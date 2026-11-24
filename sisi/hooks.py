@@ -7,7 +7,7 @@ from . import models, rules, store
 
 # A delegated session says so in the first lines of its first request (the brief), or a host's bracketed line
 # at the start of a line says an agent, not the user, sent it.
-WORKER = re.compile(r"(?im)^\W*(you are a (worker|subagent|sub-agent|delegate)\b|do this task yourself|do not delegate|\[[^\]\n]{0,200}\bsent this message, not the user\.?\])")
+WORKER = re.compile(r"(?im)^\W*(you are a (worker|subagent|sub-agent|delegate)\b|do this task yourself|do not delegate)|\A\s*\[[^\]\n]{0,200}\bsent this message, not the user\.?\]")
 DIRECT = ("shell", "read", "edit", "search", "web")  # the classes of tool call the meter counts
 
 METER = ("sisi: %d direct tool calls this turn (the limit is %d). Delegate the rest: `sisi models` lists your "
@@ -125,6 +125,7 @@ def prompt(p):
             if not s.get("prompts") and WORKER.search(p["prompt"][:2000]):
                 s["worker"] = True
             s["prompts"] = s.get("prompts", 0) + 1
+            s.get("prompts_since") or s.update(began=time.time())  # the first request of a piece of work
             s["prompts_since"] = s.get("prompts_since", 0) + 1
             s["direct"], s["extra"], s["blocks"] = 0, 0, 0
     return 0
@@ -204,7 +205,7 @@ def gate(p, for_subagent=False):
             unsaid = ["%d. %s" % (i, c["text"]) for i, c in enumerate(checks, 1) if not c["verdict"]]
             failed = [str(i) for i, c in enumerate(checks, 1) if c["verdict"] == "fail"]
             worked = s.get("changed") or store.snapshot(cwd) != s.get("snapshot")
-            quick = time.time() - (s.get("done") or {}).get("at", 0) < 60 * store.config()["retro_minutes"] and not s.get("delegations_since")
+            quick = 0 <= time.time() - s.get("began", 0) < 60 * store.config()["retro_minutes"] and not s.get("delegations_since") and not s.get("fails_since")
             if checks and not unsaid and not failed and (not worked or quick):
                 from . import retro
                 retro.record(s, cwd, {}, sid)  # every check passed and nothing changed, or it was quick and alone: the work closes itself
