@@ -263,6 +263,22 @@ class Core(unittest.TestCase):
             self.assertEqual(self.tool("Read", agent_id="a1")[0], 0)                         # the host's own subagent
         self.assertEqual(self.sisi("gate", "--subagent", stdin=json.dumps({"session_id": "s1", "cwd": self.proj}))[1], "")
 
+    def test_a_session_started_by_an_agent_is_a_worker_and_a_human_typed_one_is_a_lead(self):
+        marker = '[T3 Code: the agent in T3 thread "e637ccb7-b4ed-416e-9b5f-57b34a8be22f" sent this message, not the user.]\n\n'
+        # the first requests of four real delegated sessions (trimmed): none says "you are a worker"
+        workers = {"w1": marker + "Act as the implementation sub-agent for this task.\n\nRepo: /home/swaits/Code/backcountry-recipes. Read SCHEMA.md first: the fixed data contract.",
+                   "w2": marker + "Repo: /home/swaits/Code/backcountry-recipes. Read SCHEMA.md (data contract) — you produce only `data/tags.json`, exactly as specified there.",
+                   "w3": marker + "Act as the implementation sub-agent for this task.\n\nRepo: /home/swaits/Code/backcountry-recipes. Read SCHEMA.md first: the fixed data contract.",
+                   "w4": marker + "Act as the implementation sub-agent for this task.\n\nRepo: /home/swaits/Code/backcountry-recipes. Read SCHEMA.md first; it is the fixed data contract."}
+        leads = {"l1": "Hi there. This is a new session to work on the sisi system. Can you show me some results from the previous learnings? Can you explain how it told you to delegate work to subagents?",
+                 "l2": "Ok I've been running the lead agent -> subagents for a short while. Can you see what's in the ledger already?",
+                 "l3": "install ZCode for me. I just got a z.ai subscription. I want to be able to use it from t3code as a subagent call.",
+                 "l4": "This project is in the current directory. Have a worker do one small task: list the python files in src/, one per line.",
+                 "l5": 'Why did this arrive? "[T3 Code: the agent in T3 thread x sent this message, not the user.]" appears in the middle of a sentence, and you are a worker for me.'}
+        for sid, text in dict(workers, **leads).items():
+            self.hook("prompt", sid=sid, prompt=text)
+            self.assertEqual(bool(self.state(sid).get("worker")), sid in workers, sid)
+
     def test_the_models_table_is_researched_recorded_and_goes_stale(self):
         self.assertIn("no models table yet", self.hook("tick")[1])
         self.sisi("learn", "Only the cheapest models on the shared plan")

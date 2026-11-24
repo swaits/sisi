@@ -5,8 +5,9 @@ should be delegating. The end-of-turn hook forces the retro when work was done."
 import json, os, re, sys, time
 from . import models, rules, store
 
-# A delegated session says so in the first lines of its first request (the brief).
-WORKER = re.compile(r"(?im)^\W*(you are a (worker|subagent|sub-agent|delegate)\b|do this task yourself|do not delegate)")
+# A delegated session says so in the first lines of its first request (the brief), or a host's bracketed line
+# at the start of a line says an agent, not the user, sent it.
+WORKER = re.compile(r"(?im)^\W*(you are a (worker|subagent|sub-agent|delegate)\b|do this task yourself|do not delegate|\[[^\]\n]{0,200}\bsent this message, not the user\.?\])")
 DIRECT = ("shell", "read", "edit", "search", "web")  # the classes of tool call the meter counts
 
 METER = ("sisi: %d direct tool calls this turn (the limit is %d). Delegate the rest: `sisi models` lists your "
