@@ -17,9 +17,9 @@ canon/orchestration-tools.json. Per-session state is in <state>/sessions/<id>.me
 every counted event is also appended to <state>/orchestration.jsonl for the unit record. Every entry point
 fails open (the caller wraps it): an error here must never hold up the user's tool.
 """
-import fcntl, json, os, re, shlex, time
+import fcntl, fnmatch, json, os, re, shlex, time
 
-from . import paths, store
+from . import paths, store, workerid
 
 EVENTS = "orchestration.jsonl"
 _HOSTS = {}
@@ -50,10 +50,14 @@ def hosts():
 
 
 def _name_regex(name):
-    """A tool name from the data file as a case-insensitive regular expression: an exact name, or a pattern when
-    it starts with `^`."""
+    """A tool name from the data file as a case-insensitive regular expression: an exact name, a shell-style pattern
+    (`*delegate_task`, as `_matches` reads it), or a regular expression when it starts with `^`."""
     n = str(name)
-    return "(?i)" + (n if n.startswith("^") else "^" + re.escape(n) + "$")
+    if n.startswith("^"):
+        return "(?i)" + n
+    if any(c in n for c in "*?["):
+        return "(?i)" + fnmatch.translate(n)
+    return "(?i)^" + re.escape(n) + "$"
 
 
 def reach_specs():
@@ -71,7 +75,7 @@ def reach_specs():
             if isinstance(spec, dict) and spec.get("reach") and spec.get("provider"):
                 r = out.setdefault(spec["reach"], {"host": spec["reach"]})
                 r.update(delegation_tool=_name_regex(name),
-                         delegation={"tool_name": str(name).rsplit("__", 1)[-1], "provider": spec["provider"],
+                         delegation={"tool_name": str(name).rsplit("__", 1)[-1].lstrip("*"), "provider": spec["provider"],
                                      "model": spec.get("model")})
     return list(out.values())
 
@@ -99,13 +103,6 @@ def meter_note(tool, wired):
 
 # ---------------------------------------------------------------- classifying a call
 
-def _exempt_names(hd):
-    out = set()
-    for names in (hd.get("exempt") or {}).values():
-        out.update(str(n).lower() for n in names or [])
-    return out
-
-
 def _dig(obj, dotted):
     for k in str(dotted or "").split("."):
         if not isinstance(obj, dict):
@@ -114,11 +111,55 @@ def _dig(obj, dotted):
     return obj
 
 
+def _matches(entry, tool):
+    """A data entry is an exact tool name or a shell-style pattern (`*delegate_task`), case-insensitive."""
+    e, t = str(entry).lower(), str(tool or "").lower()
+    return e == t or (any(c in e for c in "*?[") and fnmatch.fnmatchcase(t, e))
+
+
 def delegation_spec(hd, tool):
-    for name, spec in (hd.get("delegation") or {}).items():
-        if str(name).lower() == str(tool or "").lower():
-            return spec if isinstance(spec, dict) else {}
+    """The listed delegation entry for this tool (exact names first, then patterns), else None."""
+    items = list((hd.get("delegation") or {}).items())
+    for exact in (True, False):
+        for name, spec in items:
+            if (str(name).lower() == str(tool or "").lower()) == exact and _matches(name, tool):
+                return spec if isinstance(spec, dict) else {}
     return None
+
+
+_WORDS = {}
+
+
+def _name_words():
+    if not _WORDS:  # a failed read is not remembered
+        try:
+            with open(paths.canon("tool-name-words.json"), encoding="utf-8") as f:
+                d = json.load(f)
+            _WORDS.update({k: [str(w).lower() for w in v if isinstance(w, str)] for k, v in d.items() if isinstance(v, list)})
+        except (OSError, ValueError):
+            return {}
+    return _WORDS
+
+
+def name_kind(tool):
+    """"delegation" or "control" when an unlisted tool's NAME says what it is (canon/tool-name-words.json), else None."""
+    t = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(tool or ""))
+    padded = "_" + "_".join(w for w in re.split(r"[^a-z0-9]+", t.lower()) if w) + "_"
+    words = _name_words()
+    for kind in ("delegation", "control"):
+        if any("_" + w.strip("_") + "_" in padded for w in words.get(kind, ())):
+            return kind
+    return None
+
+
+def is_delegation(host, tool):
+    """Does this tool start a worker: listed in the host's data (name or pattern), or named like one."""
+    return delegation_spec(host_data(host), tool) is not None or (
+        not _listed_exempt(host_data(host), tool) and name_kind(tool) == "delegation")
+
+
+def _listed_exempt(hd, tool):
+    return any(_matches(n, tool) for names in (hd.get("exempt") or {}).values() for n in names or [])
 
 
 def _segments(cmd):
@@ -172,12 +213,13 @@ def classify(host, tool, inp, cmd):
     hd = host_data(host)
     if delegation_spec(hd, tool) is not None:
         return "delegation"
-    if str(tool or "").lower() in _exempt_names(hd):
+    if _listed_exempt(hd, tool):
         return "exempt"
     from . import watch
-    if watch.is_shell(tool, cmd) and runs_sisi(cmd):
-        return "exempt"
-    return "direct"
+    if watch.is_shell(tool, cmd):
+        return "exempt" if runs_sisi(cmd) else "direct"
+    kind = name_kind(tool)  # an unlisted tool: its name says whether it starts a worker or only controls one
+    return "delegation" if kind == "delegation" else "exempt" if kind == "control" else "direct"
 
 
 # ---------------------------------------------------------------- the per-session meter
@@ -248,11 +290,6 @@ def _peek(sid):
         return {}
 
 
-def worker_flag(sid):
-    """Did this session's first prompt open with the brief template's line (it is a worker)?"""
-    return bool(_peek(sid).get("worker"))
-
-
 def routed_kind(sid):
     """The kind in the session's current routing decision (`sisi route` recorded it, here, in the meter), or
     None when there is none or it is older than orchestrate.route_window_min. The one place the decision is read."""
@@ -298,6 +335,26 @@ def _pending_for(m, text):
     return key, (m["pending"].get(key) if key else None)
 
 
+_BRACKET = re.compile(r"\[(completed|failed|interrupted|cancelled|canceled)\]", re.I)
+
+
+def bracket_status(text):
+    """The status a plain-text completion notice carries (`[completed]`, `[failed]`, `[interrupted]`) near its start."""
+    m = _BRACKET.search((text or "").lstrip()[:300])
+    return m.group(1).lower().replace("canceled", "cancelled") if m else None
+
+
+def _pending_by_names(m, text):
+    """(key, entry) of the pending background delegation whose id or title this message names, else (None, None)."""
+    low = (text or "").lower()
+    for key, ent in m["pending"].items():
+        ids = [str(i) for i in ent.get("ids") or [] if i]
+        title = str(ent.get("title") or "")
+        if any(i in text for i in ids) or (len(title) >= 8 and title.lower() in low):
+            return key, ent
+    return None, None
+
+
 def _task_done(m, key, ent, text, superseded=False):
     """A host's notice that a background worker finished: complete the run it started."""
     from . import workers
@@ -306,22 +363,13 @@ def _task_done(m, key, ent, text, superseded=False):
     tokens = _tag(text, "subagent_tokens")
     ms = _tag(text, "duration_ms")
     minutes = round(float(ms) / 60000.0, 2) if ms and ms.replace(".", "", 1).isdigit() else round((now - ent["t0"]) / 60.0, 2)
-    ok = (_tag(text, "status") or "completed") == "completed"
+    ok = (_tag(text, "status") or bracket_status(text) or "completed") == "completed"
     workers.append_record({"kind": "run-end", "run_id": ent["run"], "ts": round(now), "ended": round(now),
                            "minutes": minutes, "tokens": int(tokens) if tokens and tokens.isdigit() else None,
                            "tokens_class": "measured" if tokens and tokens.isdigit() else "unavailable",
                            "model": ent.get("model"),
                            "status": "superseded" if superseded else ("waiting" if ok else "failed")})
     _event(m, m.get("sid"), "delegation-done", run=ent["run"])
-
-
-def brief_line():
-    from . import brief
-    return brief.template().splitlines()[0].strip().lower()
-
-
-def _session_is_worker(m, sess):
-    return bool(m.get("worker") or sess.get("subagent") or os.environ.get("SISI_WORKER_RUN"))
 
 
 def new_turn(sid, cwd=None, prompt=None):
@@ -336,11 +384,16 @@ def new_turn(sid, cwd=None, prompt=None):
             _project(m, cwd)
         text = prompt if isinstance(prompt, str) else ""
         is_notice = text.lstrip().startswith(NOTIFICATION)
+        status = (_tag(text, "status") or "").lower() if is_notice else (bracket_status(text) if text else None)
+        named = _pending_by_names(m, text) if status and not is_notice else (None, None)
         failed = fallback.failure_notice(text) if text else None
-        if is_notice or failed:
+        if is_notice or failed or named[1] is not None:
             out = None
-            key, ent = _pending_for(m, text) if is_notice else (None, None)
-            if failed and not _session_is_worker(m, sess):
+            key, ent = _pending_for(m, text) if is_notice else named
+            if status in ("interrupted", "cancelled", "canceled") and ent is not None:
+                _task_done(m, key, ent, text, superseded=True)  # stopped on purpose: nothing to judge
+                return None
+            if failed and not workerid.is_worker_session({}, sess, m):
                 out = fallback.handle(m, sid, cwd or m.get("project") or os.getcwd(), failed["text"],
                                       own_model=_own_model({}, sess, m), worker=(ent or {}).get("worker"),
                                       run_id=(ent or {}).get("run"))
@@ -350,8 +403,8 @@ def new_turn(sid, cwd=None, prompt=None):
         m["turn"] += 1
         m.update(calls=0, chars=0, ext=0, refusals=0, fails={}, ext_log=[], same_model_ok=False, unavail=None)
         m["prompts"] += 1
-        if m["prompts"] == 1 and text.lstrip()[:200].lower().startswith(brief_line()):
-            m["worker"] = True
+        if m["prompts"] == 1 and "worker" not in m:
+            m["worker"] = workerid.opens_as_brief(text)
     return None
 
 
@@ -472,10 +525,6 @@ def _norm(cmd):
     return " ".join((cmd or "").split())
 
 
-def _is_worker(payload, sess, m):
-    return bool(m.get("worker") or sess.get("subagent") or store.is_subagent_payload(payload))
-
-
 def _transcript_model(path):
     """The model the main thread last answered with, from the tail of the host's transcript (a session-start
     payload need not carry it). None when it cannot be read."""
@@ -539,7 +588,7 @@ def _before(payload, host=None):
     tool, cmd, _ev, cwd, sid = watch.extract(payload)
     host = host or store.tool() or "claude-code"
     hd = host_data(host)
-    if not hd or store.is_subagent_payload(payload):
+    if not hd:
         return {}
     sid = sid or "cwd-" + cwd
     inp = next((payload[k] for k in ("tool_input", "toolInput", "input") if isinstance(payload.get(k), dict)), {})
@@ -549,10 +598,10 @@ def _before(payload, host=None):
         return _dialog_guard(payload, host, sid, cwd)
     if kind == "exempt" and not shell:
         return {}
+    if workerid.session_is_worker(payload, sid, cwd):
+        return {}
     sess = store.load_session(sid)
     with Meter(sid) as m:
-        if _is_worker(payload, sess, m):
-            return {}
         project = _project(m, cwd)
         m["last_tool"] = tool
         if shell:
@@ -599,10 +648,12 @@ def _dialog_guard(payload, host, sid, cwd):
     from . import fallback, workers
     if refuse_style(host) not in ("json-deny", "exit-2"):
         return {}
+    if workerid.session_is_worker(payload, sid, cwd):
+        return {}
     sess = store.load_session(sid)
     with Meter(sid) as m:
         info = m.get("unavail")
-        if not info or _is_worker(payload, sess, m):
+        if not info:
             return {}
         own = _own_model(payload, sess, m)
         project = _project(m, cwd)
@@ -616,7 +667,10 @@ def _dialog_guard(payload, host, sid, cwd):
 
 
 def _before_delegation(payload, hd, tool, inp, host, sid, sess, m, c, cwd):
-    spec = delegation_spec(hd, tool) or {}
+    spec = delegation_spec(hd, tool)
+    if spec is None:
+        return {}  # only named like a delegation tool: the data does not say where its model sits, so it is never
+        # counted, refused or recorded as a run here
     model = _dig(inp, spec.get("model", "model"))
     model = model.strip() if isinstance(model, str) else ""
     text = _dig(inp, spec.get("brief", "prompt"))
@@ -662,7 +716,9 @@ def _before_delegation(payload, hd, tool, inp, host, sid, sess, m, c, cwd):
     except OSError as e:
         store.log_error("orchestration-run", e)
     key = payload.get("tool_use_id") if isinstance(payload.get("tool_use_id"), str) else "last"
-    m["pending"][key] = {"run": run_id, "t0": now, "worker": worker}
+    title = _dig(inp, spec.get("title", "title"))
+    title = title.strip() if isinstance(title, str) else ""
+    m["pending"][key] = {"run": run_id, "t0": now, "worker": worker, "title": title or None}
     m["unavail"] = None  # the agent is falling back (or delegating anew): nothing left to refuse a question for
     _event(m, sid, "delegation", run=run_id, worker=worker)
     known = bool(route and route.get("kind") and route.get("difficulty"))
@@ -691,7 +747,7 @@ def after(payload, host=None):
     tool, cmd, ev, cwd, sid = watch.extract(payload)
     host = host or store.tool() or "claude-code"
     hd = host_data(host)
-    if not hd or store.is_subagent_payload(payload):
+    if not hd:
         return {}
     sid = sid or "cwd-" + cwd
     inp = next((payload[k] for k in ("tool_input", "toolInput", "input") if isinstance(payload.get(k), dict)), {})
@@ -699,14 +755,14 @@ def after(payload, host=None):
     shell = watch.is_shell(tool, cmd)
     if kind == "exempt" and not shell:
         return {}
+    if workerid.session_is_worker(payload, sid, cwd):
+        return {}
     sess = store.load_session(sid)
     out = {}
     with Meter(sid) as m:
-        if _is_worker(payload, sess, m):
-            return {}
         _project(m, cwd)
         if kind == "delegation":
-            return _after_delegation(payload, ev, sid, m, sess, cwd)
+            return _after_delegation(payload, ev, sid, m, sess, cwd, host, tool)
         if shell and re.search(r"\bsisi\b.*\bdelegate\b", cmd or "", re.S):  # alone or inside a longer command line
             from . import fallback
             note = fallback.shell_notice(_flat(payload))
@@ -751,7 +807,61 @@ def _flat(payload):
     return "\n".join(parts)
 
 
-def _after_delegation(payload, ev, sid, m, sess=None, cwd=None):
+def _result_objects(resp):
+    """The JSON objects a tool result holds: the result itself, or the text blocks of a content list parsed."""
+    out, stack = [], [resp]
+    while stack:
+        x = stack.pop(0)
+        if isinstance(x, str):
+            try:
+                x = json.loads(x)
+            except ValueError:
+                continue
+            if isinstance(x, str):
+                continue
+        if isinstance(x, dict):
+            out.append(x)
+            for k in ("content", "text", "structuredContent"):
+                if x.get(k) is not None:
+                    stack.append(x[k])
+        elif isinstance(x, list):
+            stack.extend(x)
+    return out
+
+
+_TERMINAL = ("completed", "complete", "done", "finished", "success", "succeeded", "failed", "error", "cancelled",
+             "canceled", "interrupted")
+_REPORT_KEYS = ("result", "report", "summary", "output", "text", "message", "totalDurationMs", "total_duration_ms",
+                "totalTokens", "total_tokens", "usage")
+LAUNCH_SECONDS = 5
+
+
+def background_launch(spec, resp, elapsed):
+    """None when the delegation call returned its result; else the ids (possibly none) the later notice will carry.
+    The data says how a host's result marks a background launch (`async`: a dotted `path` and the `running` values,
+    and the `ids` paths); a tool with no such data counts as a launch when the call returned in under
+    LAUNCH_SECONDS with no report in the result (no report keys, no finished status, no long text)."""
+    objs = [o for o in _result_objects(resp)]
+    a = (spec or {}).get("async")
+    if isinstance(a, dict) and a.get("path"):
+        for o in objs:
+            v = _dig(o, a["path"])
+            if isinstance(v, str) and v.lower() in [str(x).lower() for x in a.get("running") or []]:
+                ids = [_dig(o, q) for q in (a.get("ids") or ([a["id"]] if a.get("id") else []))]
+                return [str(i) for i in ids if isinstance(i, (str, int)) and str(i)]
+        return None
+    if elapsed >= LAUNCH_SECONDS or not objs:
+        return None
+    for o in objs:
+        status = str(o.get("status") or "").lower()
+        if status in _TERMINAL or any(k in o for k in _REPORT_KEYS) or any(isinstance(v, str) and len(v) >= 80 for v in o.values()):
+            return None
+    ids = [str(v) for k, v in objs[0].items() if isinstance(v, (str, int)) and not isinstance(v, bool)
+           and re.search(r"id$", k, re.I) and str(v)]
+    return ids
+
+
+def _after_delegation(payload, ev, sid, m, sess=None, cwd=None, host=None, tool=None):
     from . import workers
     key = payload.get("tool_use_id") if isinstance(payload.get("tool_use_id"), str) else "last"
     ent = m["pending"].get(key)
@@ -765,6 +875,11 @@ def _after_delegation(payload, ev, sid, m, sess=None, cwd=None):
     if isinstance(resp, dict) and (resp.get("isAsync") or resp.get("status") == "async_launched"):
         # the worker was only launched: it is finished when the host's notice arrives (new_turn), not now
         m["pending"][key] = dict(ent, agent=resp.get("agentId"), model=resp.get("resolvedModel"))
+        return {}
+    launch = background_launch(delegation_spec(host_data(host), tool), resp, now - ent["t0"])
+    if launch is not None:
+        # a launch call returns at once; the result arrives later as a message that names this id or title
+        m["pending"][key] = dict(ent, ids=launch, title=ent.get("title"))
         return {}
     from . import fallback
     text = _flat(payload)
@@ -906,7 +1021,7 @@ def fallback_sendback(payload, sid):
     sess = store.load_session(sid)
     with Meter(sid) as m:
         info = m.get("unavail")
-        if not info or int(m.get("fallback_asked") or 0) >= FALLBACK_SENDBACKS or _session_is_worker(m, sess):
+        if not info or int(m.get("fallback_asked") or 0) >= FALLBACK_SENDBACKS or workerid.is_worker_session({}, sess, m):
             return None
         own = _own_model({}, sess, m)
         project = m.get("project") or os.getcwd()

@@ -360,6 +360,27 @@ class LearnedWorkersEverywhere(HookCase):
         self.assertIsNotNone(out, "the learned driver's phrase counts")
         self.assertEqual(workers.read_availability()["fakeagent/fa-1"]["reason"], "limit")
 
+    def test_a_learned_worker_and_a_host_worker_are_classified_and_take_part_in_the_newest_version_rule(self):
+        self.learn()
+        self.listing()
+        asked = self.sisi("workers", "classify").stdout
+        for w in ("fakeagent/fa-1", "fakeagent/fa-2", "fakeagent/default", "alpha/m-1"):
+            self.assertIn(w, asked.splitlines(), w)
+        answer = os.path.join(self.tmp, "answer.json")
+        with open(answer, "w") as f:
+            json.dump({"workers": {"fakeagent/fa-1": {"maker": "fa", "class": "standard", "released": "2026-01-01"},
+                                   "fakeagent/fa-2": {"maker": "fa", "class": "standard", "released": "2026-06-01"},
+                                   "fakeagent/default": {"maker": "unknown", "class": "unknown", "released": "unknown"},
+                                   "alpha/m-1": {"maker": "al", "class": "standard", "released": "2026-03-01"},
+                                   "alpha/m-2": {"maker": "al", "class": "standard", "released": "2026-04-01"}}}, f)
+        r = self.sisi("workers", "classify", "--record", answer, "--by", "a test")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("fakeagent/fa-1", self.sisi("workers", "classify").stdout.splitlines())
+        explained = self.route("read", "1", "--explain").stdout
+        self.assertNotEqual(explained.splitlines()[0], "fakeagent/fa-1")
+        self.assertIn("superseded by fakeagent/fa-2", explained, "the older version of a learned worker is replaced by the newer")
+        self.assertIn("superseded by alpha/m-2", explained, "and so is a host worker's")
+
     def test_route_retry_of_names_a_learned_worker_with_its_check_line(self):
         self.learn()
         self.sisi("workers", "vouch", "fakeagent/fa-1", "--up-to", "2", "--why", "words")

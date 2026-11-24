@@ -18,7 +18,12 @@
       "3": 85
     },
     "price_blend_input_parts": 3,
-    "explore_free_one_in": 3
+    "explore_free_one_in": 3,
+    "class_span": {
+      "1": 100,
+      "2": 70,
+      "3": 35
+    }
   },
   "discovery": {
     "path_refresh_s": 21600,

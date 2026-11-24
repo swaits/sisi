@@ -263,7 +263,9 @@ class RouteTests(OrchCase):
         self.assertIn("mechanism:", r.stdout)
 
     def _big_catalogue(self, n=2000):
-        names = ["m-%d" % i for i in range(n)] + ["contributor-%d" % i for i in range(40)]
+        # letters only: a number in an id is a version, and the newest version of a class replaces the older ones
+        names = ["mdl-%s" % "".join(chr(97 + (i // 26 ** k) % 26) for k in range(3)) for i in range(n)] \
+            + ["contributor-%d" % i for i in range(40)]
         script = FAKE_TOOL.replace('echo "beta-1"; echo "beta-2";', " ".join('echo "%s";' % x for x in names))
         with open(os.path.join(self.bindir, "muse"), "w") as f:
             f.write(script)
@@ -272,7 +274,7 @@ class RouteTests(OrchCase):
         """R-7.2-1: --explain prints at most 20 lines and 3 example names per reason group,
         and still shows every reason group, however many catalogue models were passed over."""
         self._big_catalogue()
-        self.sisi("workers", "avoid", "m-7", "--why", "fixture avoid", env=self.env())
+        self.sisi("workers", "avoid", "mdl-ab", "--why", "fixture avoid", env=self.env())
         r = self.sisi("route", "--kind", "impl", "--difficulty", "2", "--explain", env=self.env())
         self.assertEqual(r.returncode, 0, r.stderr)
         lines = r.stdout.splitlines()

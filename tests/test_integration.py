@@ -11,7 +11,7 @@ from support import *
 import test_meter as TM
 import test_unitguard as TG
 from sisi import contract as C, gate, lifecycle, orchestration, prompt, routing, rulecmd, store, unit as U, unitguard as G
-from sisi import watch, workers
+from sisi import brief, watch, workers
 
 SRC = TG.SRC
 CONTRACT_LINES = 12
@@ -119,7 +119,7 @@ class OneRefusalAtATime(Both):
         self.assertIsNone(self.edit(agent_id="w1"))
         self.assertIsNone(self.agent(BUILD_BRIEF, agent_id="w1"))
         # a session whose first prompt opens with the brief template's line is a worker too
-        orchestration.new_turn("wk", self.proj, orchestration.brief_line() + "\nOutcome: x")
+        orchestration.new_turn("wk", self.proj, brief.template().splitlines()[0] + "\nOutcome: x")
         d = {"session_id": "wk", "cwd": self.proj, "hook_event_name": "PreToolUse", "tool_name": "Edit",
              "tool_input": {"file_path": os.path.join(self.proj, SRC), "old_string": "a", "new_string": "b"}}
         r = self.sisi("watch", "--before", "--tool", "claude-code", stdin=json.dumps(d))
@@ -346,7 +346,7 @@ class ConfigDefault(SisiCase):
         for section in ("gate", "verify", "retro", "route", "unit", "orchestrate"):
             self.assertIn(section, cfg)
         self.assertEqual(sorted(cfg["orchestrate"]), ["direct_calls", "direct_chars", "enabled", "extension", "route_window_min"])
-        self.assertEqual(sorted(cfg["route"]), ["explore_free_one_in", "price_blend_input_parts", "standing_floor"])
+        self.assertEqual(sorted(cfg["route"]), ["class_span", "explore_free_one_in", "price_blend_input_parts", "standing_floor"])
         self.assertEqual(cfg["unit"], {"stale_hours": 12})
         self.assertEqual(store.config()["orchestrate"]["direct_calls"], 6)
 

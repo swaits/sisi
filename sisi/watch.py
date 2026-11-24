@@ -317,7 +317,8 @@ def run(payload, args=(), host=None):
     _tool, _cmd, ev, _cwd, sid = extract(payload)
     out = {}
     if "--before" in args or ev in BEFORE_EVENTS:
-        if not worker_session(payload, sid, _cwd):
+        from . import workerid
+        if not workerid.session_is_worker(payload, sid, _cwd):
             text = contract_guard(payload)
             if text:
                 return {"deny": text}
@@ -351,21 +352,6 @@ def run(payload, args=(), host=None):
         except Exception as e:
             store.log_error("watch-unitguard", e)
     return out
-
-
-def worker_session(payload, sid, cwd):
-    """Is this call from a worker or subagent (the host marks it, `sisi delegate` started it, or its first
-    prompt opened with the brief template's line)? Workers are exempt from the contract guard and the meter.
-    False when it cannot be told."""
-    try:
-        if store.is_subagent_payload(payload):
-            return True
-        from . import orchestration
-        sid = sid or "cwd-" + cwd
-        return bool(store.load_session(sid).get("subagent") or orchestration.worker_flag(sid))
-    except Exception as e:
-        store.log_error("watch-worker", e)
-        return False
 
 
 def render_claude(out, event):

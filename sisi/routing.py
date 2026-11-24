@@ -44,14 +44,21 @@ The rule, in order:
   6. About one low-stakes task in ten (difficulty 1, every tenth judged attempt for that kind and
      difficulty) goes to a cheaper worker with a thin record instead, so cheaper options keep
      gathering evidence. The slot is a function of the record, so the choice stays deterministic.
-  7. Load balancing: within the same price tier and price, the worker that has taken the least work
+  7. The newest usable version of a maker's class always wins over its older versions (see
+     `superseded_by`): no better record and no cheaper plan on the older version brings it back.
+     The older one competes again only while the newer one is unusable. The class is read from the
+     recorded facts (see lineage_from_fact): maker, class and release date; a model with no recorded class
+     is never compared.
+  8. Load balancing: within the same price tier and price, the worker that has taken the least work
      relative to its remaining allowance goes first (recorded uses divided by allowance left, an
-     unknown allowance counting as half). Ties break on the worker id.
+     unknown allowance counting as half). Ties break on the newer version of the same model (never across
+     makers or classes), then on the worker id.
 
 Candidates reach here already restricted to workers with a judged record, a known price or a
 benchmark standing (see workers.routable_candidates); on a cold start none qualifies and every
 usable worker is offered, with the explanation saying so.
 """
+import functools
 import re
 
 MIN_ATTEMPTS = 8          # below this, a worker's record for a kind and difficulty is thin
@@ -62,7 +69,57 @@ STRONG_BAND = 10.0        # standing points from the best still counts as among 
 EXPLORE_EVERY = 10        # about one low-stakes task in ten tries a cheaper thin-record worker
 EXPLORE_FREE_EVERY = 3    # an unproven worker that costs nothing extra gets one routine task in three
 DEFAULT_STANDING_FLOOR = {1: 0.0, 2: 60.0, 3: 85.0}  # percent of the best usable standing needed
+DEFAULT_CLASS_SPAN = {1: 100.0, 2: 70.0, 3: 35.0}  # how far down a maker's class order still counts as capable
 DEFAULT_PRICE_BLEND = 3.0  # parts of input price to one part of output price in a blended price
+
+
+# ---------------------------------------------------------------- a model's identity, from recorded facts only
+#
+# sisi reads nothing from a model's name. A model's maker, class and release date are facts, researched by a
+# cheap, fast worker (`sisi workers classify`) and recorded with `sisi workers fact`. A model with no recorded
+# maker and class has no identity and takes part in no comparison of versions.
+#   identity   (maker, class). For a maker whose lines are the classes, the class is the line's own name; for a
+#              maker with a "flash" beside its standard model, the class is "flash" or "standard". Different
+#              classes are different things and never replace each other.
+#   recency    the recorded release date (YYYY-MM-DD or YYYY-MM). A bare host alias with a recorded class and no
+#              release date counts as the newest version of its class.
+
+UNKNOWN = "unknown"
+
+
+def lineage_from_fact(fact=None, host_native=False):
+    """{key, maker, class, label, released, alias, source} from a model's recorded facts. source is "fact" when
+    both a maker and a class are recorded, else "unknown" (key None: no comparison of versions)."""
+    fact = fact if isinstance(fact, dict) else {}
+    cls = str(fact.get("class") or "").strip().lower()
+    maker = str(fact.get("maker") or "").strip().lower()
+    cls, maker = ("" if cls == UNKNOWN else cls), ("" if maker == UNKNOWN else maker)   # "unknown" is an answer, not a fact
+    released = str(fact["released"]) if fact.get("released") and fact["released"] != UNKNOWN else None
+    out = {"key": None, "maker": maker, "class": cls or UNKNOWN, "label": cls or UNKNOWN, "released": released,
+           "alias": False, "source": UNKNOWN}
+    if cls and maker:
+        out.update(key=(maker, cls), source="fact", alias=bool(host_native and not released))
+    return out
+
+
+def compare_release(a, b):
+    """1 when a is the more recently released model, -1 when b is, 0 when equal or unknowable. A bare alias is the
+    newest of its class; otherwise the recorded release dates decide."""
+    if a.get("alias") or b.get("alias"):
+        return (1 if a.get("alias") else 0) - (1 if b.get("alias") else 0)
+    da, db = days(a.get("released")), days(b.get("released"))
+    if da and db and da != db:
+        return 1 if da > db else -1
+    return 0
+
+
+def days(date):
+    """A YYYY-MM-DD or YYYY-MM date as a number that sorts correctly (months of 31 days: only the order matters);
+    0 when there is no date."""
+    d = str(date or "")
+    if len(d) >= 7 and d[:4].isdigit() and d[5:7].isdigit() and (len(d) == 7 or (len(d) >= 10 and d[8:10].isdigit())):
+        return int(d[0:4]) * 372 + int(d[5:7]) * 31 + (int(d[8:10]) if len(d) >= 10 else 0)
+    return 0
 
 
 def maker_of(name):
@@ -111,6 +168,32 @@ def _floor_pct(floors, difficulty):
     if difficulty is None or difficulty < min(table):
         return 0.0
     return table[max(table)]
+
+
+def class_spans(configured=None):
+    """{difficulty: percent of a maker's class order, from the most capable class down, that is capable enough}.
+    With four classes: routine work (100) reaches all four, ordinary work (70) the top three, hard work (35) the
+    top two. The defaults are overridden by valid entries of the configured mapping (keys 1..3, values 0..100)."""
+    table = dict(DEFAULT_CLASS_SPAN)
+    if isinstance(configured, dict):
+        for k, v in configured.items():
+            try:
+                d, pct = int(k), float(v)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= d <= 3 and 0 <= pct <= 100:
+                table[d] = pct
+    return table
+
+
+def class_rank(c, opts=None):
+    """(position, count) of the model's class in its maker's recorded order (0 is the most capable), or None when
+    the maker has no recorded order, the class could not be read, or the class is not in the order."""
+    l = _lineage(c)
+    order = ((opts or {}).get("class_orders") or {}).get(l.get("maker")) if l and l.get("key") else None
+    if not order or l.get("label") not in order:
+        return None
+    return order.index(l["label"]), len(order)
 
 
 def _pattern_match(c, patterns):
@@ -192,6 +275,62 @@ def candidate_stats(candidates, records):
     return stats
 
 
+def _versions_newest_first(models):
+    """[[workers of one version], ...] from the newest version to the oldest (one model through several
+    providers is one version)."""
+    out = []
+    ordered = sorted(models, key=lambda d: d["worker"])
+    ordered.sort(key=functools.cmp_to_key(lambda a, b: compare_release(_lineage(b), _lineage(a))))
+    for d in ordered:
+        if out and compare_release(_lineage(out[-1][0]), _lineage(d)) == 0:
+            out[-1].append(d)
+        else:
+            out.append([d])
+    return out
+
+
+def inherit_stats(candidates, stats, opts=None):
+    """Judged cells as evidence sees them: a model with no thick record of its own for a kind and difficulty
+    starts from the thick record of the closest older version of the same maker and class (walking back one
+    version at a time, the first thick record decides). Only a record that proves the work is inherited: a
+    predecessor's bad record starts the newer model from its benchmark or from nothing, and a thin record of the
+    model's own that already repeats rejections is not papered over. The model's own thick record always stands
+    alone. An inherited cell carries `from`, the worker whose record it is."""
+    eff = {w: {"uses": st["uses"], "by_cell": dict(st["by_cell"])} for w, st in stats.items()}
+    groups = {}
+    for c in candidates:
+        l = _comparable(c, opts)
+        if l:
+            groups.setdefault(tuple(l["key"]), []).append(c)
+    for group in groups.values():
+        for c in group:
+            older = [d for d in group if compare_release(_lineage(c), _lineage(d)) > 0]
+            if not older:
+                continue
+            levels = _versions_newest_first(older)
+            own = stats[c["worker"]]["by_cell"]
+            for ck in sorted({k for d in older for k in stats[d["worker"]]["by_cell"]}, key=str):
+                mine = own.get(ck, _NO_CELL)
+                if _thick(mine) or _contradicts(mine):
+                    continue
+                for level in levels:
+                    cells = [(d["worker"], stats[d["worker"]]["by_cell"].get(ck)) for d in level]
+                    cells = [(w, x) for w, x in cells if x]
+                    merged = {"n": sum(x["n"] for _w, x in cells), "good": sum(x["good"] for _w, x in cells)}
+                    if _thick(merged):
+                        if _proven(merged):
+                            eff[c["worker"]]["by_cell"][ck] = dict(merged, **{"from": max(cells, key=lambda t: (t[1]["n"], t[0]))[0]})
+                        break
+    return eff
+
+
+def has_predecessor(c, among, opts=None):
+    """Whether some worker in `among` is an older version of the same maker and class as `c`."""
+    l = _comparable(c, opts)
+    return bool(l) and any(_comparable(d, opts) and tuple(_lineage(d)["key"]) == tuple(l["key"])
+                           and compare_release(l, _lineage(d)) > 0 for d in among)
+
+
 def _price_tier(c):
     if c.get("plan") == "flat":
         return 0
@@ -243,10 +382,12 @@ def _by_difficulty(stats, worker, kind):
         p = pooled.setdefault(d, {"n": 0, "good": 0})
         p["n"] += cell["n"]
         p["good"] += cell["good"]
+        if cell.get("from"):
+            p["from"] = cell["from"]
     return own, pooled
 
 
-def assess(stats, worker, kind, difficulty, standing=None, best_standing=None, floors=None, vouch=0):
+def assess(stats, worker, kind, difficulty, standing=None, best_standing=None, floors=None, rank=None, spans=None, vouch=0):
     """What the evidence says about one worker for a kind and difficulty. Returns a dict:
       tier       "a", "b-higher", "b-all", "standing", "unknown" or "none"
       capable    whether the evidence says it is capable enough
@@ -256,7 +397,12 @@ def assess(stats, worker, kind, difficulty, standing=None, best_standing=None, f
       level      3 judged proof, 2 benchmark, 1 weak, 0 nothing, -1 bad: never rises with difficulty
       n, good, at   the judged cell behind a, b-higher, b-all and the weak tier (and its difficulty)
       share, needed, floor   for the standing tier: percent of the best, the figure needed, the floor
-    Standing is compared only with the best standing; a rate only with the bar.
+      class_pos, class_n, class_share, class_allowed   for the class tier (see below)
+      inherited_from  the worker whose record this is, when it is a predecessor's (see inherit_stats)
+    The class tier is the last prior: a worker with no judged proof and no standing of its own, whose class has a
+    place in its maker's recorded order (`rank`, from class_rank), is capable when that place is within the span the
+    difficulty allows (`spans`, see class_spans). Standing is compared only with the best standing; a rate only with
+    the bar; neither is ever compared with a class.
     `vouch` is the difficulty up to which the owner vouched for the worker: a judged proof outranks it, a thick bad
     record or a thin one with repeated rejections cancels it, and it outranks a benchmark (tier "vouch")."""
     d = difficulty
@@ -290,7 +436,8 @@ def assess(stats, worker, kind, difficulty, standing=None, best_standing=None, f
                     proof = ("b-all", wide[0], pooled[wide[0]])
     if proof is not None:
         tier, at, cell = proof
-        out.update(tier=tier, capable=True, level=3, at=at, n=cell["n"], good=cell["good"], measure=_rate(cell))
+        out.update(tier=tier, capable=True, level=3, at=at, n=cell["n"], good=cell["good"], measure=_rate(cell),
+                   inherited_from=cell.get("from"))
         return out
     if vouch and isinstance(d, int) and d <= vouch and not out["contradicted"]:
         out.update(tier="vouch", capable=True, level=3, at=vouch, measure=0.0)
@@ -303,6 +450,14 @@ def assess(stats, worker, kind, difficulty, standing=None, best_standing=None, f
         if not out["contradicted"]:
             out.update(tier="standing", capable=capable, level=2 if capable else (1 if out["weak"] else 0))
             return out
+    if standing is None and rank is not None and not out["contradicted"]:
+        pos, n = rank
+        share = 100.0 * pos / (n - 1) if n > 1 else 0.0
+        allowed = class_spans(spans).get(d, 100.0 if d is None or d < 1 else class_spans(spans)[3])
+        capable = share <= allowed + 1e-9
+        out.update(tier="class", capable=capable, level=1 if capable else 0, class_pos=pos, class_n=n,
+                   class_share=share, class_allowed=allowed)
+        return out
     if standing is None and d == 1 and not out["contradicted"]:
         out.update(tier="unknown", capable=True, level=0)
         return out
@@ -318,9 +473,13 @@ def strength(a):
     if a["bad"]:
         return (-1, 0, 0.0)
     if a["tier"] in _TIER_RANK:
+        if a.get("inherited_from"):
+            return (3, 1, a["measure"])   # a predecessor's record: above a benchmark, below the model's own
         return (4, -_TIER_RANK[a["tier"]], a["measure"])
     if a["standing"] is not None and not a["contradicted"]:
         return (3, 0, float(a["standing"]))
+    if a["tier"] == "class":
+        return (1, 1, 1.0 - a["class_share"] / 100.0)   # the maker's own order: below a weak judged record
     if a["weak"]:
         return (2, 0, a["weak_rate"])
     return (1, 0, 0.0)
@@ -341,37 +500,70 @@ def vouch_level(c):
     return lvl if isinstance(lvl, int) and not isinstance(lvl, bool) and lvl > 0 else 0
 
 
-def _prepare(candidates, records, availability, now, exclude, avoid, review_of, difficulty=None):
-    """The workers that may be recommended at all: (eligible, passed, stats, author_maker). An unproven
-    worker (flagged by workers.build_candidates: new, with fewer than MIN_ATTEMPTS judged attempts) is
-    offered routine work only: above difficulty 1 it is passed over whatever benchmark it has."""
+def _unusable(c, availability, now):
+    """Why a candidate cannot be used right now (plain words), or None."""
+    if "contributor" in str(c.get("model") or c["worker"]).lower():
+        return "its id contains 'contributor', a tier that trains on prompts"
+    down = _down_entry(c, availability, now)
+    if down is not None:
+        return "unavailable (%s) until its retry time" % (down.get("reason") or "down")
+    if not c.get("usable", True):
+        return c.get("reason") or "not usable now"
+    if c.get("plan") == "flat" and c.get("allowance_pct_left") == 0:
+        return "its flat-rate allowance is spent"
+    return None
+
+
+def _lineage(c):
+    l = c.get("lineage")
+    return l if isinstance(l, dict) else None
+
+
+def _comparable(c, opts=None):
+    """The model's lineage when its maker and class are recorded; a model without them is never compared."""
+    l = _lineage(c)
+    return l if l and l.get("key") else None
+
+
+def superseded_by(pool, opts=None):
+    """{worker: the newest worker of its maker and class that replaces it}, over the usable `pool`. Workers
+    that share a recorded maker and class are versions of one model whichever provider carries them; the
+    older version is replaced by the newest one whatever its record or price. Pure."""
+    groups = {}
+    for c in pool:
+        l = _comparable(c, opts)
+        if l:
+            groups.setdefault(tuple(l["key"]), []).append(c)
+    out = {}
+    for group in groups.values():
+        for c in group:
+            newer = [d for d in group if compare_release(_lineage(d), _lineage(c)) > 0]
+            if newer:
+                out[c["worker"]] = _versions_newest_first(newer)[0][0]["worker"]
+    return out
+
+
+def _prepare(candidates, records, availability, now, exclude, avoid, review_of, opts=None, difficulty=None):
+    """The workers that may be recommended at all: (eligible, passed, stats, author_maker, superseded)."""
     exclude = {str(x) for x in exclude}
     stats = candidate_stats(candidates, records)
     passed = []
     eligible = []
+    tried = []   # usable workers already tried in this delegation: still the newest version, so older ones stay out
 
     for c in candidates:
         w = c["worker"]
+        why = _unusable(c, availability, now)
         if w in exclude:
             passed.append((w, "already tried in this delegation"))
-            continue
-        if "contributor" in str(c.get("model") or w).lower():
-            passed.append((w, "its id contains 'contributor', a tier that trains on prompts"))
-            continue
-        if c.get("unproven") and isinstance(difficulty, int) and difficulty > max(1, vouch_level(c)):
+            if why is None:
+                tried.append(c)
+        elif why is not None:
+            passed.append((w, why))
+        elif c.get("unproven") and isinstance(difficulty, int) and difficulty > max(1, vouch_level(c)):
             passed.append((w, "unproven: a new worker with no judged record is offered routine work (difficulty 1) only"))
-            continue
-        down = _down_entry(c, availability, now)
-        if down is not None:
-            passed.append((w, "unavailable (%s) until its retry time" % (down.get("reason") or "down")))
-            continue
-        if not c.get("usable", True):
-            passed.append((w, c.get("reason") or "not usable now"))
-            continue
-        if c.get("plan") == "flat" and c.get("allowance_pct_left") == 0:
-            passed.append((w, "its flat-rate allowance is spent"))
-            continue
-        eligible.append(c)
+        else:
+            eligible.append(c)
 
     avoided = [(c, _pattern_match(c, avoid)) for c in eligible]
     kept = [c for c, m in avoided if m is None]
@@ -382,6 +574,7 @@ def _prepare(candidates, records, availability, now, exclude, avoid, review_of, 
                 passed.append((c["worker"], "avoided by the user's own pattern %r%s"
                                % (pat, (" (%s)" % why) if why else "")))
         eligible = kept
+        tried = [c for c in tried if _pattern_match(c, avoid) is None]
 
     author_maker = ""
     if review_of:
@@ -399,18 +592,47 @@ def _prepare(candidates, records, availability, now, exclude, avoid, review_of, 
                 else:
                     rest.append(c)
             eligible = rest
-    return eligible, passed, stats, author_maker
+            tried = [c for c in tried if (c.get("maker") or maker_of(c.get("model") or c["worker"])) != author_maker]
+
+    superseded = superseded_by(eligible + tried, opts)
+    if superseded:
+        for c in eligible:
+            if c["worker"] in superseded:
+                passed.append((c["worker"], "superseded by %s (a newer version of the same class)" % superseded[c["worker"]]))
+        eligible = [c for c in eligible if c["worker"] not in superseded]
+    return eligible, passed, stats, author_maker, superseded
 
 
-def _assess_all(eligible, stats, kind, difficulty, floors):
+def _assess_all(eligible, stats, kind, difficulty, floors, opts=None):
     """({worker: assessment}, best standing among the usable workers)."""
     standings = [s for s in (_standing_of(c) for c in eligible) if s is not None]
     best = max(standings) if standings else None
-    return ({c["worker"]: assess(stats, c["worker"], kind, difficulty, _standing_of(c), best, floors, vouch_level(c))
+    spans = (opts or {}).get("class_span")
+    return ({c["worker"]: assess(stats, c["worker"], kind, difficulty, _standing_of(c), best, floors,
+                                 rank=class_rank(c, opts), spans=spans, vouch=vouch_level(c))
              for c in eligible}, best)
 
 
-def _make_key(stats, kind, difficulty, prefer):
+def recency_order(candidates):
+    """{worker: position among the versions of its own model, newest first (0)}. Only versions of the same model
+    (the same recorded maker and class) are ever compared; models of different makers or classes are different
+    things, however recently each was released, and stay at 0 so the old tie-break decides between them."""
+    out = {c["worker"]: 0 for c in candidates}
+    groups = {}
+    for c in candidates:
+        l = _comparable(c)
+        if l:
+            groups.setdefault(tuple(l["key"]), []).append(c)
+    for group in groups.values():
+        for i, level in enumerate(_versions_newest_first(group)):
+            for d in level:
+                out[d["worker"]] = i
+    return out
+
+
+def _make_key(stats, kind, difficulty, prefer, recency=None):
+    recency = recency or {}
+
     def rate(c):
         cell = _cell(stats, c["worker"], kind, difficulty)
         return (cell["good"] / cell["n"]) if cell["n"] else None
@@ -434,9 +656,10 @@ def _make_key(stats, kind, difficulty, prefer):
                 standing_key(c),
                 load_ratio(c),
                 -(r if r is not None else -1.0),
+                recency.get(c["worker"], 0),
                 c["worker"])
 
-    return key, rate, load_ratio
+    return key, rate, load_ratio, recency
 
 
 def _prefer_judged(capable, assessments, difficulty):
@@ -450,6 +673,9 @@ def _prefer_judged(capable, assessments, difficulty):
         own = [c for c in capable if assessments[c["worker"]]["tier"] in tiers]
         if own:
             return own, True
+    benchmarked = [c for c in capable if assessments[c["worker"]]["tier"] == "standing"]
+    if benchmarked and len(benchmarked) < len(capable):
+        return benchmarked, False   # a benchmark standing outranks a class's place in its maker's order
     return list(capable), False
 
 
@@ -469,7 +695,7 @@ def _select(eligible, assessments, difficulty):
         return weak, "weak"
     top = max(strength(assessments[c["worker"]]) for c in live)
     pool = [c for c in live if strength(assessments[c["worker"]]) == top]
-    return pool, ("nothing" if top[0] <= 1 else "strongest")
+    return pool, ("nothing" if top[:2] <= (1, 0) else "strongest")
 
 
 def _free_slot(choice, ranked, candidates, stats, kind, difficulty, basis, prefer, every):
@@ -488,15 +714,15 @@ def _free_slot(choice, ranked, candidates, stats, kind, difficulty, basis, prefe
 
 
 def choose(candidates, records, availability, kind, difficulty, review_of=None, now=0.0, exclude=(),
-           avoid=None, prefer=None, floors=None, explore_free_every=EXPLORE_FREE_EVERY):
+           avoid=None, prefer=None, floors=None, opts=None, explore_free_every=EXPLORE_FREE_EVERY):
     """Pick one candidate, or none. Returns {"choice", "passed_over", "stats", "author_maker", ...}.
     `passed_over` is [(worker, plain reason)] covering every candidate not chosen. `avoid` and
     `prefer` are the user's own [{"pattern", "why"}] constraints; `floors` the standing floors."""
     now = float(now or 0)
-    eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of,
-                                                     difficulty)
-    assessments, best = _assess_all(eligible, stats, kind, difficulty, floors)
-    key, rate, load_ratio = _make_key(stats, kind, difficulty, prefer)
+    eligible, passed, stats, author_maker, superseded = _prepare(candidates, records, availability, now, exclude,
+                                                                 avoid, review_of, opts, difficulty)
+    assessments, best = _assess_all(eligible, inherit_stats(candidates, stats, opts), kind, difficulty, floors, opts)
+    key, rate, load_ratio, recency = _make_key(stats, kind, difficulty, prefer, recency_order(eligible))
 
     pool, basis = _select(eligible, assessments, difficulty) if eligible else ([], "none")
     detail = {}
@@ -558,6 +784,8 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
                 r, cr = rate(c), rate(choice)
                 reason = ("lower measured accepted rate for this kind and difficulty"
                           if r is not None and cr is not None and r < cr else
+                          "equal on price and load; the choice is the more recently released"
+                          if recency.get(choice["worker"], 0) < recency.get(c["worker"], 0) else
                           "equal on price and load; the choice came first in worker-id order")
             passed.append((w, reason))
     judged_first = basis == "capable" and _prefer_judged(pool, assessments, difficulty)[1]
@@ -567,7 +795,25 @@ def choose(candidates, records, availability, kind, difficulty, review_of=None, 
             "load_ratios": {c["worker"]: load_ratio(c) for c in candidates},
             "assessments": assessments, "basis": basis, "capable_count": capable_n, "judged_first": judged_first,
             "best_standing": best, "passed_detail": detail, "floors": floors,
+            "superseded": superseded, "class_ask": class_ask(eligible, pool, opts),
             "kind": kind, "difficulty": difficulty}
+
+
+def class_ask(eligible, pool, opts=None):
+    """What the lead agent should be asked to have recorded, because the answer could depend on it:
+      {"classify": [workers], "order": [(maker, [classes])]}.
+    classify: a worker with no classification (none stored, not even "unknown") that is in the pool competing for the
+    request while another usable worker exists; a worker kept out for lack of capability could not change the answer.
+    order: a maker with two or more recorded classes among the usable workers and no recorded class order."""
+    labels = {}
+    for c in eligible:
+        l = _comparable(c)
+        if l:
+            labels.setdefault(l["maker"], set()).add(l["label"])
+    recorded = (opts or {}).get("class_orders") or {}
+    return {"classify": sorted(c["worker"] for c in pool if not _comparable(c) and not c.get("classified"))
+            if len(eligible) > 1 else [],
+            "order": [(m, sorted(ls)) for m, ls in sorted(labels.items()) if len(ls) > 1 and m not in recorded]}
 
 
 def _why_not(a, difficulty, basis, cheaper):
@@ -585,9 +831,14 @@ def _why_not(a, difficulty, basis, cheaper):
                         "for this kind is usable", None)
             if a["tier"] == "vouch":
                 return (lead + "capable by the owner's word, and a worker with a judged record for this kind is usable", None)
-            return (lead + "capable only by benchmark standing or as an exploration; above difficulty 1 a worker "
-                    "with a judged record is preferred to a benchmark",
+            return (lead + "capable only by benchmark standing, its class's place in its maker's order, or as an "
+                    "exploration; above difficulty 1 a worker with a judged record is preferred to a benchmark, and a "
+                    "benchmark to a class order",
                     ("standing %g" % a["standing"]) if a["standing"] is not None else None)
+        if a["tier"] == "class":
+            return (lead + "not capable enough for difficulty %d: its class is place %d of %d in its maker's recorded order, "
+                    "and difficulty %d reaches only the top %g%% of it" % (difficulty, a["class_pos"] + 1, a["class_n"],
+                                                                       difficulty, a["class_allowed"]), None)
         if a.get("below"):
             return (lead + "not capable enough for difficulty %d: benchmark standing under the %g needed "
                     "(%g%% of the best usable standing, %g)" % (difficulty, a["needed"], a["floor"], a["best"]),
@@ -611,7 +862,7 @@ def _why_not(a, difficulty, basis, cheaper):
 
 
 def retry_choice(candidates, records, availability, kind, difficulty, rejected, rejections,
-                 now=0.0, exclude=(), avoid=None, prefer=None, floors=None, review_of=None):
+                 now=0.0, exclude=(), avoid=None, prefer=None, floors=None, review_of=None, opts=None):
     """Who gets a task again after `rejected` (a worker id) was rejected `rejections` times in this chain.
     The first retry goes back to the same worker while it is still usable and has no poor record.
     After that: the cheapest capable worker whose evidence is strictly better than the rejected one's, or, when there is none,
@@ -619,10 +870,11 @@ def retry_choice(candidates, records, availability, kind, difficulty, rejected, 
     else is usable). Returns {"choice", "step", "assessments", ...}; step is "same", "better",
     "strongest" or "only", and choice is None when nobody is usable. Pure; the caller supplies facts."""
     now = float(now or 0)
-    eligible, passed, stats, author_maker = _prepare(candidates, records, availability, now, exclude, avoid, review_of,
-                                                     difficulty)
-    assessments, best = _assess_all(eligible, stats, kind, difficulty, floors)
-    key, _rate, _load = _make_key(stats, kind, difficulty, prefer)
+    eligible, passed, stats, author_maker, _superseded = _prepare(candidates, records, availability, now, exclude,
+                                                                  avoid, review_of, opts, difficulty)
+    eff = inherit_stats(candidates, stats, opts)
+    assessments, best = _assess_all(eligible, eff, kind, difficulty, floors, opts)
+    key, _rate, _load, _recency = _make_key(stats, kind, difficulty, prefer, recency_order(eligible))
     out = {"choice": None, "step": None, "passed_over": passed, "stats": stats, "author_maker": author_maker,
            "assessments": assessments, "best_standing": best, "kind": kind, "difficulty": difficulty,
            "rejected": rejected, "rejections": rejections}
@@ -637,7 +889,8 @@ def retry_choice(candidates, records, availability, kind, difficulty, rejected, 
         return out
     gone = next((c for c in candidates if c["worker"] == rejected), None)
     floor = (strength(assessments[rejected]) if mine is not None else
-             strength(assess(stats, rejected, kind, difficulty, _standing_of(gone) if gone else None, best, floors)))
+             strength(assess(eff, rejected, kind, difficulty, _standing_of(gone) if gone else None, best, floors,
+                             rank=class_rank(gone, opts) if gone else None, spans=(opts or {}).get("class_span"))))
     better = [c for c in others if assessments[c["worker"]]["capable"] and strength(assessments[c["worker"]]) > floor]
     better = _prefer_judged(better, assessments, difficulty)[0]
     if better:
@@ -672,6 +925,13 @@ def evidence_line(a, kind, difficulty, choice, basis):
     if a["bad"]:
         return ("evidence: none favourable; every usable worker has a poor record, so this one has the best "
                 "accepted rate (%d of %d for %s)" % (a["good"], a["n"], kind))
+    line = _evidence_line(a, kind, difficulty, choice, basis)
+    if a.get("inherited_from"):
+        line += " (the record of its predecessor %s; it has none of its own yet)" % a["inherited_from"]
+    return line
+
+
+def _evidence_line(a, kind, difficulty, choice, basis):
     tier = a["tier"]
     if tier == "a":
         return ("evidence (a), judged record: %d of %d accepted for %s at difficulty %d (%s, bar %s)"
@@ -699,6 +959,10 @@ def evidence_line(a, kind, difficulty, choice, basis):
         return ("evidence (the owner's word): vouched for up to difficulty %d%s (%s, %s); it ranks with judged proof "
                 "until its own record is thick" % (a["at"], " (relayed by an agent: counted up to difficulty 2 only)"
                                                   if v.get("relayed") else "", _short(v.get("why")), v.get("date") or "no date stated"))
+    if tier == "class":
+        return ("evidence (class order): place %d of %d in its maker's recorded class order, which reaches the top %g%% "
+                "for difficulty %d; no judged record or benchmark decides" % (a["class_pos"] + 1, a["class_n"],
+                                                                              a["class_allowed"], difficulty))
     if tier == "unknown":
         return "evidence (d): nothing is known about this worker yet; it is an exploration on low-stakes work"
     if a.get("weak"):

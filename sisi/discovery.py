@@ -178,7 +178,7 @@ def new_line(models, tools):
         parts.append("command-line tool%s %s" % ("" if len(tools) == 1 else "s",
                                                  _short_names(sorted(tools, key=lambda n: (not _hinted(n), n)), 2)))
     return ("sisi: new %s: unproven, so low-stakes work first, checked one level more carefully.%s"
-            % (" and ".join(parts), " An AI agent among the tools: `sisi workers learn NAME`." if tools else ""))
+            % (" and ".join(parts), " For an AI agent: `sisi workers learn NAME`." if tools else ""))
 
 
 def new_tools_line(new):

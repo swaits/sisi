@@ -1,0 +1,5 @@
+{
+  "_about": "What an UNLISTED host tool is, judged by its name (sisi/orchestration.py `classify`). A name is split into words at punctuation and case changes; a phrase matches when its words appear next to each other. `delegation`: the tool starts a worker, so it is never counted as direct work or refused by the meter. `control`: the tool only reads status, waits, cancels, lists, schedules or messages, so it is not counted. A tool named by neither still counts as direct work. Listed tools (canon/orchestration-tools.json) always win.",
+  "delegation": ["delegate", "delegation", "subagent", "sub_agent", "spawn", "thread_launch"],
+  "control": ["status", "wait", "cancel", "list", "read_thread", "schedule", "scheduled", "notify", "send", "ask"]
+}

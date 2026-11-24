@@ -20,6 +20,19 @@ or learned from judged results. The strategy is [canon/orchestration.md](../cano
   A fact without a source is refused. Ranking uses one blend of the two prices, by default three
   parts input to one part output (`route.price_blend_input_parts`); `sisi workers` shows both
   prices and the blend, and lists each benchmark standing apart from the accepted rates it prints.
+- `sisi workers fact WORKER --maker M --class NAME [--released YYYY-MM-DD] --source S` — the maker, class and
+  release date researched for a model. `sisi workers` lists each routable worker's recorded maker, class and release date.
+- `sisi workers classify [--record FILE [--by WORKER]]` — sisi reads nothing from a model's name. Without
+  arguments it prints a short instruction and the ids of routable workers that have no classification; hand
+  that to a fast, cheap worker (it takes seconds). The answer is one small JSON object: for each id its maker,
+  class and release date (`unknown` where it does not know), and for each maker its classes from most to least
+  capable. `--record FILE` validates it (an id that was not asked about refuses the whole answer; `unknown` is
+  stored as unknown and changes nothing in routing) and stores the facts with the classifying worker as the
+  source; a class order already recorded is never overwritten. Session start names unclassified workers in its
+  one facts line, and `sisi route` adds one line only when an unclassified worker is in the running.
+- `sisi workers classes MAKER CLASS [CLASS...] --source S` — a maker's classes from most capable to least
+  (`--remove` forgets them). A class is the tier word of one line (a "flash" beside the standard model) or,
+  for a maker whose lines are the classes, the line's own name; `sisi workers` shows both as the class label.
 - `sisi workers avoid|prefer PATTERN --why TEXT` — the user's own routing constraints.
 - `sisi workers only PROVIDER PATTERN... --why TEXT` — only the matching models of that provider are
   routable; anything else from it (a newly discovered model, say) is passed over with the reason.
@@ -81,6 +94,45 @@ says that none is proven. About one difficulty-1 task in ten goes to a cheaper t
 instead, so cheaper options gather evidence. The choice is deterministic for one fixed record.
 `--explain` prints one line for the evidence behind the choice (which of a to d, with the numbers),
 one per group of workers passed over as not capable enough, and names an exploration or a fallback.
+
+## Newest version of a class, always
+
+Newer versions of a model are almost always better and almost always cheaper, so `sisi route` always uses
+the newest version of a given model (the same maker and class) that is usable, and never an older version of
+it. This is about versions of one model: a newer release of a different model or class never wins for being
+newer. sisi reads
+nothing from a model's name: a model's maker, class and release date are facts, researched by a cheap,
+fast worker (session start and `sisi route` say when they are missing) and recorded with
+`sisi workers fact WORKER --maker M --class C --released YYYY-MM-DD --source S`. A model's identity is its
+maker and class; recency is its release date. For a maker whose lines are the classes the class is the
+line's own name; for a maker with a "flash" beside its standard model it is `flash` or `standard`. A model
+with no recorded maker and class is never compared with another. The same model through two providers is
+one model: if its newest version is usable through any provider, older versions do not compete through any
+provider, and the existing cost comparison picks the provider. There is no exception for a better old
+record or a cheaper old plan. The older version competes again only while the newer is unusable (marked
+down, allowance spent, avoided by the user, or limited away) or has no recorded class. A newer model with a
+thick bad record is not replaced by its older version either: routing moves to another class or maker by the
+usual rules. Different classes are different things and never supersede each other. A bare host alias with a
+recorded class and no release date counts as the newest version of its class.
+
+The class order is a prior and nothing more. A worker with no judged proof and no benchmark standing,
+whose class is in its maker's recorded order, is capable when the class sits high enough for the
+difficulty: `route.class_span` (default routine work 100, ordinary 70, hard 35) is the share of the order,
+counted from the most capable class down, that each difficulty reaches. With four classes routine work
+reaches all four, ordinary work the top three, hard work the top two; the cheapest capable worker then
+wins, so routine work goes to the lowest class and hard work to the upper ones. A judged record or a
+benchmark standing always outranks the order; when nobody is proven, the strongest known worker is the
+one in the highest class. Classes of different makers are never compared. Until a maker with two or
+more classes among the usable workers has an order recorded, `sisi route` adds one line asking for it.
+
+A new version starts from its predecessor's judged record: a model with no thick record of its own
+for a kind and difficulty inherits, as evidence, the thick record of the closest older version of
+its maker and class (one version back at a time), named in `--explain`. It ranks below the model's
+own record and above a benchmark, counts as a judged record for the rule that proof comes before
+benchmark, stops once the model has a thick record of its own, and a predecessor's bad record is not
+inherited. A discovered model with no data of its own is routable when its predecessor is. Where the
+arithmetic falls back to a stable tie-break, the newer version of the same model goes first (never across makers
+or classes).
 
 ## Costs and failures
 

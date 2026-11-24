@@ -693,7 +693,7 @@ class FactsNameTheNewWorkers(DiscoveryCase):
         self.assertIn("worker facts are missing for the new workers p0/m", line)
         self.assertIn("and 4 more", line)
         self.assertEqual(sum(1 for i in range(7) if "p%d/m" % i in line), 3)
-        self.assertIn("sisi workers fact WORKER --price N", line)
+        self.assertIn("sisi workers fact W --price N", line)
         for i in range(7):
             self.write_data("model-strength.json", {"models": {"p%d/m" % j: {"standing": 40, "source": "s", "date": "2026-11-01"}
                                                                for j in range(7)}})
