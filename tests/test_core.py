@@ -1213,6 +1213,15 @@ class Core(unittest.TestCase):
         for model, rc in (("claude-haiku-5-5", 0), ("haiku", 2), ("5", 2)):                 # target.model: whole names only, as before
             self.assertEqual((pick("routine"), task(model)), (0, rc), model)
 
+    def test_a_short_model_name_is_matched_only_against_the_part_after_the_last_slash(self):
+        self.table(HEADER + "| claude-sonnet-5-5 | host subagent model `sonnet` | hard | per use | everything | |\n"
+                            "| opencode-go/claude-haiku-5-5 | T3 Code delegate_task, model opencode-go/claude-haiku-5-5 | routine | flat | quick | |\n")
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        for cls, model, rc in (("routine", "go", 2), ("routine", "opencode", 2), ("routine", "haiku", 0), ("hard", "sonnet", 0)):
+            self.assertEqual((self.sisi("pick", cls, sid="s1")[0], self.tool("Agent", tool_input={"model": model})[0]), (0, rc), model)
+
     def test_the_maker_column_is_read_by_name_and_both_shapes_record(self):
         sys.path.insert(0, REPO)
         from sisi import models

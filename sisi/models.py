@@ -118,10 +118,10 @@ def is_call(command_line):
 
 def claim(s, text, segment=False):
     """Spend the pick that this delegation's model text names; False when none of the picks fits. With `segment` (the
-    host names its models shortly: `fast` for `maker-fast-2`) one whole segment of a picked id that has a letter fits."""
+    host names its models shortly: `fast` for `maker-fast-2`) one whole `-` segment of a picked id's last `/` part that has a letter fits."""
     for name in s.get("picked") or []:
         if any(re.search(r"(?<![a-z0-9.-])%s(?![a-z0-9.-])" % re.escape(n), text.lower()) for n in (name, name.rsplit("/", 1)[-1])) or (
-                segment and re.search("[a-z]", text) and text.lower() in re.split("[-/]", name)):
+                segment and re.search("[a-z]", text) and text.lower() in name.rsplit("/", 1)[-1].split("-")):
             s["picked"].remove(name)
             starts = s["starts"] if isinstance(s.get("starts"), dict) else {}
             starts[name] = (starts[name] if isinstance(starts.get(name), list) else []) + [time.time()]
