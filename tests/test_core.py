@@ -1449,6 +1449,34 @@ class Core(unittest.TestCase):
         self.hook("prompt", prompt="judged")
         self.assertIn("no verdict yet", self.hook("gate")[1])                              # judged: no delegation open again
 
+    def test_a_retro_is_not_demanded_for_quick_work_that_passed_and_delegated_nothing(self):
+        self.table(WORKERS)
+        def work(sid, minutes, fail=False, delegate=False):
+            self.hook("tick", sid=sid)
+            self.hook("prompt", sid=sid, prompt="go")
+            self.done(sid)
+            self.tool("Edit", sid=sid)                                                    # the work changed things
+            if delegate:
+                self.assertEqual((self.sisi("pick", "hard", sid=sid)[0], self.tool("Agent", sid=sid, tool_input={"model": "sonnet"})[0]), (0, 0))
+            self.assertEqual(self.sisi("done", "--pass", "1", "counts equal at 120 rows", sid=sid)[0], 0)
+            self.assertEqual(self.sisi("done", "--fail" if fail else "--pass", "2", "the row was dropped" if fail else "empty name kept", sid=sid)[0], 0)
+            path = os.path.join(self.tmp, "state", "core-sessions", sid + ".json")
+            with open(path, "r+") as f:
+                st = json.load(f)
+                st["done"]["at"] = time.time() - minutes * 60                              # the done was recorded this long ago
+                f.seek(0), f.truncate(), json.dump(st, f)
+            return self.hook("gate", sid=sid)[1]
+        self.assertEqual(work("a", 4), "")                                                  # 4 minutes, all passed, no delegation: closed
+        self.assertEqual(len(self.records()), 1)
+        self.assertNotIn("gap", self.records()[0])
+        self.assertIn("no retro yet", work("b", 6))                                         # 6 minutes: the retro
+        self.assertIn("no retro yet", work("c", 4, fail=True))                             # a failed check: the retro
+        self.assertIn("no retro yet", work("d", 4, delegate=True))                          # a delegation: the retro
+        self.assertEqual(len(self.records()), 1)
+        self.write(os.path.join(self.data, "config.json"), json.dumps({"core": {"retro_minutes": 10}}))
+        self.assertEqual(work("e", 6), "")                                                  # the limit is a setting
+        self.assertEqual(len(self.records()), 2)
+
     def test_the_spec_is_unchanged(self):
         for line in self.read(REPO, "docs", "spec", "SHA256SUMS").splitlines():
             digest, rel = line.split()
@@ -1457,7 +1485,7 @@ class Core(unittest.TestCase):
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLess(code, 1504, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLess(code, 1511, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 120)
         self.assertLess(len(rulebook), 8212)

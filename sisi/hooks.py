@@ -204,9 +204,10 @@ def gate(p, for_subagent=False):
             unsaid = ["%d. %s" % (i, c["text"]) for i, c in enumerate(checks, 1) if not c["verdict"]]
             failed = [str(i) for i, c in enumerate(checks, 1) if c["verdict"] == "fail"]
             worked = s.get("changed") or store.snapshot(cwd) != s.get("snapshot")
-            if checks and not unsaid and not failed and not worked:
+            quick = time.time() - (s.get("done") or {}).get("at", 0) < 60 * store.config()["retro_minutes"] and not s.get("delegations_since")
+            if checks and not unsaid and not failed and (not worked or quick):
                 from . import retro
-                retro.record(s, cwd, {})  # every check passed and nothing changed: the work closes itself
+                retro.record(s, cwd, {})  # every check passed and nothing changed, or it was quick and alone: the work closes itself
                 return 0
             reason = "" if unsaid and models.waiting(s) else OPEN % "; ".join(unsaid) if unsaid else GATE if worked else FAILED % ", ".join(failed) if failed else ""
         if not reason or s.get("blocks", 0) >= 2:

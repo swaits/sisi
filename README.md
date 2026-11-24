@@ -96,7 +96,7 @@ its limits are.
 
 Settings go under `"core"` in `config.json` in your store: `gate`, `meter`, `direct_calls` (8),
 `direct_extension` (8), `rules_lines` (30), `rules_chars` (4000), `organize_after` (8), `research_days` (7),
-`shell_workers` (false). Workers are started with the host's own delegation tool, so by default a shell command
+`shell_workers` (false), `retro_minutes` (5: work that passed every check, delegated nothing and took less than this many minutes from `sisi done` closes without a retro). Workers are started with the host's own delegation tool, so by default a shell command
 that starts a worker (`opencode`, `muse`, `agy`: the first word of a command line in your models table) is
 refused. Set `"shell_workers": true` to allow it: it is then free on the meter, and needs a pick like any
 delegation, and `sisi pick` prints the command line.

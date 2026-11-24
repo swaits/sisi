@@ -130,7 +130,7 @@ def done(args, cwd=None):
         return 1
     with store.session(sid) as s:
         if new:
-            s["done"] = {"goal": opt["goal"][0], "next": opt["next"][0],
+            s["done"] = {"goal": opt["goal"][0], "next": opt["next"][0], "at": time.time(),
                          "checks": [{"text": c, "verdict": None, "evidence": ""} for c in opt["check"]]}
         elif verdict:
             kind, n, why = verdict
