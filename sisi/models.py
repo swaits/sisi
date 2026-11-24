@@ -163,7 +163,7 @@ def speeds():
     out = {}
     for o in store.records("outcomes.jsonl"):
         if o.get("verdict") == "good" and type(o.get("minutes")) is int and 0 < o["minutes"] <= 10000 and isinstance(o.get("worker"), str):
-            out.setdefault(short(o["worker"]), []).append(o["minutes"])
+            out.setdefault(short(o["model"] if isinstance(o.get("model"), str) and o["model"] else o["worker"]), []).append(o["minutes"])
     return {w: v[-10:] for w, v in out.items()}
 
 
@@ -279,19 +279,31 @@ def judge(args, cwd=None):
     if len(args) != 3 or not args[0].strip() or args[1] not in ("good", "bad") or len(args[2].split()) < 3 or minutes == 0:
         print('usage: sisi judge WORKER good|bad "<what it did well or badly, in a sentence>" [--minutes N] [--newest]')
         return 1
-    sid = store.current_session(cwd)
+    trows = rows(store.read(table()))
+    hits = [r for r in trows if short(r[0]) == short(args[0])] or [r for r in trows if claim({"picked": [short(r[0])]}, args[0], True)]
+    model = (hits[0][0].split() or [""])[0] if len(hits) == 1 else args[0]
+    sid, now, began = store.current_session(cwd), time.time(), None
     if sid:
         with store.session(sid) as s:
-            starts = s["starts"].get(short(args[0])) if isinstance(s.get("starts"), dict) else None
+            starts = s["starts"].get(short(model)) if isinstance(s.get("starts"), dict) else None
             if isinstance(starts, list) and starts:
-                began = starts.pop(-1 if newest else 0)  # one start per open job, oldest first
-                if type(began) in (int, float) and math.isfinite(began) and began <= time.time():  # else dropped, times nothing
-                    minutes = minutes or max(1, int((time.time() - began) / 60))
+                cand = starts.pop(-1 if newest else 0)  # one start per open job, oldest first
+                if type(cand) in (int, float) and math.isfinite(cand) and cand <= now:  # else dropped, times nothing
+                    began = cand
+                    minutes = minutes or max(1, int((now - began) / 60))
                     note = " (job started %s, %d more open for this worker)" % (time.strftime("%H:%M", time.localtime(began)), len(starts))
+    iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t))
+    rec = {"ts": iso(now), "ended": iso(now), "worker": args[0], "model": model, "verdict": args[1],
+           "why": retro.clean(args[2]), "project": os.path.basename(store.project_root(cwd)),
+           "project_key": store.project_key(cwd)}
+    if sid:
+        rec["session_id"] = sid
+    if began is not None:
+        rec["started"] = iso(began)
+    if minutes:
+        rec["minutes"] = minutes
     log = store.data("outcomes.jsonl")
-    store.append(log, json.dumps(dict({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "worker": args[0], "verdict": args[1],
-                                       "why": retro.clean(args[2]), "project": os.path.basename(store.project_root(cwd))},
-                                      **{"minutes": minutes} if minutes else {}), sort_keys=True))
+    store.append(log, json.dumps(rec, sort_keys=True))
     store.commit("delegation judged", log)
     print("recorded: %d min%s." % (minutes, note) if minutes else "recorded, not timed.")
     return 0
