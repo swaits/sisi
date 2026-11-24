@@ -45,4 +45,4 @@ Python 3 standard library only. `sisi rollback` goes back to the release before.
 - **The rulebook every session loads** is generated from the two: `canon/core.md`, then your learned rules.
 
 Settings go under `"core"` in `config.json` in your store: `gate`, `meter`, `direct_calls` (8),
-`direct_extension` (8), `rules_lines` (30), `rules_chars` (2500), `organize_after` (8), `research_days` (7).
+`direct_extension` (8), `rules_lines` (30), `rules_chars` (4000), `organize_after` (8), `research_days` (7).
