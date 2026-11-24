@@ -441,6 +441,90 @@ class Core(unittest.TestCase):
         self.assertEqual(judge()[0], 0)
         self.assertEqual(self.outcomes()[-1]["minutes"], 1)
 
+    def jsonl(self, name, *lines):
+        os.makedirs(self.data, exist_ok=True)
+        with open(os.path.join(self.data, name), "wb") as f:
+            f.write(b"\n".join(l if isinstance(l, bytes) else l.encode() for l in lines) + b"\n")
+
+    def outcome(self, worker, verdict, minutes):
+        return json.dumps({"ts": "2026-11-20T10:00:00", "worker": worker, "verdict": verdict, "minutes": minutes, "why": "did it fine"})
+
+    def test_only_good_outcomes_set_a_workers_speed(self):
+        self.jsonl("outcomes.jsonl", *[self.outcome("flaky", "bad", 1)] * 10 + [self.outcome("steady", "good", 15)] * 10)
+        r = subprocess.run([sys.executable, "-B", "-c", "from sisi import models; print(models.speeds())"], cwd=REPO,
+                           env=self.env, capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), str({"steady": [15] * 10}))
+
+    def test_damaged_history_files_break_no_command(self):
+        self.table(FIXTURE)
+        junk = [b"\xff\xfe", b"null", b"[]", b'{"unit": {"minutes": null}}', b'{"unit": {"minutes": null}}', b'{"ts": 5}',
+                b'{"ts": 5, "worker": "x", "verdict": "good", "why": "a b c", "minutes": null}']
+        self.jsonl("outcomes.jsonl", *junk)
+        self.jsonl("retro.jsonl", *junk)
+        for args in (("pick", "hard"), ("models",), ("models", "research"), ("retro",)):
+            rc, out, err = self.sisi(*args, sid="s1")
+            self.assertEqual((rc, err), (0, ""), args)
+
+    def test_a_stale_or_odd_start_never_times_a_judgement(self):
+        self.table(WORKERS)
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        judge = lambda *a: self.sisi("judge", "sonnet", "good", "did the job in one pass", *a, sid="s1")
+        delegate = lambda: (self.sisi("pick", "hard", sid="s1")[0], self.tool("Agent", tool_input={"model": "sonnet"})[0])
+
+        def start(value):
+            with open(os.path.join(self.tmp, "state", "core-sessions", "s1.json"), "r+") as f:
+                st = json.load(f)
+                st["starts"] = value
+                f.seek(0), f.truncate(), json.dump(st, f)
+        self.assertEqual(delegate(), (0, 0))
+        start({"sonnet": [time.time() + 3600]})                                         # a start in the future
+        rc, out, _ = judge()
+        self.assertEqual((rc, out.strip()), (0, "recorded, not timed."))
+        self.assertNotIn("minutes", self.outcomes()[-1])
+        self.assertEqual(self.state()["starts"]["sonnet"], [])
+        start({"sonnet": [time.time() - 600]})
+        self.assertEqual(judge()[1].strip(), "recorded: 10 min.")
+        for wrong in ([], "x", 5):                                                      # starts of the wrong type
+            self.assertEqual(self.sisi("pick", "hard", sid="s1")[0], 0)
+            start(wrong)
+            self.assertEqual(self.tool("Agent", tool_input={"model": "sonnet"})[0], 0)  # the pick is still spent
+            self.assertEqual(self.state()["picked"], [])
+            start(wrong)
+            self.assertEqual(judge()[1].strip(), "recorded, not timed.")
+        self.assertEqual(delegate(), (0, 0))                                            # a retro ends the stored starts
+        self.assertIn("starts", self.state())
+        self.assertEqual(self.sisi("retro", *GAP, "--improve", "Compare row counts before and after every export change", sid="s1")[0], 0)
+        self.assertNotIn("starts", self.state())
+        self.assertEqual(judge()[1].strip(), "recorded, not timed.")                    # no stale start left to time it
+
+    def test_judge_and_retro_refuse_odd_input(self):
+        judge = lambda *a: self.sisi("judge", *a, sid="s1")
+        self.assertEqual(judge("sonnet", "good", "did the job in one pass", "--minutes", "10000")[0], 0)
+        self.assertEqual(self.outcomes()[-1]["minutes"], 10000)
+        for bad in ("10001", "1" * 400):
+            self.assertEqual(judge("sonnet", "good", "did the job in one pass", "--minutes", bad)[0], 1, bad)
+        self.assertEqual(judge("", "good", "did the job in one pass")[0], 1)
+        self.assertEqual(judge("   ", "good", "did the job in one pass")[0], 1)
+        self.assertEqual(len(self.outcomes()), 1)
+        self.assertEqual(judge("sonnet", "bad", "leaked token=abc123secretvalue in its answer")[0], 0)
+        self.assertNotIn("abc123secretvalue", self.read(self.data, "outcomes.jsonl"))
+        long = "word " * 90
+        self.assertEqual(self.sisi("retro", "--no-gap", "the export kept every row", "--term", "time", "--better", long)[0], 1)
+        for flag, other in (("--term", "time"), ("--better", "start the first build in the same turn"), ("--no-gap", "the export kept every row")):
+            args = ["--no-gap", "the export kept every row", "--term", "time", "--better", "start the first build in the same turn"]
+            rc, out, _ = self.sisi("retro", *args, flag, other)
+            self.assertEqual((rc, "Record one of these" in out), (1, True), flag)
+        rc, out, _ = self.sisi("retro", *GAP, "--improve", "Compare row counts before and after every export change", "--gap", "again the rows were dropped quietly")
+        self.assertEqual(rc, 1)
+        self.assertEqual(self.sisi("retro", "--no-gap", "the export kept every row", *NG)[0], 0)
+        self.assertEqual(self.sisi("retro", "--no-gap", "the export kept every row", *NG)[0], 0)
+        out = self.sisi("retro")[1]
+        self.assertIn("fell short or could do better on: time 2", out)
+        self.assertNotIn("recorded, not made a rule", self.sisi("retro")[1])
+        self.assertIn("becomes a rule only if it recurs", self.sisi("retro")[1])
+
     def test_the_wheel_favours_the_faster_worker(self):
         sys.path.insert(0, REPO)
         from sisi import models
@@ -539,7 +623,7 @@ class Core(unittest.TestCase):
         self.write(log, self.read(log) + "\n".join(rec(m, n, f, g) for m, n, f, g in ((20, 4, 1, True), (30, 6, 0, False), (40, 8, 2, True))) + "\n")
         out = self.sisi("retro", sid="s1")[1]
         self.assertRegex(out, r"time median 25 min.*cost median 2 calls.*attention median 5 messages.*evidence 3 checks failed")
-        self.assertIn("fell short on: time 2, attention 2", out)
+        self.assertIn("fell short or could do better on: time 2, attention 2", out)
         self.assertIn("learning (measured): last 10 pieces of work named: time 2, attention 2", out)
 
     def test_the_new_objective_is_the_one_the_retro_reads(self):

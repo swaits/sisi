@@ -39,10 +39,22 @@ def data(*parts):
 
 def read(path, default=""):
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             return f.read()
     except OSError:
         return default
+
+
+def records(name):
+    """The JSON objects in a data file, one per line; a damaged or non-object line is skipped."""
+    out = []
+    for line in read(data(name)).splitlines():
+        try:
+            o = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        out += [o] if isinstance(o, dict) else []
+    return out
 
 
 def write(path, text):

@@ -2,7 +2,7 @@
 
 A research worker writes it, the lead reads it to route, and `sisi judge` adds how each delegation went so the
 next research knows. The table is plain text a person can read and correct."""
-import json, os, re, time
+import json, math, os, re, time
 from . import rules, store
 
 RESEARCH = """You are a worker. Do this task yourself; do not delegate it further.
@@ -123,7 +123,9 @@ def claim(s, text):
     for name in s.get("picked") or []:
         if any(re.search(r"(?<![a-z0-9.-])%s(?![a-z0-9.-])" % re.escape(n), text.lower()) for n in (name, name.rsplit("/", 1)[-1])):
             s["picked"].remove(name)
-            s.setdefault("starts", {}).setdefault(name, []).append(time.time())  # `sisi judge` times the job from here
+            starts = s["starts"] if isinstance(s.get("starts"), dict) else {}
+            starts[name] = (starts[name] if isinstance(starts.get(name), list) else []) + [time.time()]
+            s["starts"] = starts  # `sisi judge` times the job from here
             s.setdefault("workers_since", []).append(name)
             return True
     return False
@@ -142,15 +144,11 @@ def median(v):
 
 
 def speeds():
-    """Each worker's last 10 timed minutes from the outcomes, oldest first."""
+    """Each worker's last 10 timed minutes from its good outcomes, oldest first."""
     out = {}
-    for line in store.read(store.data("outcomes.jsonl")).splitlines():
-        try:
-            o = json.loads(line)
-            if type(o["minutes"]) is int and o["minutes"] > 0:
-                out.setdefault(short(o["worker"]), []).append(o["minutes"])
-        except (ValueError, KeyError, TypeError):
-            pass
+    for o in store.records("outcomes.jsonl"):
+        if o.get("verdict") == "good" and type(o.get("minutes")) is int and 0 < o["minutes"] <= 10000 and isinstance(o.get("worker"), str):
+            out.setdefault(short(o["worker"]), []).append(o["minutes"])
     return {w: v[-10:] for w, v in out.items()}
 
 
@@ -222,13 +220,10 @@ def pick(args, cwd=None, rand=None):
 
 def outcomes(n):
     out = []
-    for line in store.read(store.data("outcomes.jsonl")).splitlines()[-n:]:
-        try:
-            o = json.loads(line)
+    for o in store.records("outcomes.jsonl")[-n:]:
+        if all(type(o.get(k)) is str for k in ("ts", "worker", "verdict", "why")):
             out.append("%s  %s  %s  %s%s" % (o["ts"][:10], o["worker"], o["verdict"],
                        "(%d min)  " % o["minutes"] if type(o.get("minutes")) is int else "", o["why"]))
-        except (ValueError, KeyError):
-            pass
     return out
 
 
@@ -259,27 +254,29 @@ def research_record(answer_file):
 def judge(args, cwd=None):
     """`sisi judge WORKER good|bad "<why>" [--minutes N]`: how a delegation went, and how long it took (from the
     pick's start in this session unless --minutes says)."""
+    from . import retro  # not at the top: hooks import this module and must stay quick
     minutes = None
     if "--minutes" in args:
         i = args.index("--minutes")
         v, args = (args[i + 1:i + 2] or [""])[0], args[:i] + args[i + 2:]
-        minutes = int(v) if re.fullmatch(r"[1-9]\d*", v) else 0
-    if len(args) != 3 or args[1] not in ("good", "bad") or len(args[2].split()) < 3 or minutes == 0:
+        minutes = int(v) if re.fullmatch(r"[1-9]\d{0,3}|10000", v) else 0
+    if len(args) != 3 or not args[0].strip() or args[1] not in ("good", "bad") or len(args[2].split()) < 3 or minutes == 0:
         print('usage: sisi judge WORKER good|bad "<what it did well or badly, in a sentence>" [--minutes N]')
         return 1
     sid = store.current_session(cwd)
     if sid:
         with store.session(sid) as s:
-            starts = s.get("starts", {}).get(short(args[0]))
-            if starts:
-                began = starts.pop(0)
-                minutes = minutes or max(1, int((time.time() - began) / 60))
+            starts = s["starts"].get(short(args[0])) if isinstance(s.get("starts"), dict) else None
+            if isinstance(starts, list) and starts:
+                began = starts.pop(0)  # a start in the future or not a number is dropped and times nothing
+                if type(began) in (int, float) and math.isfinite(began) and began <= time.time():
+                    minutes = minutes or max(1, int((time.time() - began) / 60))
     log = store.data("outcomes.jsonl")
     store.append(log, json.dumps(dict({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "worker": args[0], "verdict": args[1],
-                                       "why": " ".join(args[2].split()), "project": os.path.basename(store.project_root(cwd))},
+                                       "why": retro.clean(args[2]), "project": os.path.basename(store.project_root(cwd))},
                                       **{"minutes": minutes} if minutes else {}), sort_keys=True))
     store.commit("delegation judged", log)
-    print("recorded.")
+    print("recorded: %d min." % minutes if minutes else "recorded, not timed.")
     return 0
 
 
