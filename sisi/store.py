@@ -125,7 +125,7 @@ def session(sid):
 
 def current_session(cwd=None):
     """The session a command typed by an agent belongs to: the id session start exported, else the most
-    recently active session of this project. None when there is none (a person at a terminal)."""
+    recently active lead (not worker) session of this project. None when there is none (a person at a terminal)."""
     if os.environ.get("SISI_SESSION_ID"):
         return os.environ["SISI_SESSION_ID"]
     folder, key, best = os.path.join(STATE, "core-sessions"), project_key(cwd), (0, None)
@@ -133,7 +133,8 @@ def current_session(cwd=None):
         path = os.path.join(folder, name)
         if name.endswith(".json") and os.path.getmtime(path) > best[0]:
             try:
-                if json.loads(read(path) or "{}").get("project") == key:
+                state = json.loads(read(path) or "{}")
+                if state.get("project") == key and not state.get("worker"):
                     best = (os.path.getmtime(path), name[:-5])
             except ValueError:
                 pass

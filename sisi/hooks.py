@@ -8,7 +8,6 @@ from . import models, rules, store
 # A delegated session says so in the first lines of its first request (the brief).
 WORKER = re.compile(r"(?im)^\W*(you are a (worker|subagent|sub-agent|delegate)\b|do this task yourself|do not delegate)")
 DIRECT = ("shell", "read", "edit", "search", "web")  # the classes of tool call the meter counts
-OWN = re.compile(r"\s*(\S*/)?sisi\s[^;&|<>`$]*")  # a shell command that runs sisi and nothing else
 
 METER = ("sisi: %d direct tool calls this turn (the limit is %d). Delegate the rest: `sisi models` lists your "
          "workers; brief one and judge what comes back. If doing this yourself really costs less than briefing "
@@ -24,6 +23,8 @@ NOPICK = ("sisi: this delegation goes to a worker the wheel did not give you. si
           "you one for this task (--review-of WORKER for a review, --not WORKER if one is out); one pick, one "
           "delegation.\n")
 NOSHELL = "sisi: do not shell out to a worker; start it with the host's delegation tool.\n"
+FAILED = ("sisi: check %s failed. A failed check is a gap: record it with `sisi retro --gap \"<where it fell "
+          "short>\" --cause \"<the root cause>\" --improve \"<the rule that prevents it>\"`.")
 OPEN = ("sisi: these checks have no verdict yet: %s. Give each one: sisi done --pass N \"<evidence>\" or --fail N "
         "\"<why>\". If the work is only pausing: sisi retro --later \"<what it waits for>\".")
 
@@ -77,6 +78,25 @@ def tool_class(tool):
     return _classes.get(tool) or ("delegate" if tool.endswith("delegate_task") else "")
 
 
+def own(command):
+    """A shell command that runs sisi and nothing else: free on the meter."""
+    import shlex
+    try:
+        lex = shlex.shlex(command, posix=False, punctuation_chars=True)
+        lex.whitespace_split = True
+        words = list(lex)
+    except ValueError:
+        return False
+    return (bool(words) and os.path.basename(words[0]) == "sisi" and "`" not in command and "$(" not in command
+            and "\n" not in command.strip() and not any(set(w) <= set("();<>|&") for w in words))
+
+
+def say(text):
+    """A denial's text, naming sisi by its full path when `sisi` is not on PATH."""
+    import shutil
+    return text if shutil.which("sisi") else re.sub(r"(?<![\w/-])sisi(?= [a-z-])", os.path.join(store.LIB, "current", "bin", "sisi"), text)
+
+
 def _begin(state, cwd):
     if "started" not in state:
         state.update(started=time.time(), project=store.project_key(cwd), snapshot=store.snapshot(cwd))
@@ -123,32 +143,34 @@ def watch(p):
         _begin(s, p["cwd"] or os.getcwd())
         if s.get("worker"):
             return 0
-        if kind == "shell" and OWN.fullmatch(command):
+        if kind == "shell" and own(command):
             return 0
         shell = kind == "shell" and models.is_call(command)
         if shell and not cfg["shell_workers"]:
-            sys.stderr.write(NOSHELL)
+            sys.stderr.write(say(NOSHELL))
             return 2
         if (kind in ("delegate", "edit") or shell) and not s.get("done"):
-            sys.stderr.write(NODONE)
+            sys.stderr.write(say(NODONE))
             return 2
         if kind == "delegate" or shell:
             target = ti.get("target") if isinstance(ti.get("target"), dict) else {}
             names = (ti.get("model"),) if tool == "agent" else (ti.get("model"), target.get("model"), ti.get("agent"))
             text = command if shell else str(next((n for n in names if n), ""))
-            if tool != "workflow" and store.read(models.table()) and not models.claim(s, text):
-                sys.stderr.write(NOPICK)
+            if tool != "workflow" and models.usable(store.read(models.table())) and not models.claim(s, text):
+                sys.stderr.write(say(NOPICK))
                 return 2
             s["delegations_since"] = s.get("delegations_since", 0) + 1
+            s.pop("paused", None)
             return 0
         if kind not in DIRECT:
             return 0
         limit = cfg["direct_calls"] + s.get("extra", 0)
         if cfg["meter"] and s.get("direct", 0) >= limit:
-            sys.stderr.write(METER % (s["direct"], limit, cfg["direct_extension"]))
+            sys.stderr.write(say(METER % (s["direct"], limit, cfg["direct_extension"])))
             return 2  # the tool call is refused and the agent reads the reason
         if kind == "edit":
             s["changed"] = True
+            s.pop("paused", None)
         s["direct"] = s.get("direct", 0) + 1
         s["direct_since"] = s.get("direct_since", 0) + 1
     return 0
@@ -174,19 +196,19 @@ def gate(p, for_subagent=False):
         return 0
     with store.session(sid) as s:
         _begin(s, cwd)
-        if s.get("worker"):
+        if s.get("worker") or s.get("paused"):
             return 0
         checks = (s.get("done") or {}).get("checks") or []
         unsaid = ["%d. %s" % (i, c["text"]) for i, c in enumerate(checks, 1) if not c["verdict"]]
-        failed = any(c["verdict"] == "fail" for c in checks)
+        failed = [str(i) for i, c in enumerate(checks, 1) if c["verdict"] == "fail"]
         worked = s.get("changed") or store.snapshot(cwd) != s.get("snapshot")
         if checks and not unsaid and not failed and not worked:
             from . import retro
             retro.record(s, cwd, {})  # every check passed and nothing changed: the work closes itself
             return 0
-        reason = OPEN % "; ".join(unsaid) if unsaid and not s.get("later") else GATE if worked or failed else ""
+        reason = OPEN % "; ".join(unsaid) if unsaid else GATE if worked else FAILED % ", ".join(failed) if failed else ""
         if not reason or s.get("blocks", 0) >= 2:
             return 0
         s["blocks"] = s.get("blocks", 0) + 1
-    print(json.dumps({"decision": "block", "reason": reason}))
+    print(json.dumps({"decision": "block", "reason": say(reason)}))
     return 0

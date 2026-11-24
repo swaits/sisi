@@ -92,8 +92,8 @@ def _sync(path, wanted):
         store.write(os.path.realpath(path) + ".before-sisi", raw)
     if not wanted and out in ({}, {"hooks": {}}):
         os.remove(os.path.realpath(path))  # nothing but sisi's entries was there
-    else:
-        _save(path, json.dumps(out, indent=2, ensure_ascii=False) + "\n")
+        return "file removed"
+    _save(path, json.dumps(out, indent=2, ensure_ascii=False) + "\n")
     return "wired" if wanted else "removed"
 
 
@@ -107,12 +107,12 @@ def _clean(h, d):
     for rel in h.get("clean", []):
         path = os.path.join(d, rel)
         if rel.endswith(".json"):
-            if _sync(path, []) == "removed":
-                done.append(rel)
+            how = _sync(path, [])
+            done += ["sisi's entries from " + rel] if how == "removed" else [rel] if how == "file removed" else []
         elif os.path.isfile(path) and not os.path.islink(path) and "sisi:generated" in _read(path)[:300]:
             os.remove(path)
             done.append(rel)
-    return "removed old " + ", ".join(done) if done else ""
+    return "removed " + ", ".join(done) if done else ""
 
 
 def _rulebook(h, d, book, mode):
@@ -177,13 +177,33 @@ def _apply(mode):
     return bad
 
 
+def _command(mode):
+    """`sisi` on PATH: ~/.local/bin/sisi, a link to the launcher. Anything else already there is left alone."""
+    link, exe = os.path.join(store.HOME, ".local", "bin", "sisi"), os.path.join(_current(), "bin", "sisi")
+    mine = os.path.islink(link) and os.readlink(link) == exe
+    if mode == "remove" and mine:
+        os.remove(link)
+        try:
+            os.removedirs(os.path.dirname(link))  # the folders install made, while they are empty
+        except OSError:
+            pass
+    elif mode == "add" and not os.path.lexists(link):
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        os.symlink(exe, link)
+        print("sisi command: linked %s" % link)
+    elif mode == "add" and not mine:
+        print("sisi command: left alone: %s is already there and is not sisi's link to %s" % (link, exe))
+
+
 def install():
-    """Rulebook and hooks into every tool that is installed. Safe to repeat."""
+    """Rulebook and hooks into every tool that is installed, and `sisi` on PATH. Safe to repeat."""
+    _command("add")
     return _apply("add")
 
 
 def uninstall():
     """Take out exactly what install put in."""
+    _command("remove")
     return _apply("remove")
 
 
@@ -285,6 +305,7 @@ def doctor(cwd=None):
     print("learned rules:   %d for all projects, %d for this one" % (
         len(rules.lines(rules.path(rules.USER))), len(rules.lines(rules.path(rules.PROJECT, cwd)))))
     print("models table:    %s" % ("none yet" if age is None else "%d days old" % age))
+    print("sisi on PATH:    %s" % (shutil.which("sisi") or "no: add ~/.local/bin to PATH (`sisi install` links it there)"))
     for h in _table():
         print("%-13s %s%s" % (h["name"] + ":", _state(h, _dir(h)), ". " + h.get("limits", "") if _dir(h) else ""))
     return 0

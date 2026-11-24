@@ -18,13 +18,15 @@ the table an engineering lead will route by.
 4. Only the newest version of each model belongs in the table. A smaller or faster variant is a different model.
 5. What the person has said, below, stands exactly: their limits and preferences are not yours to change.
 
+List only workers the host's delegation tool can actually start: check the host's own list of enabled providers.
 Answer with exactly this and nothing else. First a markdown table of at most 40 rows, the cheapest capable
 worker first within each level, with these columns:
-| worker | how to call it | use for | cost | good at, bad at | notes |
-"use for" is one or more of: routine, ordinary, hard. "how to call it" is exact: where the host has its own
-tool for starting workers on other harnesses (T3 Code's delegate_task), the provider and the model id to give
-it; the host's subagent model name where it has subagents; the full command line with <brief> where the brief
-goes only for a worker the host's tool cannot reach.
+| worker | maker | how to call it | use for | cost | good at, bad at | notes |
+"maker" is the company or lab that trained the model, lower case, one word. "use for" is one or more of: routine,
+ordinary, hard. "how to call it" is exact: the host delegation tool's provider and model id (T3 Code's
+delegate_task); the host's subagent model name where it has subagents; the full command line with <brief> where
+the brief goes only for a worker the host's tool cannot reach. A worker that is unavailable carries exactly
+`out until YYYY-MM-DD` in its notes.
 Then one line starting "Fallback order:" that says who takes over when a worker is out, level by level.
 
 === The table now ===
@@ -61,14 +63,25 @@ def stale():
     return ""
 
 
+KEYS = ("worker", "how", "use", "cost", "good", "notes", "maker")  # a column is known by its header's first word
+LAUNCHERS = {"python", "python3", "bash", "sh", "zsh", "cd", "env", "npx", "npm", "node", "uv", "uvx", "make", "ssh",
+             "git", "docker", "sudo"}
+
+
 def rows(text):
-    """The table's worker rows, each a list of six cells: worker, how to call it, use for, cost, good, notes."""
-    out = []
+    """The table's worker rows, each a list of cells in the order of KEYS, found by header name."""
+    out, cols = [], KEYS[:6]
     for line in text.splitlines():
         c = [x.strip() for x in line.strip().strip("|").split("|")] if line.startswith("|") else []
-        if len(c) >= 5 and c[0].lower() != "worker" and not set(c[0]) <= set("-: "):
-            out.append((c + [""] * 6)[:6])
+        if c and c[0].lower() == "worker":
+            cols = [(x.split() or [""])[0].lower() for x in c]
+        elif len(c) >= 5 and not set(c[0]) <= set("-: "):
+            out.append([dict(zip(cols, c)).get(k, "") for k in KEYS])
     return out
+
+
+def usable(text):
+    return any(re.search(r"routine|ordinary|hard", r[2].lower()) for r in rows(text))
 
 
 def short(cell):
@@ -76,10 +89,11 @@ def short(cell):
     return w[0].lower() if w else ""
 
 
-def maker(name, call=""):
-    """Who made a worker: claude for the host's subagents, else the leading letters of the model's own name."""
-    m = re.match(r"[a-z]+", name.rsplit("/", 1)[-1])
-    return "claude" if "host subagent" in call.lower() else m.group() if m else name
+def maker(r):
+    """Who made a worker: its maker cell; else the leading letters of the last path segment of its name; else
+    its call text without its own name (the same way of calling, the same maker)."""
+    name, m = short(r[0]), re.match(r"[a-z]+", short(r[0]).rsplit("/", 1)[-1])
+    return r[6].lower() or (m.group() if "/" in name and m else r[1].lower().replace(name, "") or name)
 
 
 def command(row):
@@ -88,29 +102,39 @@ def command(row):
 
 
 def is_call(command_line):
-    """Does this shell command start one of the workers in the table?"""
-    words = command_line.split()
-    return bool(words) and os.path.basename(words[0]) in {r[1].replace("`", "").split()[0] for r in rows(store.read(table())) if command(r)}
+    """Does any segment of this shell command start a worker in the table (after nohup, exec, time, env, VAR=)?"""
+    starts = {(r[1].replace("`", "").split() or [""])[0] for r in rows(store.read(table())) if command(r)} - LAUNCHERS
+    for seg in re.split(r"&&|\|\||[;|&\n]", command_line):
+        words = [w for w in seg.split()]
+        while words and (words[0] in ("nohup", "exec", "time", "env") or re.match(r"[A-Za-z_]\w*=", words[0])):
+            words.pop(0)
+        if words and os.path.basename(words[0]) in starts:
+            return True
+    return False
 
 
 def claim(s, text):
     """Spend the pick that this delegation's model text names; False when none of the picks fits."""
     for name in s.get("picked") or []:
-        if name in text.lower() or name.rsplit("/", 1)[-1] in text.lower():
+        if any(re.search(r"(?<![a-z0-9.-])%s(?![a-z0-9.-])" % re.escape(n), text.lower()) for n in (name, name.rsplit("/", 1)[-1])):
             s["picked"].remove(name)
             s.setdefault("workers_since", []).append(name)
             return True
     return False
 
 
+def out(r, skip, bad, today):
+    """Why this worker is off the wheel, "" when it is on."""
+    until = [d for d in re.findall(r"out until (\d{4}-\d{2}-\d{2})", " ".join(r).lower()) if d > today]
+    return ("excluded" if short(r[0]) in skip else "same maker as the work under review" if maker(r) == bad
+            else "out until " + until[0] if until else "")
+
+
 def choose(text, cls, skip=(), review=None, rand=None, today=None):
     """One worker of this class, by a wheel weighted by table order (the first of n has weight n, the last 1)."""
     table_rows, today = rows(text), today or time.strftime("%Y-%m-%d")
-    bad = None
-    if review:
-        bad = next((maker(short(r[0]), r[1]) for r in table_rows if short(r[0]) == short(review)), maker(short(review)))
-    left = [r for r in table_rows if cls in r[2].lower() and short(r[0]) not in skip and maker(short(r[0]), r[1]) != bad
-            and not any(d > today for d in re.findall(r"out until (\d{4}-\d{2}-\d{2})", " ".join(r).lower()))]
+    bad = next((maker(r) for r in table_rows if short(r[0]) == short(review)), None) if review else None
+    left = [r for r in table_rows if cls in r[2].lower() and not out(r, skip, bad, today)]
     if not left:
         return None
     if rand is None:
@@ -138,9 +162,17 @@ def pick(args, cwd=None, rand=None):
     if not cls:
         print("usage: sisi pick routine|ordinary|hard [--review-of WORKER] [--not WORKER ...]")
         return 1
-    r = choose(store.read(table()), cls, skip, review, rand)
+    text = store.read(table())
+    mine = [r for r in rows(text) if cls in r[2].lower()]
+    if review is not None and not any(short(r[0]) == short(review) for r in rows(text)):
+        print("sisi pick: %r is not a worker in the models table; --review-of names the worker whose work is reviewed." % review)
+        return 1
+    r = choose(text, cls, skip, review, rand)
     if not r:
-        print("sisi pick: every worker of that class is out or excluded.")
+        bad = next((maker(x) for x in rows(text) if short(x[0]) == short(review)), None)
+        print("sisi pick: every worker of class %s is out or excluded: %s." % (cls, "; ".join(
+            "%s (%s)" % (x[0], out(x, skip, bad, time.strftime("%Y-%m-%d"))) for x in mine)) if mine
+              else "sisi pick: the models table has no worker of class %s." % cls)
         return 1
     sid = store.current_session(cwd)
     if sid:
@@ -172,14 +204,19 @@ def research_brief():
 
 def research_record(answer_file):
     text = store.read(answer_file).strip()
-    rows = [l for l in text.splitlines() if l.startswith("|")]
-    if "| worker" not in text.lower() or "fallback order:" not in text.lower() or len(rows) < 3:
+    lines = [l for l in text.splitlines() if l.startswith("|")]
+    if "| worker" not in text.lower() or "fallback order:" not in text.lower() or len(lines) < 3:
         return "the answer needs the table (a `| worker |` header and at least one row) and a `Fallback order:` line"
-    if len(rows) > 42 or len(text) > 12000:
+    if not usable(text):
+        return "no row's \"use for\" cell names routine, ordinary or hard"
+    for r in rows(text):
+        if re.search(r"out (?!until \d{4}-\d{2}-\d{2}(?!\d))(until|till)\b", r[5].lower()):
+            return "a worker that is out needs exactly `out until YYYY-MM-DD` in its notes: | %s |" % " | ".join(r[:6])
+    if len(lines) > 42 or len(text) > 12000:
         return "the answer is too long (at most 40 rows and 12,000 characters)"
     store.write(table(), text + "\n")
     store.commit("models table researched", table())
-    print("models table recorded: %d workers." % (len(rows) - 2))
+    print("models table recorded: %d workers." % (len(lines) - 2))
     return None
 
 

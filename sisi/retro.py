@@ -27,7 +27,7 @@ def counts(state, cwd):
     return {"minutes": int((time.time() - since) / 60), "messages": state.get("prompts_since", 0),
             "direct": state.get("direct_since", 0), "delegations": state.get("delegations_since", 0),
             "commits": len(store.git(["log", "--oneline", "--since=@%d" % since], cwd)[1].splitlines()),
-            "checks_pass": sum(c["verdict"] == "pass" for c in checks), "checks_fail": sum(c["verdict"] == "fail" for c in checks)}
+            "checks_pass": sum(c["verdict"] == "pass" for c in checks), "checks_fail": state.get("fails_since", 0)}
 
 
 def facts(state, cwd):
@@ -94,8 +94,9 @@ def record(s, cwd, opt):
     log = store.data("retro.jsonl")
     store.append(log, json.dumps(entry, sort_keys=True))
     store.commit("retro recorded", log)
-    s["snapshot"], s["changed"], s["blocks"], s["retro_at"] = store.snapshot(cwd), False, 0, now
-    for key in ("prompts_since", "direct_since", "delegations_since", "reasons_since", "workers_since", "done", "later"):
+    s["snapshot"], s["changed"], s["retro_at"] = store.snapshot(cwd), False, now
+    for key in ("prompts_since", "direct_since", "delegations_since", "reasons_since", "workers_since", "done", "paused",
+                "fails_since", "picked"):
         s.pop(key, None)
 
 
@@ -122,11 +123,12 @@ def done(args, cwd=None):
                          "checks": [{"text": c, "verdict": None, "evidence": ""} for c in opt["check"]]}
         elif verdict:
             kind, n, why = verdict
-            if not (s.get("done") and n.isdigit() and 1 <= int(n) <= len(s["done"]["checks"]) and len(why.split()) >= 3):
+            if not (s.get("done") and n.isdecimal() and 1 <= int(n) <= len(s["done"]["checks"]) and len(why.split()) >= 3):
                 print(DONE_USAGE)
                 return 1
             s["done"]["checks"][int(n) - 1].update(verdict=kind, evidence=why)
-        s.pop("later", None) if new or verdict else None
+            s["fails_since"] = s.get("fails_since", 0) + (kind == "fail")
+        s.pop("paused", None) if new or verdict else None
         print("\n".join(show(s["done"])) if s.get("done") else "no done recorded yet.\n" + DONE_USAGE)
     return 0
 
@@ -170,7 +172,7 @@ def run(args, cwd=None):
             if kind == "gap":
                 opt["scope"] = scope
             if kind == "later":
-                s["snapshot"], s["changed"], s["blocks"], s["later"] = store.snapshot(cwd), False, 0, True
+                s["paused"] = True
             else:
                 record(s, cwd, opt)
     elif kind != "later":
