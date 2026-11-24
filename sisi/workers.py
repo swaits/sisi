@@ -1160,7 +1160,10 @@ def recommend(kind, difficulty, cwd=None, own_model=None):
     other worker is usable."""
     records = read_records()
     candidates, _tools = _cached_candidates(records)
-    _D.apply_allowances(candidates, cached_only=True)  # a hook never asks a provider; the last reading stands
+    try:
+        _D.apply_allowances(candidates, cached_only=True)  # a hook never asks a provider; the last reading stands
+    except Exception as e:  # an allowance that cannot be read changes nothing about who is recommended
+        store.log_error("recommend-allowance", e)
     candidates, _cold, _x = routable_candidates(candidates, records)
     prefs = effective_prefs(kind, difficulty, cwd or os.getcwd())
     candidates, _limited = apply_limits(candidates, prefs)
