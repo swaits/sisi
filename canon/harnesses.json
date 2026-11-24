@@ -1,0 +1,15 @@
+[
+ {"name": "claude", "detect": "~/.claude", "env": "CLAUDE_CONFIG_DIR", "rules": "CLAUDE.md", "import": true, "hooks": {"file": "settings.json", "tick": "SessionStart", "prompt": "UserPromptSubmit", "watch": "PreToolUse", "gate": "Stop"}, "limits": "The built-in Explore and Plan subagents do not load CLAUDE.md."},
+ {"name": "codex", "detect": "~/.codex", "env": "CODEX_HOME", "rules": "AGENTS.md", "hooks": {"file": "hooks.json", "tick": "SessionStart", "prompt": "UserPromptSubmit", "watch": "PreToolUse", "gate": "Stop"}, "limits": "Hooks run only after the person trusts them once in Codex's /hooks; AGENTS.override.md shadows the rulebook; hosted web search is not metered."},
+ {"name": "qwen", "detect": "~/.qwen", "rules": "QWEN.md", "hooks": {"file": "settings.json", "tick": "SessionStart", "prompt": "UserPromptSubmit", "watch": "PreToolUse", "gate": "Stop"}, "limits": "A tool Qwen names differently from canon/tools.json is not metered."},
+ {"name": "grok", "detect": "~/.grok", "rules": "AGENTS.md", "limits": "Grok already runs the hooks in ~/.claude/settings.json; its session-start and prompt output is discarded, so project rules do not reach it at session start."},
+ {"name": "opencode", "detect": "~/.config/opencode", "rules": "AGENTS.md", "clean": ["plugins/sisi.js"], "limits": "Its plugin hooks are unverified, so none are wired."},
+ {"name": "antigravity", "detect": "~/.gemini", "rules": "GEMINI.md", "clean": ["settings.json"], "limits": "Its global hooks file location is unconfirmed, so none are wired."},
+ {"name": "pi", "detect": "~/.pi", "rules": "agent/AGENTS.md", "clean": ["agent/extensions/sisi.ts"], "limits": "Its extension hooks are unverified, so none are wired."},
+ {"name": "kiro", "detect": "~/.kiro", "rules": "steering/AGENTS.md", "limits": "Hook support is unconfirmed, so none are wired."},
+ {"name": "copilot", "detect": "~/.copilot", "rules": "copilot-instructions.md", "limits": "Hook support is unconfirmed, so none are wired."},
+ {"name": "crush", "detect": "~/.config/crush", "rules": "CRUSH.md", "limits": "Hook support is unconfirmed, so none are wired."},
+ {"name": "amp", "detect": "~/.config/amp", "rules": "AGENTS.md", "limits": "Hook support is unconfirmed, so none are wired."},
+ {"name": "muse", "detect": "~/.config/muse", "limits": "No documented global instructions file."},
+ {"name": "cursor", "detect": "~/.cursor", "limits": "No global instructions file, and CLI hook support is unconfirmed."}
+]

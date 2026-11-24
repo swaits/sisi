@@ -7,8 +7,7 @@ from . import models, rules, store
 
 # A delegated session says so in the first lines of its first request (the brief).
 WORKER = re.compile(r"(?im)^\W*(you are a (worker|subagent|sub-agent|delegate)\b|do this task yourself|do not delegate)")
-DIRECT = {"Bash", "Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "Grep", "Glob", "WebFetch", "WebSearch"}
-EDITS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+DIRECT = ("shell", "read", "edit", "search", "web")  # the classes of tool call the meter counts
 OWN = re.compile(r"\s*(\S*/)?sisi\s[^;&|<>`$]*")  # a shell command that runs sisi and nothing else
 
 METER = ("sisi: %d direct tool calls this turn (the limit is %d). Delegate the rest: `sisi models` lists your "
@@ -29,22 +28,53 @@ OPEN = ("sisi: these checks have no verdict yet: %s. Give each one: sisi done --
         "\"<why>\". If the work is only pausing: sisi retro --later \"<what it waits for>\".")
 
 
+# The names each host gives a hook's fields; the first one present (and of the right type) wins.
+FIELDS = (("session_id", str, ("session_id", "sessionId", "conversation_id", "conversationId")),
+          ("tool_name", str, ("tool_name", "toolName", "tool", "toolCall.name")),
+          ("tool_input", dict, ("tool_input", "toolInput", "input", "toolCall.args")),
+          ("prompt", str, ("prompt", "lastUserInput")),
+          ("hook_event_name", str, ("hook_event_name", "hookEventName")),
+          ("cwd", str, ("cwd", "workspace_roots", "workspacePaths")))
+SUBAGENT = ("agent_id", "agentId", "subagent_id", "subagentType", "agent_transcript_path")
+_classes = None
+
+
+def normalize(p):
+    """Any host's hook input as one shape. A field of the wrong type is empty, never an error."""
+    def get(name):
+        v = p
+        for part in name.split("."):
+            v = v.get(part) if isinstance(v, dict) else None
+        return v
+    out = {}
+    for key, kind, names in FIELDS:
+        vals = [get(n) for n in names]
+        if key == "cwd":
+            vals = [v[0] if isinstance(v, list) and v else v for v in vals]  # workspace_roots is a list
+        out[key] = next((v for v in vals if isinstance(v, kind) and v), kind())
+    out["subagent"] = any(get(n) for n in SUBAGENT) or "/subagents/" in str(get("transcript_path") or "")
+    return out
+
+
 def payload():
     try:
         p = json.load(sys.stdin)
-        return p if isinstance(p, dict) else {}
     except ValueError:
-        return {}
+        p = None
+    return normalize(p if isinstance(p, dict) else {})
 
 
-def subagent(p):
-    """The host's own subagents share their parent's session: the hook's input is what tells them apart."""
-    return bool(p.get("agent_id") or p.get("agentId") or p.get("agent_transcript_path")
-                or "/subagents/" in str(p.get("transcript_path") or ""))
-
-
-def delegation(tool):
-    return tool in ("Agent", "Task", "Workflow") or tool.endswith("delegate_task")
+def tool_class(tool):
+    """shell, read, edit, search, web or delegate, by the table in canon/tools.json; "" for any other tool."""
+    global _classes
+    if _classes is None:
+        try:
+            raw = json.loads(store.read(os.path.join(store.ROOT, "canon", "tools.json")))
+            _classes = {n: c for c, names in raw.items() for n in names}
+        except (ValueError, AttributeError, TypeError):
+            _classes = {}  # a missing or broken table meters nothing rather than breaking the session
+    tool = tool.lower()
+    return _classes.get(tool) or ("delegate" if tool.endswith("delegate_task") else "")
 
 
 def _begin(state, cwd):
@@ -54,7 +84,7 @@ def _begin(state, cwd):
 
 def tick(p):
     """Session start: remember where the work began; print this project's learned rules and what is due."""
-    sid, cwd = p.get("session_id"), p.get("cwd") or os.getcwd()
+    sid, cwd = p["session_id"], p["cwd"] or os.getcwd()
     if sid:
         with store.session(sid) as s:
             _begin(s, cwd)
@@ -71,11 +101,11 @@ def tick(p):
 
 def prompt(p):
     """Each request: a new turn begins. The first request tells a delegated worker from a lead."""
-    sid = p.get("session_id")
+    sid = p["session_id"]
     if sid:
         with store.session(sid) as s:
-            _begin(s, p.get("cwd") or os.getcwd())
-            if not s.get("prompts") and WORKER.search(str(p.get("prompt") or "")[:2000]):
+            _begin(s, p["cwd"] or os.getcwd())
+            if not s.get("prompts") and WORKER.search(p["prompt"][:2000]):
                 s["worker"] = True
             s["prompts"] = s.get("prompts", 0) + 1
             s["prompts_since"] = s.get("prompts_since", 0) + 1
@@ -85,39 +115,39 @@ def prompt(p):
 
 def watch(p):
     """Before a tool call by the lead: count it, and refuse it when the lead should be delegating."""
-    sid, tool = p.get("session_id"), str(p.get("tool_name") or "")
-    if p.get("hook_event_name") not in (None, "PreToolUse") or not sid or subagent(p):
+    sid, tool, ti = p["session_id"], p["tool_name"].lower(), p["tool_input"]
+    if p["hook_event_name"] not in ("", "PreToolUse") or not sid or p["subagent"]:
         return 0
-    ti = p.get("tool_input") if isinstance(p.get("tool_input"), dict) else {}
-    command, cfg = str(ti.get("command") or ""), store.config()
+    kind, command, cfg = tool_class(tool), str(ti.get("command") or ""), store.config()
     with store.session(sid) as s:
-        _begin(s, p.get("cwd") or os.getcwd())
+        _begin(s, p["cwd"] or os.getcwd())
         if s.get("worker"):
             return 0
-        if tool == "Bash" and OWN.fullmatch(command):
+        if kind == "shell" and OWN.fullmatch(command):
             return 0
-        shell = tool == "Bash" and models.is_call(command)
+        shell = kind == "shell" and models.is_call(command)
         if shell and not cfg["shell_workers"]:
             sys.stderr.write(NOSHELL)
             return 2
-        if (delegation(tool) or shell or tool in EDITS) and not s.get("done"):
+        if (kind in ("delegate", "edit") or shell) and not s.get("done"):
             sys.stderr.write(NODONE)
             return 2
-        if delegation(tool) or shell:
+        if kind == "delegate" or shell:
             target = ti.get("target") if isinstance(ti.get("target"), dict) else {}
-            text = command if shell else str((target if tool.endswith("delegate_task") else ti).get("model") or "")
-            if tool != "Workflow" and store.read(models.table()) and not models.claim(s, text):
+            names = (ti.get("model"),) if tool == "agent" else (ti.get("model"), target.get("model"), ti.get("agent"))
+            text = command if shell else str(next((n for n in names if n), ""))
+            if tool != "workflow" and store.read(models.table()) and not models.claim(s, text):
                 sys.stderr.write(NOPICK)
                 return 2
             s["delegations_since"] = s.get("delegations_since", 0) + 1
             return 0
-        if tool not in DIRECT:
+        if kind not in DIRECT:
             return 0
         limit = cfg["direct_calls"] + s.get("extra", 0)
         if cfg["meter"] and s.get("direct", 0) >= limit:
             sys.stderr.write(METER % (s["direct"], limit, cfg["direct_extension"]))
             return 2  # the tool call is refused and the agent reads the reason
-        if tool in EDITS:
+        if kind == "edit":
             s["changed"] = True
         s["direct"] = s.get("direct", 0) + 1
         s["direct_since"] = s.get("direct_since", 0) + 1
@@ -139,8 +169,8 @@ def direct(args, cwd=None):
 
 def gate(p, for_subagent=False):
     """End of turn: when the lead changed things and has not held the retro, send it back to hold it."""
-    sid, cwd = p.get("session_id"), p.get("cwd") or os.getcwd()
-    if for_subagent or not sid or subagent(p) or not store.config()["gate"]:
+    sid, cwd = p["session_id"], p["cwd"] or os.getcwd()
+    if for_subagent or not sid or p["subagent"] or not store.config()["gate"]:
         return 0
     with store.session(sid) as s:
         _begin(s, cwd)

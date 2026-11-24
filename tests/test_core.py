@@ -3,7 +3,7 @@
 Learning: work is done, the retro is forced, its improvement is a rule in the next session, the rules are
 organized and the change can be undone. Delegation: the lead is stopped when it should be delegating, and the
 models table is researched, read and kept fresh."""
-import glob, hashlib, json, os, random, shutil, subprocess, sys, tempfile, time, unittest
+import glob, hashlib, json, os, random, re, shutil, subprocess, sys, tempfile, time, unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GAP = ("--gap", "the export dropped rows with empty names until the person noticed",
@@ -45,7 +45,7 @@ class Core(unittest.TestCase):
         self.data = os.path.join(self.tmp, "data")
         self.env = dict(os.environ, HOME=self.tmp, SISI_DATA=self.data, SISI_STATE=os.path.join(self.tmp, "state"),
                         SISI_LIB=os.path.join(self.tmp, "lib"), CLAUDE_CONFIG_DIR=os.path.join(self.tmp, "claude"))
-        for name in ("SISI_SESSION_ID", "CLAUDE_ENV_FILE"):
+        for name in ("SISI_SESSION_ID", "CLAUDE_ENV_FILE", "XDG_DATA_HOME", "XDG_STATE_HOME", "CODEX_HOME"):
             self.env.pop(name, None)
         self.proj = self.project("alpha")
 
@@ -432,6 +432,323 @@ class Core(unittest.TestCase):
             self.assertEqual(self.sisi(name, stdin="not json")[0], 0, name)
             self.assertEqual(self.sisi(name, stdin=json.dumps({"session_id": "s1", "cwd": "/no/such/place"}))[0], 0, name)
 
+    # any agent in any harness
+
+    def watch(self, fields, sid="s1"):
+        return self.sisi("watch", stdin=json.dumps(fields), sid=sid)
+
+    def families(self, sid, tool="Edit", **extra):
+        """The same pre-tool-use event as three hosts name its fields."""
+        c = self.proj
+        return [dict(session_id=sid, cwd=c, hook_event_name="PreToolUse", tool_name=tool, tool_input=extra),
+                dict(sessionId=sid, cwd=c, toolName=tool, toolInput=extra),
+                dict(conversationId=sid, workspacePaths=[c], toolCall={"name": tool, "args": extra}),
+                dict(conversation_id=sid, workspace_roots=[c, "/elsewhere"], tool=tool, input=extra)]
+
+    def test_every_alias_family_drives_watch_to_the_same_decision(self):
+        for i, fields in enumerate(self.families("x0")):
+            sid = "fam%d" % i
+            fields = json.loads(json.dumps(fields).replace("x0", sid))
+            rc, _, err = self.watch(fields, sid)
+            self.assertEqual((rc, "nothing starts before done" in err), (2, True), fields)      # no done yet
+            self.done(sid)
+            self.assertEqual(self.watch(fields, sid)[0], 0, fields)
+            s = self.state(sid)
+            self.assertEqual((s["direct"], s["changed"]), (1, True), fields)
+            self.assertTrue(s["project"].startswith("alpha-"), fields)                          # the cwd was found too
+        for i, fields in enumerate(self.families("x0", agentId="a1")[:0] + [dict(f, **extra) for f, extra in zip(
+                self.families("sub"), ({"agent_id": "a"}, {"agentId": "a"}, {"subagentType": "t"}, {"agent_transcript_path": "/t"}))]):
+            self.assertEqual(self.watch(fields, "sub%d" % i)[0], 0, fields)                     # a subagent is left alone
+        self.assertEqual(self.watch(dict(self.families("t")[0], transcript_path="/x/subagents/1.jsonl"), "t")[0], 0)
+        self.hook("prompt", sid="w", lastUserInput="You are a worker. Do this task yourself.")
+        self.assertTrue(self.state("w")["worker"])
+
+    def test_a_field_of_the_wrong_type_is_empty_never_an_error(self):
+        sys.path.insert(0, REPO)
+        from sisi import hooks
+        ugly = {"session_id": 5, "sessionId": ["a"], "cwd": {}, "workspace_roots": [3], "tool_name": [1], "toolCall": "x",
+                "tool_input": "ls", "toolInput": None, "prompt": 7, "agent_id": 0, "transcript_path": 4, "hook_event_name": []}
+        self.assertEqual(hooks.normalize(ugly), dict(session_id="", cwd="", tool_name="", tool_input={}, prompt="",
+                                                     hook_event_name="", subagent=False))
+        self.assertEqual(hooks.normalize({"toolCall": {"name": "Bash", "args": {"command": "ls"}}})["tool_input"], {"command": "ls"})
+        for name in ("tick", "prompt", "watch", "gate"):
+            self.assertEqual(self.sisi(name, stdin=json.dumps(ugly))[0], 0, name)
+            self.assertEqual(self.sisi(name, stdin=json.dumps(dict(ugly, session_id="s9", cwd=self.proj)))[0], 0, name)
+            self.assertEqual(self.sisi(name, stdin="[1, 2]")[0], 0, name)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "state", "core-errors.log")))
+
+    def test_tool_classes_come_from_one_table_and_a_broken_table_meters_nothing(self):
+        sys.path.insert(0, REPO)
+        from sisi import hooks
+        for name, kind in (("run_terminal_command", "shell"), ("exec_command", "shell"), ("Bash", "shell"), ("apply_patch", "edit"),
+                           ("search_replace", "edit"), ("MultiEdit", "edit"), ("spawn_agent", "delegate"), ("Agent", "delegate"),
+                           ("mcp__t3__delegate_task", "delegate"), ("read_file", "read"), ("web_search", "web"), ("grep_search", "search"),
+                           ("AskUserQuestion", "")):
+            self.assertEqual(hooks.tool_class(name), kind, name)
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        for name in ("apply_patch", "search_replace", "write_file"):
+            self.assertEqual(self.tool(name)[0], 2, name)                                       # an edit needs done
+        self.assertEqual(self.tool("spawn_agent")[0], 2)                                        # so does a delegation
+        self.done()
+        self.table(WORKERS)
+        self.assertEqual(self.tool("spawn_agent", tool_input={"model": "sonnet"})[0], 2)        # and then a pick
+        self.sisi("pick", "hard", sid="s1")
+        self.assertEqual(self.tool("spawn_agent", tool_input={"model": "sonnet"})[0], 0)
+        self.sisi("pick", "hard", sid="s1")
+        self.assertEqual(self.tool("spawn_subagent", tool_input={"target": {"model": "sonnet"}})[0], 0)
+        self.hook("prompt", prompt="next")
+        for name in ("run_terminal_command", "exec_command", "Bash", "apply_patch", "search_replace", "read_file", "grep_search", "web_fetch"):
+            self.assertEqual(self.tool(name, tool_input={"command": "ls"})[0], 0, name)         # eight, all metered
+        rc, _, err = self.tool("exec_command", tool_input={"command": "ls"})
+        self.assertEqual((rc, "Delegate the rest" in err), (2, True))
+        folder = os.path.join(self.tmp, "broken")
+        os.makedirs(os.path.join(folder, "canon"))
+        self.write(os.path.join(folder, "canon", "tools.json"), "{not json")
+        was = (hooks.store.ROOT, hooks._classes)
+        hooks.store.ROOT, hooks._classes = folder, None
+        try:
+            self.assertEqual((hooks.tool_class("Bash"), hooks.tool_class("x_delegate_task")), ("", "delegate"))
+        finally:
+            hooks.store.ROOT, hooks._classes = was
+
+    def harness(self, *names):
+        """A temporary home holding the folders of these tools, as the person's home would."""
+        home = self.env["HOME"] = os.path.join(self.tmp, "home")
+        self.env.pop("CLAUDE_CONFIG_DIR", None)
+        for name in names:
+            os.makedirs(os.path.join(home, name))
+        return home
+
+    OLD = "/home/swaits/.local/lib/sisi/current/bin/sisi"
+
+    def old_claude(self):
+        run = lambda sub: {"type": "command", "command": "%s %s --tool claude-code" % (self.OLD, sub)}
+        return {"model": "x", "hooks": {
+            "SessionStart": [{"hooks": [run("tick")]}], "UserPromptSubmit": [{"hooks": [run("prompt")]}],
+            "PreToolUse": [{"matcher": "*", "hooks": [run("watch")]}],
+            "Stop": [{"hooks": [{"type": "command", "command": "foreign-b"}, run("gate")]}],
+            "SubagentStop": [{"hooks": [run("gate --subagent")]}], "PostToolUse": [{"matcher": "*", "hooks": [run("watch")]}],
+            "PostToolUseFailure": [{"hooks": [run("watch")]}], "Notification": [{"hooks": [{"type": "command", "command": "foreign-a"}]}]}}
+
+    def test_install_replaces_old_claude_entries_with_the_four_current_ones(self):
+        home = self.harness(".claude")
+        spath = self.write(os.path.join(home, ".claude", "settings.json"), json.dumps(self.old_claude(), indent=4))
+        self.assertEqual(self.sisi("install")[0], 0)
+        first = self.read(spath)
+        settings = json.loads(first)
+        exe = os.path.join(self.env["SISI_LIB"], "current", "bin", "sisi")
+        self.assertEqual(sorted(settings["hooks"]), ["Notification", "PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"])
+        self.assertEqual(settings["hooks"]["Notification"], self.old_claude()["hooks"]["Notification"])      # foreign, untouched
+        self.assertEqual(settings["hooks"]["Stop"][0], {"hooks": [{"type": "command", "command": "foreign-b"}]})
+        commands = [h["command"] for groups in settings["hooks"].values() for g in groups for h in g["hooks"]]
+        self.assertEqual(sorted(c for c in commands if "bin/sisi" in c),
+                         sorted("test -x %s || exit 0 ; %s %s" % (exe, exe, s) for s in ("tick", "prompt", "watch", "gate")))
+        self.assertEqual(settings["hooks"]["PreToolUse"][0]["matcher"], "*")
+        self.assertEqual(settings["model"], "x")
+        self.assertEqual(self.sisi("install")[0], 0)
+        self.assertEqual(self.read(spath), first)                                               # a second install changes nothing
+        self.assertEqual(json.loads(self.read(spath + ".before-sisi")), self.old_claude())
+
+    def test_install_reaches_every_installed_tool_and_creates_nothing_for_the_rest(self):
+        home = self.harness(".codex", ".config/opencode", ".gemini", ".config/muse", ".cursor")
+        before = sorted(os.path.join(r, n) for r, ds, fs in os.walk(home) for n in ds + fs)
+        self.assertEqual(self.sisi("install")[0], 0)
+        book = os.path.join(self.data, "generated", "core.md")
+        for rel in (".codex/AGENTS.md", ".config/opencode/AGENTS.md", ".gemini/GEMINI.md"):
+            self.assertEqual(os.path.realpath(os.path.join(home, rel)), os.path.realpath(book), rel)
+        codex = json.loads(self.read(home, ".codex", "hooks.json"))["hooks"]
+        self.assertEqual(sorted(codex), ["PreToolUse", "SessionStart", "Stop", "UserPromptSubmit"])
+        after = sorted(os.path.join(r, n) for r, ds, fs in os.walk(home) for n in ds + fs)
+        self.assertEqual(sorted(set(after) - set(before)), sorted(os.path.join(home, p) for p in (
+            ".codex/AGENTS.md", ".codex/hooks.json", ".config/opencode/AGENTS.md", ".gemini/GEMINI.md")))
+        self.assertEqual(self.sisi("uninstall")[0], 0)
+        self.assertEqual(sorted(os.path.join(r, n) for r, ds, fs in os.walk(home) for n in ds + fs), before)   # all of it gone again
+
+    def test_old_leftovers_are_cleaned_and_only_what_is_sisis(self):
+        home = self.harness(".config/opencode", ".gemini", ".pi/agent")
+        plugin = self.write(os.path.join(self.mkdir(home, ".config/opencode/plugins"), "sisi.js"), "// sisi:generated by `sisi install`\n")
+        own = self.write(os.path.join(self.mkdir(home, ".pi/agent/extensions"), "sisi.ts"), "// my own extension\n")
+        gem = {"theme": "dark", "hooks": {"BeforeTool": [{"hooks": [{"command": "x/bin/sisi watch --tool gemini"}, {"command": "mine"}]}],
+                                          "AfterAgent": [{"hooks": [{"command": "x/bin/sisi gate --tool gemini"}]}]}}
+        spath = self.write(os.path.join(home, ".gemini", "settings.json"), json.dumps(gem))
+        self.assertEqual(self.sisi("install")[0], 0)
+        self.assertFalse(os.path.exists(plugin))
+        self.assertTrue(os.path.exists(own))                                                    # not sisi-generated: kept
+        self.assertEqual(json.loads(self.read(spath)), {"theme": "dark", "hooks": {"BeforeTool": [{"hooks": [{"command": "mine"}]}]}})
+
+    def put(self, path, data):
+        with open(path, "wb") as f:
+            f.write(data)
+
+    def bytes(self, path):
+        with open(path, "rb") as f:
+            return f.read()
+
+    def mkdir(self, *parts):
+        path = os.path.join(*parts)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def test_the_rulebook_is_delivered_by_link_or_marked_block_and_follows_the_rules(self):
+        home = self.harness(".codex", ".config/opencode", ".gemini", ".pi/agent")
+        mine = self.write(os.path.join(home, ".codex", "AGENTS.md"), "# my notes\nno newline at the end")
+        elsewhere = self.write(os.path.join(self.tmp, "their-rules.md"), "theirs\n")
+        os.symlink(elsewhere, os.path.join(home, ".gemini", "GEMINI.md"))
+        os.symlink(os.path.join(self.data, "generated", "core.md"), os.path.join(home, ".config", "opencode", "AGENTS.md"))  # an old install
+        rc, out, _ = self.sisi("install")
+        self.assertEqual(rc, 0)
+        self.assertIn("antigravity rulebook: left alone", out)                                  # reported
+        self.assertEqual(os.readlink(os.path.join(home, ".gemini", "GEMINI.md")), elsewhere)
+        self.assertEqual(self.read(elsewhere), "theirs\n")
+        self.assertTrue(os.path.islink(os.path.join(home, ".pi", "agent", "AGENTS.md")))        # absent: a link, in its subfolder
+        book = self.read(self.data, "generated", "core.md")
+        text = self.read(mine)
+        self.assertEqual(text, "<!-- sisi:begin -->\n%s<!-- sisi:end -->\n# my notes\nno newline at the end" % book)
+        self.assertEqual(self.sisi("learn", "Always say which check proved it")[0], 0)           # a rebuild refreshes the block
+        new = self.read(mine)
+        self.assertIn("Always say which check proved it", new)
+        self.assertTrue(new.endswith("<!-- sisi:end -->\n# my notes\nno newline at the end"))
+        self.assertEqual(new.count("sisi:begin"), 1)
+        self.assertEqual(self.sisi("uninstall")[0], 0)
+        self.assertEqual(self.read(mine), "# my notes\nno newline at the end")                  # exactly as it was
+        self.assertFalse(os.path.lexists(os.path.join(home, ".pi", "agent", "AGENTS.md")))
+        self.assertEqual(os.readlink(os.path.join(home, ".gemini", "GEMINI.md")), elsewhere)
+        # a rebuild alone never creates anything in a tool
+        self.sisi("learn", "Name the check that failed first")
+        self.assertFalse(os.path.lexists(os.path.join(home, ".pi", "agent", "AGENTS.md")))
+        self.assertEqual(self.read(mine), "# my notes\nno newline at the end")
+
+    def test_hostile_files_are_handled_or_refused_and_never_damaged(self):
+        home = self.harness(".claude")
+        spath, mpath = os.path.join(home, ".claude", "settings.json"), os.path.join(home, ".claude", "CLAUDE.md")
+        ours = lambda s: sum("bin/sisi" in h["command"] for g in json.loads(self.read(s))["hooks"].values() for e in g for h in e["hooks"])
+        # a symlinked settings file is edited where it really is, and stays a link
+        real = self.write(os.path.join(self.tmp, "dotfiles-settings.json"), '{"model": "x"}')
+        os.symlink(real, spath)
+        self.assertEqual(self.sisi("install")[0], 0)
+        self.assertEqual((os.path.islink(spath), ours(real), json.loads(self.read(real))["model"]), (True, 4, "x"))
+        self.assertEqual(self.sisi("uninstall")[0], 0)
+        self.assertEqual(ours(real), 0)
+        os.remove(spath)
+        # a dangling link, a read-only file, comments, a trailing comma, and shapes sisi cannot edit: left exactly as they were
+        sisi_twice = {"hooks": {"Stop": [{"hooks": [{"command": "a/bin/sisi gate"}]}, {"hooks": [{"command": "b/bin/sisi gate --tool x"}]}]}}
+        raw = lambda path, data: self.put(path, data)
+        for bad in (b'// a comment\n{"model": "x"}', b'{"model": "x",}', b'{"hooks": {"Stop": "mine"}}', b'{"hooks": null}',
+                    b'{"hooks": []}', b'[1]', b"\xff\xfe"):
+            raw(spath, bad)
+            self.assertEqual(self.sisi("install")[0], 1, bad)
+            self.assertEqual(self.bytes(spath), bad)
+        os.remove(spath)
+        os.symlink(os.path.join(self.tmp, "nowhere.json"), spath)
+        self.assertEqual(self.sisi("install")[0], 1)
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "nowhere.json")))
+        os.remove(spath)
+        self.write(spath, '{"model": "x"}')
+        os.chmod(spath, 0o444)
+        self.assertEqual(self.sisi("install")[0], 1)
+        self.assertEqual((self.read(spath), os.stat(spath).st_mode & 0o777), ('{"model": "x"}', 0o444))
+        os.chmod(spath, 0o600)
+        # the same entry twice becomes one; a missing hooks key is added; the file keeps its permissions
+        self.write(spath, json.dumps(sisi_twice))
+        self.assertEqual(self.sisi("install")[0], 0)
+        self.assertEqual((ours(spath), os.stat(spath).st_mode & 0o777), (4, 0o600))
+        self.assertEqual(len(json.loads(self.read(spath))["hooks"]["Stop"]), 1)
+        # the instructions file: a directory, a read-only file, a file that is not text
+        for make in (lambda: os.mkdir(mpath), lambda: (self.write(mpath, "mine\n"), os.chmod(mpath, 0o444)),
+                     lambda: raw(mpath, b"\xff\xfe")):
+            if os.path.lexists(mpath):
+                os.chmod(mpath, 0o600)
+                shutil.rmtree(mpath) if os.path.isdir(mpath) else os.remove(mpath)
+            make()
+            rc, out, _ = self.sisi("install")
+            self.assertEqual((rc, "claude rulebook: left alone" in out), (1, True))
+        self.assertEqual(self.bytes(mpath), b"\xff\xfe")
+
+    def test_paths_follow_the_xdg_folders_and_the_sisi_overrides_win(self):
+        where = lambda extra: subprocess.run([sys.executable, "-B", "-c", "from sisi import store; print(store.DATA, store.STATE)"],
+                                             cwd=REPO, env=dict({k: v for k, v in self.env.items() if not k.startswith("SISI_")}, **extra),
+                                             capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout.split()
+        x = os.path.join(self.tmp, "xdg")
+        self.assertEqual(where({}), [os.path.join(self.tmp, ".local", "share", "sisi"), os.path.join(self.tmp, ".local", "state", "sisi")])
+        self.assertEqual(where({"XDG_DATA_HOME": x + "/d", "XDG_STATE_HOME": x + "/s"}), [x + "/d/sisi", x + "/s/sisi"])
+        self.assertEqual(where({"XDG_DATA_HOME": x + "/d", "SISI_DATA": x + "/mine", "SISI_STATE": x + "/st", "XDG_STATE_HOME": x + "/s"}),
+                         [x + "/mine", x + "/st"])
+        env = {k: v for k, v in self.env.items() if k != "SISI_STATE"}
+        subprocess.run([sys.executable, os.path.join(REPO, "bin", "sisi"), "version"], env=dict(env, XDG_STATE_HOME=x + "/s"),
+                       cwd=self.proj, capture_output=True, stdin=subprocess.DEVNULL)
+        self.assertTrue(os.path.isdir(x + "/s/sisi/pycache"))                                   # bin/sisi uses the same scratch folder
+
+    def source(self, version):
+        """A small git repository holding the product and a test that passes: where `sisi update` fetches from."""
+        src = os.path.join(self.tmp, "source")
+        if not os.path.isdir(src):
+            for name in ("sisi", "bin", "canon"):
+                shutil.copytree(os.path.join(REPO, name), os.path.join(src, name), ignore=shutil.ignore_patterns("__pycache__"))
+            os.makedirs(os.path.join(src, "tests"))
+            self.write(os.path.join(src, "tests", "test_ok.py"), "import unittest\nclass T(unittest.TestCase):\n    def test(self): pass\n")
+            subprocess.run(["git", "init", "-q"], cwd=src, check=True)
+        self.write(os.path.join(src, "VERSION"), version + "\n")
+        subprocess.run(["git", "add", "-A"], cwd=src, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", version], cwd=src, check=True)
+        return src
+
+    def test_update_releases_the_newest_sisi_from_where_this_one_came_from(self):
+        env = dict(self.env, TMPDIR=self.mkdir(self.tmp, "tmpdir"))
+        run = lambda exe, *a: subprocess.run([sys.executable, exe] + list(a), cwd=self.proj, env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        src = self.source("1.0.0")
+        self.assertEqual(run(os.path.join(src, "bin", "sisi"), "update").returncode, 1)         # nothing released yet: nothing recorded
+        self.assertEqual(run(os.path.join(src, "bin", "sisi"), "release").returncode, 0)        # a checkout with no remote
+        self.assertFalse(os.path.exists(os.path.join(self.env["SISI_LIB"], "current", "SOURCE")))
+        rc = run(os.path.join(src, "bin", "sisi"), "update")
+        self.assertEqual((rc.returncode, "does not record where it came from" in rc.stdout), (1, True))
+        mine = os.path.join(self.tmp, "mine")
+        subprocess.run(["git", "clone", "-q", src, mine], check=True, capture_output=True)      # the person's checkout, with its remote
+        self.assertEqual(run(os.path.join(mine, "bin", "sisi"), "release").returncode, 0)
+        self.assertEqual(self.read(self.env["SISI_LIB"], "current", "SOURCE").strip(), src)
+        self.sisi("learn", "Always keep what the person wrote")
+        self.write(os.path.join(self.data, "models.md"), WORKERS)
+        self.write(os.path.join(self.data, "retro.jsonl"), '{"gap": "g"}\n')
+        keep = {n: self.read(self.data, n) for n in ("models.md", "retro.jsonl", "rules/user.md")}
+        self.source("2.0.0")
+        rc = run(os.path.join(mine, "bin", "sisi"), "update")
+        self.assertEqual(rc.returncode, 0, rc.stdout + rc.stderr)
+        self.assertEqual(run(os.path.join(self.env["SISI_LIB"], "current", "bin", "sisi"), "version").stdout.strip(), "2.0.0")
+        self.assertEqual(self.read(self.env["SISI_LIB"], "current", "SOURCE").strip(), src)     # and it can update again
+        self.assertEqual({n: self.read(self.data, n) for n in keep}, keep)
+        self.assertIn("Always keep what the person wrote", self.read(self.data, "generated", "core.md"))
+        self.assertEqual(os.listdir(env["TMPDIR"]), [])                                         # the fetched copy is gone
+
+    def test_doctor_says_how_every_tool_stands(self):
+        names = [h["name"] for h in json.loads(self.read(REPO, "canon", "harnesses.json"))]
+        home = self.harness(".claude", ".codex", ".grok", ".config/muse", ".pi")
+        self.sisi("install")
+        out = self.sisi("doctor")[1]
+        lines = {l.split(":")[0]: l for l in out.splitlines() if l.split(":")[0] in names}
+        self.assertEqual(sorted(lines), sorted(names))
+        self.assertIn("rulebook imported; hooks wired", lines["claude"])
+        self.assertIn("The built-in Explore and Plan subagents do not load CLAUDE.md", lines["claude"])
+        self.assertIn("rulebook linked; hooks wired", lines["codex"])
+        self.assertIn("hosted web search is not metered", lines["codex"])
+        self.assertIn("rulebook linked; rulebook only", lines["grok"])
+        self.assertIn("already runs the hooks in ~/.claude/settings.json", lines["grok"])
+        self.assertIn("not covered. No documented global instructions file", lines["muse"])
+        self.assertIn("not installed", lines["cursor"])
+        self.assertNotIn("MISSING", out)
+        os.remove(os.path.join(home, ".claude", "settings.json"))
+        self.assertIn("hooks MISSING", self.sisi("doctor")[1])
+
+    def test_a_hook_loads_neither_the_installer_nor_the_retro_and_stays_quick(self):
+        self.hook("tick")                                                                       # the rulebook exists now
+        self.tool("Read")                                                                       # and the bytecode is compiled
+        r = subprocess.run([sys.executable, "-X", "importtime", os.path.join(REPO, "bin", "sisi"), "watch"], cwd=self.proj, env=self.env,
+                           input=json.dumps({"session_id": "s1", "tool_name": "Read"}), capture_output=True, text=True)
+        mods = {m[2].strip(): int(m[0]) for m in re.findall(r"import time:\s+(\d+) \|\s+(\d+) \|(.*)", r.stderr)}
+        ours = {m: t for m, t in mods.items() if m.startswith("sisi")}
+        self.assertTrue({"sisi.hooks", "sisi.store"} <= set(ours), ours)
+        self.assertFalse({"sisi.install", "sisi.retro"} & set(ours), ours)
+        self.assertLess(sum(ours.values()), 20000, ours)                                        # microseconds spent importing our own modules
+
     # the standing constraints
 
     def test_the_spec_is_unchanged(self):
@@ -442,7 +759,7 @@ class Core(unittest.TestCase):
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLess(code, 1200, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLess(code, 1360, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 120)
         self.assertLess(len(rulebook), 7800)

@@ -24,11 +24,41 @@ is sent to the retro, and any other closes itself. Each record in `retro.jsonl` 
 ```
 git clone <this repository> && cd sisi
 ./bin/sisi release      # runs the tests, then puts a copy in ~/.local/lib/sisi
-./bin/sisi install      # adds four hooks to Claude Code's settings and the rulebook to its instructions
-sisi doctor
+./bin/sisi install      # the rulebook (and hooks, where the tool has them) into every agent tool installed here
+sisi doctor             # how each tool stands
 ```
 
-Python 3 standard library only. `sisi rollback` goes back to the release before.
+Python 3 standard library only. `sisi rollback` goes back to the release before. `sisi uninstall` takes out exactly
+what `install` put in. `sisi update` fetches the newest sisi from the repository the release in use was made from
+(`sisi release` records that remote: `github`, else `origin`) and releases it, so a checkout is only needed once.
+
+## Which agent tools
+
+`sisi install` looks at the tools in `canon/harnesses.json` (plain data: add a tool by adding a line). A tool that is
+not installed (its folder is absent) gets nothing created. For a tool that is installed:
+
+- **The rulebook.** An absent instructions file becomes a link to the generated rulebook. A real file gets the
+  rulebook in a block between `<!-- sisi:begin -->` and `<!-- sisi:end -->` at the top, every other byte left alone;
+  the block is refreshed whenever the rulebook is rebuilt (Claude Code gets an `@import` of the rulebook in the same
+  block). A link that points anywhere else is not sisi's: it is left alone and reported.
+- **The four hooks** (`tick`, `prompt`, `watch`, `gate`), only for tools whose hook files have been confirmed to take
+  the same shape as Claude Code's: sisi's entries (old or new) are removed from the file and the current ones added;
+  everything else in the file is kept. A file sisi cannot edit safely (comments, a trailing comma, a symlink to
+  nowhere, read-only, hooks of an unexpected shape) is left alone and reported.
+
+| Tool | Rulebook (in its folder) | Hooks |
+|---|---|---|
+| Claude Code | `~/.claude/CLAUDE.md` | `settings.json` |
+| Codex | `~/.codex/AGENTS.md` | `hooks.json` (the person trusts them once in Codex's `/hooks`) |
+| Qwen Code | `~/.qwen/QWEN.md` | `settings.json` |
+| Grok | `~/.grok/AGENTS.md` | none: Grok runs the hooks in `~/.claude/settings.json` |
+| OpenCode, Antigravity (`~/.gemini`), Pi, Kiro, Copilot, Crush, Amp | their global instructions file | none: not confirmed |
+| Muse, Cursor | none documented | not covered |
+
+Hooks read a tool's input under whichever field names it uses (`session_id`, `sessionId`, `conversationId`,
+`toolCall.name`, …), and the class of each tool call (shell, read, edit, search, web, delegate) comes from
+`canon/tools.json`: add a tool's own names there. `sisi doctor` prints one line per tool with what it has and what
+its limits are.
 
 ## What the agent does with it
 
@@ -50,10 +80,12 @@ Python 3 standard library only. `sisi rollback` goes back to the release before.
 
 - **The product** (this repository): the code in `sisi/`, the rulebook in `canon/core.md`. The same for
   everyone. `SPEC.md` is what it aims at.
-- **Your store** (`~/.local/share/sisi`, a git repository): `rules/user.md` and `rules/projects/*.md` (what
+- **Your store** (`$SISI_DATA`, else `$XDG_DATA_HOME/sisi`, else `~/.local/share/sisi`; a git repository): `rules/user.md` and `rules/projects/*.md` (what
   was learned), `models.md` (your workers), `retro.jsonl` and `outcomes.jsonl` (what happened). All plain
   text you can read and edit.
 - **The rulebook every session loads** is generated from the two: `canon/core.md`, then your learned rules.
+- **Scratch** (session state, bytecode): `$SISI_STATE`, else `$XDG_STATE_HOME/sisi`, else `~/.local/state/sisi`.
+  Releases live in `$SISI_LIB`, else `~/.local/lib/sisi`.
 
 Settings go under `"core"` in `config.json` in your store: `gate`, `meter`, `direct_calls` (8),
 `direct_extension` (8), `rules_lines` (30), `rules_chars` (4000), `organize_after` (8), `research_days` (7),
