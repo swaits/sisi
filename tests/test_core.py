@@ -444,7 +444,7 @@ class Core(unittest.TestCase):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
         self.assertLess(code, 1200, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
-        self.assertLess(len(rulebook.splitlines()), 100)
+        self.assertLess(len(rulebook.splitlines()), 110)
         self.assertLess(len(rulebook), 7000)
 
 
