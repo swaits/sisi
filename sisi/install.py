@@ -243,7 +243,7 @@ def release():
     store.write(os.path.join(dest, "SOURCE"), "%s\n%s\n" % (_source(), os.path.abspath(store.ROOT)))
     _switch(dest)
     subprocess.run([os.path.join(dest, "bin", "sisi"), "rulebook"])
-    for old in sorted(os.listdir(folder))[:-4]:
+    for old in [o for o in sorted(os.listdir(folder)) if o != name][:-3]:  # never the one just put in use, even when the clock is behind
         shutil.rmtree(os.path.join(folder, old), ignore_errors=True)
     print("released %s" % name)
     return 0
