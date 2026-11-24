@@ -45,8 +45,7 @@ be forgotten.
 
 ## 3. Define done, then prove it
 
-Done is what you recorded with `sisi done`: the goal in the person's words and the checks that
-decide success, each one able to fail. Before you finish, give every check a
+Done is what you recorded with `sisi done`. Before you finish, give every check a
 verdict with its evidence: `sisi done --pass N` or `--fail N`. Size the care by what could go
 wrong, not by the number of lines: a wording change needs a look at the diff; stored data,
 authorization and anything hard to reverse need a way back and evidence from someone other than
@@ -74,10 +73,11 @@ final call. Do something yourself only when briefing it would cost more than doi
 counting rework as cost, then `sisi pick CLASS` spins the wheel over the workers of that class and
 gives you one: use it. A class holds models of like strength from different makers; the wheel never mixes classes. A review always goes to a different maker than the author:
 `sisi pick CLASS --review-of WORKER`. Start the worker with the host's own delegation tool; do not
-shell out to a worker's command line. When the choice is not obvious, have a cheap worker route it. Run
+shell out to a worker's command line. Run
 independent work in parallel. Brief a worker as a peer who starts cold: the outcome, what is
 known and ruled out, what done looks like, the files it may change. Decide the central mechanism
-in the brief. For a reported fault, the report's exact inputs are an acceptance test. For a
+in the brief, set against the person's standing rules on its subject, and say what a failed or
+gamed job does to each number it optimizes. For a reported fault, the report's exact inputs are an acceptance test. For a
 replacement, list each behaviour of the old thing as keep, change or drop, with a check for every
 keep. Always use the newest version of a model within its maker and class. Its report is evidence for
 you to judge, not a fact to pass on; record how it went with `sisi judge`. When a worker fails
