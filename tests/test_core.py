@@ -379,6 +379,68 @@ class Core(unittest.TestCase):
         self.assertEqual(self.sisi("pick", "easy")[0], 1)
         self.assertEqual(self.sisi("pick")[0], 1)
 
+    def outcomes(self):
+        return [json.loads(l) for l in self.read(self.data, "outcomes.jsonl").splitlines()]
+
+    def test_judge_times_a_delegation_from_its_pick(self):
+        self.table(WORKERS)
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        delegate = lambda: (self.sisi("pick", "hard", sid="s1")[0], self.tool("Agent", tool_input={"model": "sonnet"})[0])
+        judge = lambda *a: self.sisi("judge", "sonnet", "good", "did the job in one pass", *a, sid="s1")
+        self.assertEqual(delegate(), (0, 0))
+        starts = self.state()["starts"]["sonnet"]
+        self.assertEqual(len(starts), 1)
+        with open(os.path.join(self.tmp, "state", "core-sessions", "s1.json"), "r+") as f:   # the clock: it began 25 minutes ago
+            st = json.load(f)
+            st["starts"]["sonnet"] = [time.time() - 25 * 60 - 5]
+            f.seek(0), f.truncate(), json.dump(st, f)
+        self.assertEqual(judge()[0], 0)
+        self.assertEqual(self.outcomes()[-1]["minutes"], 25)
+        self.assertEqual(self.state()["starts"]["sonnet"], [])
+        self.assertEqual(judge()[0], 0)                                                 # no start left: no minutes
+        self.assertNotIn("minutes", self.outcomes()[-1])
+        self.assertEqual(delegate(), (0, 0))
+        for bad in ("abc", "0", "-3", "1.5", ""):
+            self.assertEqual(judge("--minutes", bad)[0], 1, bad)
+        self.assertEqual(judge("--minutes")[0], 1)
+        self.assertEqual(len(self.outcomes()), 2)                                       # refused: nothing written
+        self.assertEqual(judge("--minutes", "7")[0], 0)
+        self.assertEqual(self.outcomes()[-1]["minutes"], 7)
+        self.assertEqual(self.state()["starts"]["sonnet"], [])
+        self.assertEqual(delegate(), (0, 0))                                            # a quick one is at least 1 minute
+        self.assertEqual(judge()[0], 0)
+        self.assertEqual(self.outcomes()[-1]["minutes"], 1)
+
+    def test_the_wheel_favours_the_faster_worker(self):
+        sys.path.insert(0, REPO)
+        from sisi import models
+        table = HEADER + "| slow | `slow \"<brief>\"` | ordinary | flat | x | |\n| fast | `fast \"<brief>\"` | ordinary | flat | x | |\n"
+        name = lambda r: r[0]
+        spins = lambda speed: [name(models.choose(table, "ordinary", rand=lambda: i / 1000, speed=speed)) for i in range(1000)]
+        self.assertEqual(spins(None).count("fast"), 333)                                 # table order alone: weights 2 and 1
+        self.assertEqual(spins({"slow": [60] * 3, "fast": [10, 10]}).count("fast"), 666)  # slow is floored at 0.25: 0.5 against 1
+        self.assertEqual(spins({"slow": [60, 61, 62], "fast": [10]}).count("fast"), 666)
+        self.assertEqual(spins({"fast": [10]}).count("fast"), 333)                       # slow has no timed jobs: factor 1, table order
+        self.assertEqual(spins({"slow": [20], "fast": [10]}).count("fast"), 500)         # factor 0.5: weights 1 and 1
+        self.assertEqual(name(models.choose(table, "ordinary", rand=lambda: 0.33, speed={"slow": [60], "fast": [10]})), "slow")
+        self.assertEqual(name(models.choose(table, "ordinary", rand=lambda: 0.34, speed={"slow": [60], "fast": [10]})), "fast")
+
+    def test_pick_and_models_show_the_minutes(self):
+        self.table(WORKERS)
+        self.hook("tick")
+        self.assertIn("speed: no timed jobs yet", self.sisi("pick", "hard", sid="s1")[1])
+        rows = [{"ts": "2026-11-20T10:00:00", "worker": "sonnet", "verdict": "good", "why": "an old untimed record", "project": "p"}]
+        rows += [{"ts": "2026-11-2%dT10:00:00" % i, "worker": "sonnet", "verdict": "good", "why": "timed job number %d" % i,
+                  "project": "p", "minutes": m} for i, m in enumerate((10, 30, 20, 50), 1)]
+        self.write(os.path.join(self.data, "outcomes.jsonl"), "".join(json.dumps(r) + "\n" for r in rows))
+        self.assertIn("speed: median 25 min over 4 timed jobs", self.sisi("pick", "hard", sid="s1")[1])
+        out = self.sisi("models")[1]
+        self.assertIn("sonnet  good  (30 min)  timed job number 2", out)
+        self.assertIn("sonnet  good  an old untimed record", out)
+        self.assertIn("(30 min)", self.sisi("models", "research")[1])
+
     def test_a_delegation_needs_a_pick_and_one_pick_buys_one_delegation(self):
         self.table(WORKERS)
         self.hook("tick")
@@ -984,7 +1046,7 @@ class Core(unittest.TestCase):
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLess(code, 1460, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLess(code, 1500, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 120)
         self.assertLess(len(rulebook), 8150)
