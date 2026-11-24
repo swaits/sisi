@@ -155,8 +155,8 @@ def watch(p):
         if kind == "delegate" or shell:
             target = ti.get("target") if isinstance(ti.get("target"), dict) else {}
             names = (ti.get("model"),) if tool == "agent" else (ti.get("model"), target.get("model"), ti.get("agent"))
-            text = command if shell else str(next((n for n in names if n), ""))
-            if tool != "workflow" and models.usable(store.read(models.table())) and not models.claim(s, text):
+            text = command if shell else str(next((n for n in names if n), ""))  # tool_input.model may be a short name: a segment
+            if tool != "workflow" and models.usable(store.read(models.table())) and not models.claim(s, text, not shell and bool(names[0])):
                 sys.stderr.write(say(NOPICK))
                 return 2
             s["delegations_since"] = s.get("delegations_since", 0) + 1

@@ -47,9 +47,8 @@ def facts(state, cwd):
     out += ["attention (measured): the person wrote %d message(s) in that time: read them again. Was any a correction, "
             "or something they had to say twice?" % n["messages"],
             "evidence (measured): %d check(s) passed, %d failed" % (n["checks_pass"], n["checks_fail"])] + d[1:-1]
-    out += ["value (judged): did the person get what they wanted? changed: %d commit(s), %d file(s) uncommitted" % (n["commits"], len(dirty)),
-            d[0], d[-1]]
-    return out + ["learning (measured): last 10 pieces of work named: %s" % (named or "none yet")]
+    out += ["value (judged): did the person get what they wanted? changed: %d commit(s), %d file(s) uncommitted" % (n["commits"], len(dirty))]
+    return out + d[:1] + d[1:][-1:] + ["learning (measured): last 10 pieces of work named: %s" % (named or "none yet")]
 
 
 def show(d):
