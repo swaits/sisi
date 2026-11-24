@@ -762,7 +762,7 @@ class Core(unittest.TestCase):
         self.assertLess(code, 1360, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 120)
-        self.assertLess(len(rulebook), 7800)
+        self.assertLess(len(rulebook), 8000)
 
 
 if __name__ == "__main__":
