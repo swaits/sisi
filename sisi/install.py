@@ -225,11 +225,18 @@ def _switch(dest):
 
 
 def release():
-    """Run the tests, then make this copy the one the hooks run. The four newest releases are kept."""
+    """Run the tests, then make this copy the one the hooks run. The four newest releases are kept. Run through the
+    installed command (a copy in the releases folder) it releases the checkout that copy came from, if there is one."""
+    folder, src = os.path.join(store.LIB, "releases"), store.read(os.path.join(store.ROOT, "SOURCE")).strip()
+    if store.ROOT.startswith(os.path.realpath(folder) + os.sep):  # the installed command: a copy of it ships nothing new
+        if src and os.path.isfile(os.path.join(src, "bin", "sisi")):  # the checkout this copy records it came from
+            print("sisi release: this is the installed copy; releasing from %s instead." % src)
+            return subprocess.run([sys.executable, os.path.join(src, "bin", "sisi"), "release"]).returncode
+        print("sisi release: run it from the source checkout.")
+        return 1
     if subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"], cwd=store.ROOT).returncode:
         print("sisi release: the tests fail. Nothing was released.")
         return 1
-    folder = os.path.join(store.LIB, "releases")
     name = time.strftime("%Y%m%dT%H%M%S", time.gmtime()) + "%03dZ" % (time.time() % 1 * 1000)  # two in one second differ
     dest = os.path.join(folder, name)
     shutil.copytree(store.ROOT, dest, ignore=shutil.ignore_patterns(".git", ".agent-work", ".sisi", "__pycache__"))

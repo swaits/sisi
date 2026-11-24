@@ -56,24 +56,13 @@ def main(argv):
         except Exception as e:  # a hook must never break the agent's session
             store.append(os.path.join(store.STATE, "core-errors.log"), "%s %s: %r" % (time.strftime("%Y-%m-%dT%H:%M:%S"), cmd, e))
             return 0
-    if cmd == "retro":
+    if cmd in ("retro", "done"):
         from . import retro
-        return retro.run(args)
-    if cmd == "rules":
-        return rules.run(args)
-    if cmd == "done":
-        from . import retro
-        return retro.done(args)
-    if cmd == "pick":
-        return models.pick(args)
-    if cmd == "learn":
-        return rules.learn(args)
-    if cmd == "models":
-        return models.run(args)
-    if cmd == "judge":
-        return models.judge(args)
-    if cmd == "direct":
-        return hooks.direct(args)
+        return (retro.run if cmd == "retro" else retro.done)(args)
+    one = {"rules": rules.run, "pick": models.pick, "learn": rules.learn, "models": models.run, "judge": models.judge,
+           "direct": hooks.direct}
+    if cmd in one:
+        return one[cmd](args)
     if cmd in ("install", "uninstall", "release", "update", "rollback", "doctor"):
         from . import install
         return getattr(install, cmd)()

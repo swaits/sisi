@@ -441,6 +441,52 @@ class Core(unittest.TestCase):
         self.assertEqual(judge()[0], 0)
         self.assertEqual(self.outcomes()[-1]["minutes"], 1)
 
+    def test_judge_times_each_of_a_workers_open_jobs_from_its_own_start(self):
+        self.table(WORKERS)
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        delegate = lambda: (self.sisi("pick", "hard", sid="s1")[0], self.tool("Agent", tool_input={"model": "sonnet"})[0])
+        judge = lambda *a: self.sisi("judge", "sonnet", "good", "did the job in one pass", *a, sid="s1")
+        line = lambda m, t, k: "recorded: %d min (job started %s, %d more open for this worker)." % (m, time.strftime("%H:%M", time.localtime(t)), k)
+
+        def open_starts(starts):  # the clock: sonnet's starts still open, as `sisi pick` would have stored them
+            with open(os.path.join(self.tmp, "state", "core-sessions", "s1.json"), "r+") as f:
+                st = json.load(f)
+                st["starts"]["sonnet"] = starts
+                f.seek(0), f.truncate(), json.dump(st, f)
+        t0 = time.time() - 30 * 60 - 5
+        self.assertEqual(delegate() + delegate(), (0, 0, 0, 0))                            # two jobs of one worker at once
+        open_starts([t0, t0 + 600])                                                      # the second began ten minutes after the first
+        rc, out, _ = judge()                                                             # half an hour after the first
+        self.assertEqual((rc, out.strip(), self.outcomes()[-1]["minutes"]), (0, line(30, t0, 1), 30))
+        self.assertEqual(self.state()["starts"]["sonnet"], [t0 + 600])
+        open_starts([t0])                                                                # ten minutes later: the second has run half an hour
+        rc, out, _ = judge()
+        self.assertEqual((rc, out.strip(), self.outcomes()[-1]["minutes"]), (0, line(30, t0, 0), 30))
+        self.assertEqual(self.state()["starts"]["sonnet"], [])
+        self.assertEqual(judge()[1].strip(), "recorded, not timed.")                    # nothing open: no minutes
+        self.assertEqual(delegate() + delegate(), (0, 0, 0, 0))
+        open_starts([t0, t0 + 600])
+        rc, out, _ = judge("--newest")                                                   # the job that began last is judged first
+        self.assertEqual((rc, out.strip(), self.outcomes()[-1]["minutes"]), (0, line(20, t0 + 600, 1), 20))
+        self.assertEqual(self.state()["starts"]["sonnet"], [t0])
+        self.assertEqual(judge()[1].strip(), line(30, t0, 0))                           # the first job's start is still there
+        delegate()
+        open_starts([t0])
+        self.assertEqual(judge("--minutes", "7")[1].strip(), line(7, t0, 0))           # --minutes overrides; the start is still spent
+        self.assertEqual((self.outcomes()[-1]["minutes"], self.state()["starts"]["sonnet"]), (7, []))
+        delegate()
+        open_starts(time.time() - 600)                                                   # an old state file: one number, not a list
+        self.assertEqual(judge()[1].strip(), "recorded, not timed.")
+        delegate()
+        self.assertEqual(len(self.state()["starts"]["sonnet"]), 1)                     # the next start is a list again
+        speed = lambda: self.sisi("pick", "hard", sid="s1")[1].split("speed: ")[1].splitlines()[0]
+        was = speed()
+        open_starts([time.time() - 65])                                                  # a job that failed fast
+        self.assertEqual(self.sisi("judge", "sonnet", "bad", "gave up after one quick wrong try", sid="s1")[0], 0)
+        self.assertEqual(speed(), was)                                                   # only good outcomes set a worker's speed
+
     def jsonl(self, name, *lines):
         os.makedirs(self.data, exist_ok=True)
         with open(os.path.join(self.data, name), "wb") as f:
@@ -485,7 +531,7 @@ class Core(unittest.TestCase):
         self.assertNotIn("minutes", self.outcomes()[-1])
         self.assertEqual(self.state()["starts"]["sonnet"], [])
         start({"sonnet": [time.time() - 600]})
-        self.assertEqual(judge()[1].strip(), "recorded: 10 min.")
+        self.assertRegex(judge()[1].strip(), r"recorded: 10 min \(job started \d\d:\d\d, 0 more open for this worker\)\.")
         for wrong in ([], "x", 5):                                                      # starts of the wrong type
             self.assertEqual(self.sisi("pick", "hard", sid="s1")[0], 0)
             start(wrong)
@@ -604,6 +650,12 @@ class Core(unittest.TestCase):
         self.hook("prompt", prompt="lead")
         self.assertEqual(self.tool("Edit", agent_id="a1")[0], 0)                           # the host's subagent
         self.assertEqual(self.tool("Agent", agent_id="a1")[0], 0)
+
+    def test_the_retro_says_once_that_no_done_was_recorded(self):
+        self.hook("tick")
+        self.assertEqual(self.sisi("retro", sid="s1")[1].count("(no done recorded)"), 1)
+        self.done()
+        self.assertEqual(self.sisi("retro", sid="s1")[1].count("done: export every row without losing any with empty names"), 1)
 
     def test_the_retro_shows_the_done_statement_and_the_trend(self):
         self.hook("tick")
@@ -958,6 +1010,26 @@ class Core(unittest.TestCase):
         self.assertIn("Always keep what the person wrote", self.read(self.data, "generated", "core.md"))
         self.assertEqual(os.listdir(env["TMPDIR"]), [])                                         # the fetched copy is gone
 
+    def test_release_through_the_installed_command_releases_the_checkout_it_came_from(self):
+        run = lambda exe, *a: subprocess.run([sys.executable, exe] + list(a), cwd=self.proj, env=self.env, capture_output=True, text=True,
+                                             stdin=subprocess.DEVNULL)
+        lib, src = self.env["SISI_LIB"], self.source("1.0.0")
+        subprocess.run(["git", "remote", "add", "origin", src], cwd=src, check=True, capture_output=True)  # its remote is itself: SOURCE names it
+        self.assertEqual(run(os.path.join(src, "bin", "sisi"), "release").returncode, 0)
+        installed = os.path.join(lib, "current", "bin", "sisi")
+        self.source("2.0.0")                                                             # the checkout changes
+        r = run(installed, "release")                                                    # `sisi release` through the installed command
+        self.assertEqual((r.returncode, self.read(lib, "current", "VERSION").strip()), (0, "2.0.0"), r.stdout)
+        folders = sorted(os.listdir(os.path.join(lib, "releases")))
+        for source in (None, "https://github.com/owner/sisi.git\n"):                      # no checkout it came from: nothing is released
+            if source is None:
+                os.remove(os.path.join(lib, "current", "SOURCE"))
+            else:
+                self.write(os.path.join(lib, "current", "SOURCE"), source)
+            r = run(installed, "release")
+            self.assertEqual((r.returncode, sorted(os.listdir(os.path.join(lib, "releases")))), (1, folders), (source, r.stdout))
+            self.assertIn("run it from the source checkout", r.stdout)
+
     def test_doctor_says_how_every_tool_stands(self):
         names = [h["name"] for h in json.loads(self.read(REPO, "canon", "harnesses.json"))]
         home = self.harness(".claude", ".codex", ".grok", ".config/muse", ".pi")
@@ -1098,6 +1170,21 @@ class Core(unittest.TestCase):
         self.assertNotIn("picked", self.state())
         self.done()
         self.assertEqual(self.tool("Agent", tool_input={"model": "o3"})[0], 2)                  # the old pick is gone
+
+    def test_a_short_model_name_in_tool_input_matches_one_whole_segment_of_the_pick(self):
+        self.table(HEADER + "| claude-sonnet-5-5 | host subagent model `sonnet` | hard | per use | everything | |\n"
+                            "| opencode-go/claude-haiku-5-5 | T3 Code delegate_task, model opencode-go/claude-haiku-5-5 | routine | flat | quick | |\n")
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        pick = lambda cls: self.sisi("pick", cls, sid="s1")[0]
+        for model, rc in (("sonnet", 0), ("Sonnet", 0), ("opus", 2), ("son", 2), ("5", 2)):  # the Agent tool names models shortly
+            self.assertEqual((pick("hard"), self.tool("Agent", tool_input={"model": model})[0]), (0, rc), model)
+        self.assertEqual(len(self.state()["picked"]), 3)                                 # a refusal spends no pick
+        self.assertEqual((pick("routine"), self.tool("Agent", tool_input={"model": "haiku"})[0]), (0, 0))
+        task = lambda model: self.tool("mcp__t3__delegate_task", tool_input={"target": {"model": model}})[0]
+        for model, rc in (("claude-haiku-5-5", 0), ("haiku", 2), ("5", 2)):                 # target.model: whole names only, as before
+            self.assertEqual((pick("routine"), task(model)), (0, rc), model)
 
     def test_the_maker_column_is_read_by_name_and_both_shapes_record(self):
         sys.path.insert(0, REPO)

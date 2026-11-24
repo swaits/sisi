@@ -118,10 +118,12 @@ def is_call(command_line):
     return False
 
 
-def claim(s, text):
-    """Spend the pick that this delegation's model text names; False when none of the picks fits."""
+def claim(s, text, segment=False):
+    """Spend the pick that this delegation's model text names; False when none of the picks fits. With `segment` (the
+    host names its models shortly: `fast` for `maker-fast-2`) one whole segment of a picked id that has a letter fits."""
     for name in s.get("picked") or []:
-        if any(re.search(r"(?<![a-z0-9.-])%s(?![a-z0-9.-])" % re.escape(n), text.lower()) for n in (name, name.rsplit("/", 1)[-1])):
+        if any(re.search(r"(?<![a-z0-9.-])%s(?![a-z0-9.-])" % re.escape(n), text.lower()) for n in (name, name.rsplit("/", 1)[-1])) or (
+                segment and re.search("[a-z]", text) and text.lower() in re.split("[-/]", name)):
             s["picked"].remove(name)
             starts = s["starts"] if isinstance(s.get("starts"), dict) else {}
             starts[name] = (starts[name] if isinstance(starts.get(name), list) else []) + [time.time()]
@@ -252,31 +254,32 @@ def research_record(answer_file):
 
 
 def judge(args, cwd=None):
-    """`sisi judge WORKER good|bad "<why>" [--minutes N]`: how a delegation went, and how long it took (from the
-    pick's start in this session unless --minutes says)."""
+    """`sisi judge WORKER good|bad "<why>" [--minutes N] [--newest]`: how a delegation went, and how long the job took:
+    from the oldest start of this worker's open jobs (the newest with --newest) unless --minutes says."""
     from . import retro  # not at the top: hooks import this module and must stay quick
-    minutes = None
+    args, newest, minutes, note = [a for a in args if a != "--newest"], "--newest" in args, None, ""
     if "--minutes" in args:
         i = args.index("--minutes")
         v, args = (args[i + 1:i + 2] or [""])[0], args[:i] + args[i + 2:]
         minutes = int(v) if re.fullmatch(r"[1-9]\d{0,3}|10000", v) else 0
     if len(args) != 3 or not args[0].strip() or args[1] not in ("good", "bad") or len(args[2].split()) < 3 or minutes == 0:
-        print('usage: sisi judge WORKER good|bad "<what it did well or badly, in a sentence>" [--minutes N]')
+        print('usage: sisi judge WORKER good|bad "<what it did well or badly, in a sentence>" [--minutes N] [--newest]')
         return 1
     sid = store.current_session(cwd)
     if sid:
         with store.session(sid) as s:
             starts = s["starts"].get(short(args[0])) if isinstance(s.get("starts"), dict) else None
             if isinstance(starts, list) and starts:
-                began = starts.pop(0)  # a start in the future or not a number is dropped and times nothing
-                if type(began) in (int, float) and math.isfinite(began) and began <= time.time():
+                began = starts.pop(-1 if newest else 0)  # one start per open job, oldest first
+                if type(began) in (int, float) and math.isfinite(began) and began <= time.time():  # else dropped, times nothing
                     minutes = minutes or max(1, int((time.time() - began) / 60))
+                    note = " (job started %s, %d more open for this worker)" % (time.strftime("%H:%M", time.localtime(began)), len(starts))
     log = store.data("outcomes.jsonl")
     store.append(log, json.dumps(dict({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "worker": args[0], "verdict": args[1],
                                        "why": retro.clean(args[2]), "project": os.path.basename(store.project_root(cwd))},
                                       **{"minutes": minutes} if minutes else {}), sort_keys=True))
     store.commit("delegation judged", log)
-    print("recorded: %d min." % minutes if minutes else "recorded, not timed.")
+    print("recorded: %d min%s." % (minutes, note) if minutes else "recorded, not timed.")
     return 0
 
 

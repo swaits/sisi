@@ -12,7 +12,9 @@ It routes by a models table: which workers you have, what each is good at, what 
 rebuilds that table when it gets old, and every judged delegation feeds the next research. The lead does not
 choose the worker: `sisi pick CLASS` spins a wheel over the workers of that class (a capability tier: each model is
 in exactly one class, so the wheel never mixes tiers; weighted by table order and by speed),
-and a delegation to a worker the wheel did not give is refused. One pick, one delegation.
+and a delegation to a worker the wheel did not give is refused. One pick, one delegation. A host that names its models
+shortly (Claude Code's `Agent` tool says `sonnet`) may give one whole segment of the picked model id, so name a worker
+by its full model id (`claude-sonnet-5-5`); anywhere else the name must match whole.
 
 **Done.** Nothing starts before `sisi done` has recorded the goal, the checks that decide success and what the
 person will need next: delegating or editing is refused until then. Every check needs a verdict
@@ -33,6 +35,8 @@ sisi doctor             # how each tool stands
 Python 3 standard library only. `sisi rollback` goes back to the release before. `sisi uninstall` takes out exactly
 what `install` put in. `sisi update` fetches the newest sisi from the repository the release in use was made from
 (`sisi release` records that remote: `github`, else `origin`) and releases it, so a checkout is only needed once.
+`sisi release` run through the installed command never copies that release onto itself: it releases the checkout the
+release records it came from when that is a local checkout, and otherwise says to run it from a checkout.
 
 ## Which agent tools
 
@@ -76,7 +80,7 @@ its limits are.
 | `sisi learn [--project] "…"` | The person's own words become a rule at once |
 | `sisi rules` / `sisi rules organize [--record FILE]` / `sisi rules revert` | See the learned rules; have a worker organize them; undo the last change |
 | `sisi models` / `sisi models research [--record FILE]` | The workers table; have a worker rebuild it |
-| `sisi judge WORKER good\|bad "…"` | How a delegation went; the minutes are measured from the pick's delegation (or `--minutes N`) and make the wheel favour faster workers |
+| `sisi judge WORKER good\|bad "…" [--minutes N] [--newest]` | How a delegation went; the minutes are measured from the pick's delegation (or `--minutes N`) and make the wheel favour faster workers. With several of one worker's jobs open, the oldest is judged first, `--newest` the newest |
 | `sisi direct "…"` | Allow more direct tool calls this turn, with the reason |
 
 ## Where things live
