@@ -2688,9 +2688,7 @@ cli.main(["tick"])
         self.hook("tick")
         self.hook("prompt", prompt="go")
         self.done()
-        for _ in range(5):
-            if "opencode-go/Claude-Haiku-5-5" in self.sisi("pick", "routine", sid="s1")[1]:
-                break
+        self.assertEqual(self.sisi("pick", "routine", "--not", "agy", sid="s1")[0], 0)
         self.assertEqual(self.tool("mcp__t3__delegate_task", tool_input={"target": {"model": "opencode-go/Claude-Haiku-5-5"}})[0], 0)
         t0 = time.time() - 12 * 60 - 5
         with open(os.path.join(self.tmp, "state", "core-sessions", "s1.json"), "r+") as f:
