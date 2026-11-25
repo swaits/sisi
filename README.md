@@ -85,13 +85,19 @@ its limits are.
 
 ## Where things live
 
-- **The product** (this repository): the code in `sisi/`, the rulebook in `canon/core.md`. The same for
-  everyone. `SPEC.md` is what it aims at.
-- **Your store** (`$SISI_DATA`, else `$XDG_DATA_HOME/sisi`, else `~/.local/share/sisi`; a git repository): `rules/user.md` and `rules/projects/*.md` (what
-  was learned), `models.md` (your workers), `retro.jsonl` (each piece of work: session, `retro_seconds`, counts, goal, term)
-  and `outcomes.jsonl` (each judged delegation: session, `project_key`, `model`, `started`/`ended`, minutes, verdict, why). All plain
-  text you can read and edit.
-- **The rulebook every session loads** is generated from the two: `canon/core.md`, then your learned rules.
+Rules live at three levels:
+
+- **The product** (this repository): the code in `sisi/`, and the rulebook in `canon/core.md` — rules useful to everyone
+  using sisi, the same for all users. `SPEC.md` is what it aims at.
+- **Your store** (`$SISI_DATA`, else `$XDG_DATA_HOME/sisi`, else `~/.local/share/sisi`; a git repository): `rules/user.md`
+  (how you like to work, across all your projects), `models.md` (your workers), `retro.jsonl` (each piece of work: session,
+  `retro_seconds`, counts, goal, term) and `outcomes.jsonl` (each judged delegation: session, `project_key`, `model`,
+  `started`/`ended`, minutes, verdict, why). All plain text you can read and edit.
+- **Each project** (`.sisi/rules.md` at the project root, never in a subfolder): rules specific to one project. You choose
+  whether to check `.sisi/` into git or ignore it (sisi works either way, and never commits or stages it for you).
+- **The rulebook every session loads** (`generated/core.md`) is built from the product (`canon/core.md`) and your user
+  rules (`rules/user.md`). Project rules are not in the generated rulebook; they are printed at session start by the `tick`
+  hook and shown by `sisi rules`.
 - **Scratch** (session state, bytecode): `$SISI_STATE`, else `$XDG_STATE_HOME/sisi`, else `~/.local/state/sisi`.
   Releases live in `$SISI_LIB`, else `~/.local/lib/sisi`.
 

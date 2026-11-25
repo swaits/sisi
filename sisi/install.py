@@ -309,7 +309,7 @@ def doctor(cwd=None):
     print("your store:      %s" % store.DATA)
     print("rulebook:        %d lines, %d characters" % (len(book.splitlines()), len(book)))
     print("learned rules:   %d for all projects, %d for this one" % (
-        len(rules.lines(rules.path(rules.USER))), len(rules.lines(rules.path(rules.PROJECT, cwd)))))
+        len(rules.lines(rules.path(rules.USER))), len(rules.scope_lines(rules.PROJECT, cwd))))
     print("models table:    %s" % ("none yet" if age is None else "%d days old" % age))
     print("sisi on PATH:    %s" % (shutil.which("sisi") or "no: add ~/.local/bin to PATH (`sisi install` links it there)"))
     for h in _table():

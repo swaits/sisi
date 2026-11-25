@@ -90,7 +90,7 @@ def commit(message, *paths):
     if not os.path.isdir(os.path.join(DATA, ".git")):
         git(["init", "-q"], DATA)
     rel = [os.path.relpath(p, DATA) for p in paths]
-    git(["add", "--"] + rel, DATA)
+    git(["add", "-A", "--"] + rel, DATA)
     git(["-c", "user.name=sisi", "-c", "user.email=sisi@localhost", "commit", "-q", "-m", message, "--"] + rel, DATA)
 
 
@@ -108,10 +108,11 @@ def project_key(cwd=None):
 
 def snapshot(cwd):
     """A fingerprint of the working tree: the commit, what is uncommitted, what is untracked. "" outside git."""
-    rc, status = git(["status", "--porcelain"], cwd)
+    spec = ["--", ":(top)", ":(top,exclude).sisi"]
+    rc, status = git(["status", "--porcelain"] + spec, cwd)
     if rc != 0:
         return ""
-    head, diff = git(["rev-parse", "HEAD"], cwd)[1], git(["diff", "HEAD"], cwd)[1]
+    head, diff = git(["rev-parse", "HEAD"], cwd)[1], git(["diff", "HEAD"] + spec, cwd)[1]
     return hashlib.sha1((head + status + diff).encode()).hexdigest()[:16]
 
 

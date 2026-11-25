@@ -202,8 +202,12 @@ def run(args, cwd=None):
     elif kind != "later":
         record({}, cwd, dict(opt, scope=scope) if kind == "gap" else opt)
     if kind == "gap":
-        print("recorded. In force from the next session%s: %s" % (
-            " in every project" if scope == rules.USER else " in this project", rules.add(opt["improve"], scope, "retro", cwd)))
+        try:
+            added = rules.add(opt["improve"], scope, "retro", cwd)
+            print("recorded. In force from the next session%s: %s" % (
+                " in every project" if scope == rules.USER else " in this project", added))
+        except OSError as e:
+            print("recorded, but could not write %s (%s)." % (rules.path(scope, cwd), e))
         if rules.due(cwd):
             print(rules.due(cwd))
     else:
