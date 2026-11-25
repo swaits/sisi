@@ -95,15 +95,32 @@ def commit(message, *paths):
     if not os.path.isdir(os.path.join(DATA, ".git")):
         git(["init", "-q"], DATA)
     rel = [os.path.relpath(p, DATA) for p in paths]
-    git(["add", "-A", "--"] + rel, DATA)
-    git(["-c", "user.name=sisi", "-c", "user.email=sisi@localhost", "commit", "-q", "-m", message, "--"] + rel, DATA)
+    return (git(["add", "-A", "--"] + rel, DATA)[0] == 0 and
+            git(["-c", "user.name=sisi", "-c", "user.email=sisi@localhost", "commit", "-q", "-m", message, "--"] + rel, DATA)[0] == 0)
+
+
+_roots = {}
+
+
+def root(cwd=None):
+    """(project root, inside a git directory or bare repository). In git the root is the main checkout's, shared by
+    its worktrees; when git cannot answer, the nearest folder holding `.git`; outside git, the folder itself."""
+    cwd = os.path.abspath(cwd or os.getcwd())
+    if cwd not in _roots:
+        rc, out = git(["rev-parse", "--path-format=absolute", "--is-inside-git-dir", "--git-common-dir", "--show-toplevel"], cwd)
+        inside, common, top = (out.splitlines() + ["", "", ""])[:3]
+        cur = cwd
+        while rc and inside != "true" and not os.path.lexists(os.path.join(cur, ".git")) and cur != os.path.dirname(cur):
+            bare = os.path.basename(cur) == ".git" or all(os.path.exists(os.path.join(cur, n)) for n in ("HEAD", "objects", "refs"))
+            inside, cur = ("true", cur) if bare else ("", os.path.dirname(cur))
+        top = os.path.dirname(common) if os.path.basename(common) == ".git" else top if rc == 0 else cur if os.path.lexists(os.path.join(cur, ".git")) else cwd
+        _roots[cwd] = (cwd, True) if inside == "true" else (top, False)
+    return _roots[cwd]
 
 
 def project_root(cwd=None):
     """The project a folder belongs to. Every checkout of one repository is the same project."""
-    cwd = cwd or os.getcwd()
-    rc, out = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd)
-    return os.path.dirname(out.strip()) if rc == 0 and os.path.basename(out.strip()) == ".git" else os.path.abspath(cwd)
+    return root(cwd)[0]
 
 
 def project_key(cwd=None):
