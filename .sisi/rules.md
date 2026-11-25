@@ -14,3 +14,4 @@
 - Never pass --help or any probe argument to a command that changes things until its usage is known from the source or the README; read the usage there first. [retro 2026-11-24]
 - A project's rules and learning live inside that project, in .sisi/ at the project root, never in a subfolder; whether .sisi/ is git-ignored is the user's choice, and sisi must work either way (owner: 'Personally I'd want this checked in and permanent'). [owner 2026-11-24]
 - In this repo, finished work that passed its checks goes to main and to both remotes (origin and github) in the same step as the final report; the report names the commit and the GitHub test run [retro 2026-11-24]
+- In this repo a new piece that arrives while a worker is busy goes at once to another worker in its own checkout and branch; a brief asks for one full test run per commit, the one inside 'sisi release', and only the tests for the change before that [retro 2026-11-25]
