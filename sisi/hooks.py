@@ -99,18 +99,26 @@ def _begin(state, cwd):
         state.update(started=time.time(), project=store.project_key(cwd), snapshot=store.snapshot(cwd))
 
 
+def _faults(cwd, gate=False):
+    if not os.path.lexists(os.path.join(store.STATE, "core-faults", store.project_key(cwd) + ".json")):
+        return ""
+    from . import faults
+    return faults.show(cwd, gate)
+
+
 def tick(p):
     """Session start: remember where the work began; print this project's learned rules and what is due."""
-    sid, cwd = p["session_id"], p["cwd"] or os.getcwd()
+    sid, cwd, worker = p["session_id"], p["cwd"] or os.getcwd(), p["subagent"]
     if sid:
         with store.session(sid) as s:
             _begin(s, cwd)
+            worker = worker or bool(s.get("worker"))
         env = os.environ.get("CLAUDE_ENV_FILE")
         if env and re.fullmatch(r"[A-Za-z0-9_-]+", str(sid)):
             store.append(env, "export SISI_SESSION_ID=%s" % sid)  # so `sisi retro` knows its session
     if not os.path.exists(os.path.join(store.DATA, "generated", "core.md")):
         rules.build_rulebook()
-    text = "\n".join(x for x in (rules.project_text(cwd), rules.due(cwd), models.stale()) if x)
+    text = "\n".join(x for x in (rules.project_text(cwd), rules.due(cwd), models.stale(), "" if worker else _faults(cwd)) if x)
     if text:
         print(text)
     return 0
@@ -118,16 +126,18 @@ def tick(p):
 
 def prompt(p):
     """Each request: a new turn begins. The first request tells a delegated worker from a lead."""
-    sid = p["session_id"]
+    sid, cwd, worker = p["session_id"], p["cwd"] or os.getcwd(), p["subagent"]
     if sid:
         with store.session(sid) as s:
-            _begin(s, p["cwd"] or os.getcwd())
+            _begin(s, cwd)
             if not s.get("prompts") and WORKER.search(p["prompt"][:2000]):
                 s["worker"] = True
+            worker = worker or bool(s.get("worker"))
             s["prompts"] = s.get("prompts", 0) + 1
             s.get("prompts_since") or s.update(began=time.time())  # the first request of a piece of work
             s["prompts_since"] = s.get("prompts_since", 0) + 1
             s["direct"], s["extra"], s["blocks"] = 0, 0, 0
+    not worker and (text := _faults(cwd)) and print(text)
     return 0
 
 
@@ -199,6 +209,7 @@ def gate(p, for_subagent=False):
         _begin(s, cwd)
         if s.get("worker"):
             return 0
+        open_f = _faults(cwd, True)
         reason, demand = " ".join("sisi: " + LATE % (w, time.strftime("%H:%M", time.localtime(t))) for w, t in models.overdue(s)), False
         if not reason and not s.get("paused"):
             checks = (s.get("done") or {}).get("checks") or []
@@ -209,9 +220,10 @@ def gate(p, for_subagent=False):
             if checks and not unsaid and not failed and (not worked or quick):
                 from . import retro
                 retro.record(s, cwd, {}, sid)  # every check passed and nothing changed, or it was quick and alone: the work closes itself
-                return 0
-            reason = "" if unsaid and models.waiting(s) else OPEN % "; ".join(unsaid) if unsaid else GATE if worked else FAILED % ", ".join(failed) if failed else ""
-            demand = bool(reason and not unsaid)
+            else:
+                reason = "" if unsaid and models.waiting(s) else OPEN % "; ".join(unsaid) if unsaid else GATE if worked else FAILED % ", ".join(failed) if failed else ""
+                demand = bool(reason and not unsaid)
+        reason = " ".join(x for x in (open_f, reason) if x)
         if not reason or s.get("blocks", 0) >= 2:
             return 0
         s["blocks"] = s.get("blocks", 0) + 1

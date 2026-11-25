@@ -48,7 +48,9 @@ def facts(state, cwd):
             "or something they had to say twice?" % n["messages"],
             "evidence (measured): %d check(s) passed, %d failed" % (n["checks_pass"], n["checks_fail"])] + d[1:-1]
     out += ["value (judged): did the person get what they wanted? changed: %d commit(s), %d file(s) uncommitted" % (n["commits"], len(dirty))]
-    return out + d[:1] + d[1:][-1:] + ["learning (measured): last 10 pieces of work named: %s" % (named or "none yet")]
+    from . import faults
+    fs = faults.lines(cwd)
+    return out + d[:1] + d[1:][-1:] + (["open faults (%d):" % len(fs)] + ["  " + l for l in fs] if fs else []) + ["learning (measured): last 10 pieces of work named: %s" % (named or "none yet")]
 
 
 def show(d):

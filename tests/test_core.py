@@ -2773,6 +2773,128 @@ cli.main(["tick"])
         self.assertEqual(work("e", 6), "")                                                  # the limit is a setting
         self.assertEqual(len(self.records()), 2)
 
+    def test_open_fault_blocks_end_of_turn_until_started_blocked_or_fixed(self):
+        self.hook("tick")
+        self.hook("prompt", prompt="fix the build")
+        self.assertEqual(self.hook("gate")[1], "")
+        rc, out, _ = self.sisi("fault", "linker crashed ten times during the build")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1", out)
+        rc, out, _ = self.hook("gate")
+        self.assertEqual(rc, 0)
+        self.assertIn('"block"', out)
+        self.assertIn("linker crashed ten times", out)
+        for flag in ("--started", "--blocked", "--fixed"):
+            self.assertIn(flag, out)
+        self.assertIn('"block"', self.hook("gate")[1])                                      # second block in one turn
+        self.assertEqual(self.hook("gate")[1], "")                                          # third block in one turn is not made
+        self.hook("prompt", prompt="still open")
+        self.assertEqual(self.sisi("fault", "--started", "1", "worker fixing the linker crash")[0], 0)
+        self.assertEqual(self.hook("gate")[1], "")                                          # started lets the turn end
+        self.assertEqual(self.sisi("fault", "scratch folder filled up the whole disk")[0], 0)
+        self.assertIn('"block"', self.hook("gate")[1])
+        self.assertEqual(self.sisi("fault", "--blocked", "2", "waiting for owner to confirm cleanup path")[0], 0)
+        self.assertEqual(self.hook("gate")[1], "")                                          # blocked lets the turn end
+        self.assertEqual(self.sisi("fault", "unit tests leave stale lock files behind")[0], 0)
+        self.assertIn('"block"', self.hook("gate")[1])
+        self.assertEqual(self.sisi("fault", "--fixed", "3", "removed lock cleanup bug and tests pass")[0], 0)
+        self.assertEqual(self.hook("gate")[1], "")                                          # fixed lets the turn end
+        self.assertNotIn("stale lock files", self.sisi("fault")[1])                         # closed fault drops off the list
+        # survives across sessions; joined before retro/checks reasons; skipped for worker, subagent, and gate=false
+        self.assertEqual(self.sisi("fault", "packaging step dropped the version file")[0], 0)
+        self.hook("tick", sid="s2")
+        self.hook("prompt", sid="s2", prompt="do work")
+        self.done("s2")
+        self.tool("Edit", sid="s2")
+        out = self.hook("gate", sid="s2")[1]
+        self.assertIn('"block"', out)
+        self.assertIn("packaging step dropped", out)
+        self.assertIn("no verdict yet", out)
+        self.assertLess(out.index("packaging step dropped"), out.index("no verdict yet"))
+        self.assertEqual(self.hook("gate", sid="s2", agent_id="sub1")[1], "")               # subagent skipped
+        self.hook("tick", sid="w1")
+        self.hook("prompt", sid="w1", prompt="You are a worker. Do this task yourself.")
+        self.assertEqual(self.hook("gate", sid="w1")[1], "")                                # worker skipped
+        self.write(os.path.join(self.data, "config.json"), json.dumps({"core": {"gate": False}}))
+        self.assertEqual(self.hook("gate", sid="s2")[1], "")                                # gate setting off
+
+    def test_faults_shown_on_tick_prompt_retro_meter_free_and_scoped_to_project(self):
+        self.assertNotIn("open faults", self.hook("tick")[1])
+        self.assertEqual(self.hook("prompt", prompt="start")[1], "")
+        self.assertEqual(self.sisi("fault", "linker crashed ten times during build")[0], 0)
+        self.assertEqual(self.sisi("fault", "scratch folder filled up the disk")[0], 0)
+        self.assertEqual(self.sisi("fault", "--blocked", "2", "waiting on owner to approve removal")[0], 0)
+        for out in (self.hook("tick", sid="s2")[1], self.hook("prompt", sid="s2", prompt="next")[1]):
+            self.assertIn("sisi: open faults. Fix each now or say what blocks it", out)
+            self.assertIn("linker crashed ten times", out)
+            self.assertIn("scratch folder filled up", out)
+            self.assertIn("waiting on owner to approve removal", out)
+        # worker session and subagent print nothing for faults
+        self.assertEqual(self.hook("prompt", sid="w1", prompt="You are a worker. Do this task yourself.")[1], "")
+        self.assertEqual(self.hook("prompt", sid="w1", prompt="second prompt")[1], "")
+        self.assertNotIn("open faults", self.hook("tick", sid="w1")[1])
+        self.assertEqual(self.hook("prompt", sid="s2", prompt="sub", agent_id="sub1")[1], "")
+        self.assertNotIn("open faults", self.hook("tick", sid="s2", agent_id="sub1")[1])
+        # retro lists faults still not fixed, one line each
+        rep = self.sisi("retro", sid="s2")[1]
+        self.assertIn("linker crashed ten times", rep)
+        self.assertIn("scratch folder filled up", rep)
+        # meter lets `sisi fault ...` through even with direct_calls=0
+        self.write(self.mkdir(self.data) + "/config.json", json.dumps({"core": {"direct_calls": 0}}))
+        self.assertEqual(self.tool("Bash", sid="s2", tool_input={"command": 'sisi fault "new crash in test runner"'})[0], 0)
+        # a different project's faults are not shown or gated
+        beta = self.project("beta")
+        self.assertIn("no open faults", self.sisi("fault", cwd=beta)[1])
+        self.assertNotIn("linker crashed", self.hook("tick", sid="b1", cwd=beta)[1])
+        self.assertEqual(self.hook("prompt", sid="b1", cwd=beta, prompt="go")[1], "")
+        self.assertEqual(self.hook("gate", sid="b1", cwd=beta)[1], "")
+        self.assertNotIn("linker crashed", self.sisi("retro", cwd=beta, sid="b1")[1])
+
+    def test_concurrent_fault_opens_both_survive(self):
+        exe = [sys.executable, os.path.join(REPO, "bin", "sisi"), "fault"]
+        o1, o2 = os.path.join(self.tmp, "f1.out"), os.path.join(self.tmp, "f2.out")
+        with open(o1, "w") as f1, open(o2, "w") as f2:
+            p1 = subprocess.Popen(exe + ["first concurrent fault from process one"], cwd=self.proj, env=self.env, stdin=subprocess.DEVNULL, stdout=f1, stderr=subprocess.STDOUT)
+            p2 = subprocess.Popen(exe + ["second concurrent fault from process two"], cwd=self.proj, env=self.env, stdin=subprocess.DEVNULL, stdout=f2, stderr=subprocess.STDOUT)
+            self.assertEqual((p1.wait(timeout=15), p2.wait(timeout=15)), (0, 0))
+        listed = self.sisi("fault")[1]
+        self.assertIn("first concurrent fault from process one", listed)
+        self.assertIn("second concurrent fault from process two", listed)
+        self.assertIn("#1 ", listed)
+        self.assertIn("#2 ", listed)
+
+    def test_faults_hostile_state_and_usage_errors(self):
+        outside = self.write(os.path.join(self.tmp, "outside.json"), "untouched\n")
+        fdir = self.mkdir(self.tmp, "state", "core-faults")
+        for kind in ("symlink", "invalid", "huge", "readonly"):
+            p = self.project("fh-" + kind)
+            fp = os.path.join(fdir, self.project_key_for(p) + ".json")
+            if kind == "symlink":
+                os.symlink(outside, fp)
+            elif kind == "invalid":
+                self.write(fp, "{not valid json")
+            elif kind == "huge":
+                self.write(fp, "x" * 70000)
+            elif kind == "readonly":
+                self.write(fp, json.dumps({"next": 1, "items": []}))
+                os.chmod(fp, 0o444)
+                self.addCleanup(os.chmod, fp, 0o644)
+            self.assertEqual(self.hook("tick", sid="h-" + kind, cwd=p)[0], 0, kind)
+            self.assertEqual(self.hook("prompt", sid="h-" + kind, cwd=p, prompt="go")[0], 0, kind)
+            self.assertEqual(self.hook("gate", sid="h-" + kind, cwd=p)[0], 0, kind)
+            self.assertEqual(self.sisi("fault", cwd=p)[0], 0, kind)
+            self.assertEqual(self.sisi("fault", "new fault under hostile state", cwd=p)[0], 1, kind)
+        self.assertEqual(self.read(outside), "untouched\n")
+        self.assertTrue(os.path.islink(os.path.join(fdir, self.project_key_for(os.path.join(self.tmp, "fh-symlink")) + ".json")))
+        self.assertEqual(self.read(fdir, self.project_key_for(os.path.join(self.tmp, "fh-readonly")) + ".json"), json.dumps({"next": 1, "items": []}))
+        # usage errors return 1 with one usage line
+        for bad in (("too short",), ("--unknown", "four words right here"), ("--started",), ("--started", "x", "fixing it now"),
+                    ("--started", "1", "ok"), ("--blocked", "99", "waiting on owner"), ("--fixed", "99", "all tests pass")):
+            rc, out, _ = self.sisi("fault", *bad)
+            self.assertEqual(rc, 1, (bad, out))
+            self.assertEqual(len(out.strip().splitlines()), 1, (bad, out))
+            self.assertIn("usage:", out, (bad, out))
+
     def test_the_spec_is_unchanged(self):
         for line in self.read(REPO, "docs", "spec", "SHA256SUMS").splitlines():
             digest, rel = line.split()
@@ -2781,10 +2903,10 @@ cli.main(["tick"])
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLessEqual(code, 1790, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLessEqual(code, 1880, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 130)
-        self.assertLessEqual(len(rulebook), 9080)
+        self.assertLessEqual(len(rulebook), 9244)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ Before and after the work
                                    record what done means and what the person will need next; nothing starts before
   sisi done --pass N EVIDENCE | --fail N WHY
                                    give a check its verdict; `sisi done` alone shows it
+  sisi fault [TEXT | --started|--blocked|--fixed N NOTE]  open faults in this project; alone lists them
 
 The learning loop
   sisi retro                       what happened in this piece of work, to set against the objective
@@ -61,6 +62,9 @@ def main(argv):
     if cmd in ("retro", "done"):
         from . import retro
         return (retro.run if cmd == "retro" else retro.done)(args)
+    if cmd == "fault":
+        from . import faults
+        return faults.run(args)
     one = {"rules": rules.run, "pick": models.pick, "learn": rules.learn, "models": models.run, "judge": models.judge,
            "direct": hooks.direct}
     if cmd in one:

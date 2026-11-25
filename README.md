@@ -23,6 +23,11 @@ is sent to the retro, and any other closes itself, as does work that took under 
 the numbers (minutes, messages, tool calls, delegations, checks) and the `term` it fell short on (`value`, `evidence`, `time`, `cost`,
 `attention` or `learning`: the terms of the objective), and `sisi retro` lays the facts out under those terms and shows their trend.
 
+**Faults.** Record any fault you see with `sisi fault "<what is wrong>"` (kept per project across sessions).
+Session start and every request show the faults still not fixed, and the end-of-turn gate will not let a turn
+end on an open fault until a fix is started (`--started N`), a blocker is named (`--blocked N`), or evidence
+closes it (`--fixed N`). `sisi retro` lists the faults still open.
+
 ## Install
 
 ```
@@ -74,6 +79,7 @@ its limits are.
 |---|---|
 | `sisi done --goal … --check … [--check …] --next …` | Record what done means and what comes next; nothing starts before |
 | `sisi done --pass N "…"` / `--fail N "…"` | Give a check its verdict and evidence; `sisi done` alone shows it |
+| `sisi fault "<what is wrong>"` / `--started\|--blocked\|--fixed N "…"` | Record an open fault in this project, start a fix, name a blocker, or close it; `sisi fault` alone lists them |
 | `sisi pick routine\|ordinary\|hard [--review-of WORKER] [--not WORKER]` | The wheel gives one worker; a review goes to a different maker |
 | `sisi retro` | Print what happened in this piece of work, to set against the objective |
 | `sisi retro --gap … --cause … --improve … --term T [--scope user]` | Record the gap and the term of the objective it fell short on; the improvement is a rule at once |
