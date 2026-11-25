@@ -528,6 +528,81 @@ class Core(unittest.TestCase):
         self.write(os.path.join(p_tracked, "AGENTS.md"), self.read(p_tracked, "AGENTS.md") + "\nHand edited line.\n")
         self.assertIn('"block"', self.hook("gate", sid="g2", cwd=p_tracked)[1])
 
+    def test_gate_ignores_committed_and_uncommitted_sisi_rules_after_retro(self):
+        def git_repo(name, with_note=True):
+            p = self.project(name)
+            self.write(os.path.join(self.mkdir(p, ".sisi"), "rules.md"), "- Initial project rule [retro 2026-11-24]\n")
+            if with_note:
+                self.write(os.path.join(p, "AGENTS.md"), self.NOTE_BLOCK)
+            self.write(os.path.join(p, "app.txt"), "v1\n")
+            tracked = [".sisi/rules.md", "app.txt"] + (["AGENTS.md"] if with_note else [])
+            for args in (["add"] + tracked, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"]):
+                subprocess.run(["git"] + args, cwd=p, check=True, stdin=subprocess.DEVNULL, capture_output=True)
+            return p
+
+        def finish_work_and_retro(p, sid, rule_text):
+            self.hook("tick", sid=sid, cwd=p)
+            self.hook("prompt", sid=sid, cwd=p, prompt="update app")
+            self.assertEqual(self.sisi("done", *GOAL, cwd=p, sid=sid)[0], 0)
+            self.hook("watch", sid=sid, cwd=p, hook_event_name="PreToolUse", tool_name="Edit")
+            self.write(os.path.join(p, "app.txt"), "v2\n")
+            for n, why in (("1", "row counts match at 10"), ("2", "empty name exported as row")):
+                self.assertEqual(self.sisi("done", "--pass", n, why, cwd=p, sid=sid)[0], 0)
+            rc, out, _ = self.sisi("retro", *GAP[:4], "--improve", rule_text, "--term", "time", cwd=p, sid=sid)
+            self.assertEqual(rc, 0, out)
+
+        # 1. Exact four-step sequence: retro writes tracked .sisi/rules.md, commit that one file -> no demand
+        p1 = git_repo("retro-commit-rule")
+        finish_work_and_retro(p1, "r1", "Commit rule file alone without tripping gate")
+        subprocess.run(["git", "add", ".sisi/rules.md"], cwd=p1, check=True, stdin=subprocess.DEVNULL, capture_output=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "rule"], cwd=p1, check=True, stdin=subprocess.DEVNULL, capture_output=True)
+        self.assertEqual(self.hook("gate", sid="r1", cwd=p1)[1], "")
+
+        # 1b. Same when AGENTS.md note is also written by retro and committed with .sisi/rules.md -> no demand
+        p1b = git_repo("retro-commit-rule-and-note", with_note=False)
+        finish_work_and_retro(p1b, "r1b", "Commit rule file and AGENTS note without tripping gate")
+        subprocess.run(["git", "add", ".sisi/rules.md", "AGENTS.md"], cwd=p1b, check=True, stdin=subprocess.DEVNULL, capture_output=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "rule+note"], cwd=p1b, check=True, stdin=subprocess.DEVNULL, capture_output=True)
+        self.assertEqual(self.hook("gate", sid="r1b", cwd=p1b)[1], "")
+
+        # 2. Same with the rule file left uncommitted -> no demand
+        p2 = git_repo("retro-uncommitted-rule")
+        finish_work_and_retro(p2, "r2", "Leave rule file uncommitted without tripping gate")
+        self.assertEqual(self.hook("gate", sid="r2", cwd=p2)[1], "")
+
+        # 3. After the retro, a different tracked file is edited -> demand
+        p3 = git_repo("retro-then-edit")
+        finish_work_and_retro(p3, "r3", "Rule before another tracked file is edited")
+        self.write(os.path.join(p3, "app.txt"), "v3\n")
+        out3 = self.hook("gate", sid="r3", cwd=p3)[1]
+        self.assertIn('"block"', out3)
+        self.assertIn("sisi retro", out3)
+
+        # 4. After the retro, a different file is edited and committed together with the rule file -> demand
+        p4 = git_repo("retro-then-commit-both")
+        finish_work_and_retro(p4, "r4", "Rule committed together with another tracked file")
+        self.write(os.path.join(p4, "app.txt"), "v3\n")
+        subprocess.run(["git", "add", ".sisi/rules.md", "app.txt"], cwd=p4, check=True, stdin=subprocess.DEVNULL, capture_output=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "both"], cwd=p4, check=True, stdin=subprocess.DEVNULL, capture_output=True)
+        out4 = self.hook("gate", sid="r4", cwd=p4)[1]
+        self.assertIn('"block"', out4)
+        self.assertIn("sisi retro", out4)
+
+        # 5. Non-git project behaves as before
+        p5 = self.mkdir(self.tmp, "nongit-retro")
+        self.write(os.path.join(p5, "app.txt"), "v1\n")
+        self.hook("tick", sid="r5", cwd=p5)
+        self.hook("prompt", sid="r5", cwd=p5, prompt="work outside git")
+        self.assertEqual(self.hook("gate", sid="r5", cwd=p5)[1], "")
+        self.assertEqual(self.sisi("done", *GOAL, cwd=p5, sid="r5")[0], 0)
+        self.hook("watch", sid="r5", cwd=p5, hook_event_name="PreToolUse", tool_name="Edit")
+        self.write(os.path.join(p5, "app.txt"), "v2\n")
+        self.assertIn('"block"', self.hook("gate", sid="r5", cwd=p5)[1])
+        for n, why in (("1", "row counts match at 10"), ("2", "empty name exported as row")):
+            self.assertEqual(self.sisi("done", "--pass", n, why, cwd=p5, sid="r5")[0], 0)
+        self.assertEqual(self.sisi("retro", *GAP, "--improve", "Non-git project rules still record cleanly", cwd=p5, sid="r5")[0], 0)
+        self.assertEqual(self.hook("gate", sid="r5", cwd=p5)[1], "")
+
     def test_doctor_reports_project_agents_note_without_writing(self):
         self.assertNotIn("project note:", self.sisi("doctor")[1])
         self.mkdir(self.proj, ".sisi")

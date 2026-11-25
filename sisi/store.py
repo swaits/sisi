@@ -159,16 +159,16 @@ def agents_target(root):
 
 
 def snapshot(cwd):
-    """A fingerprint of the working tree: the commit, what is uncommitted, what is untracked. "" outside git."""
-    rc, out = git(["rev-parse", "--path-format=absolute", "--show-toplevel", "HEAD"], cwd)
-    top = (out.splitlines() or [""])[0]
+    """A fingerprint of the working tree: tracked blobs, what is uncommitted, what is untracked. "" outside git."""
+    top = git(["rev-parse", "--path-format=absolute", "--show-toplevel"], cwd)[1].rstrip("\r\n")
     if not top:
         return ""
     real, rel, _ = agents_target(top)
     spec = ["--", ":(top)", ":(top,exclude).sisi"] + ([":(top,exclude)" + rel] if rel else [])
-    head, status, diff = (out if rc == 0 else ""), git(["status", "--porcelain"] + spec, cwd)[1], git(["diff", "HEAD"] + spec, cwd)[1]
+    tree = git(["ls-files", "-t", "-s", "-o", "-d", "-m", "--exclude-standard"] + spec, top)[1]
+    diff = git(["diff", "HEAD"] + spec, top)[1]
     body = NOTE_RE.sub("", (regular(real, True)[1] or b"").decode("utf-8", "replace") if real else "").rstrip("\r\n")
-    return hashlib.sha1((head + status + diff + "\0" + body).encode()).hexdigest()[:16]
+    return hashlib.sha1((tree + "\0" + diff + "\0" + body).encode()).hexdigest()[:16]
 
 
 def _session_path(sid):
