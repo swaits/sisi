@@ -44,8 +44,10 @@ be forgotten.
 
 ## 3. Define done, then prove it
 
-Done is what you recorded with `sisi done`. Before you finish, give every check a
-verdict with its evidence: `sisi done --pass N` or `--fail N`. Size the care by what could go
+Done is what you recorded with `sisi done`. Where the goal has a measure (space freed, time, a
+count), a check names the number and the report gives it before and after against what was asked;
+a small share of the ask is a failed check. Before you finish, give every check a verdict with
+its evidence: `sisi done --pass N` or `--fail N`. Size the care by what could go
 wrong, not by the number of lines: a wording change needs a look at the diff; stored data,
 authorization and anything hard to reverse need a way back and evidence from someone other than
 the author. Use the least evidence that is enough for the way the thing can fail, and watch a
@@ -108,7 +110,8 @@ When a piece of work ends, the lead runs `sisi retro`, which prints what happene
 the objective, term by term: where did the work fall short, why, and what instruction would have
 prevented it? Record that (`sisi retro --gap … --cause … --improve …`). The improvement becomes a rule at
 once: product (useful to every sisi user, in the product), user (how this person works across projects, in their store), or project (one project, in `.sisi/rules.md` at its root, in git its main checkout's, which may be checked in). Name the root cause; general advice is not an
-improvement. Work can always be done better: when nothing fell short, name the one thing that would have scored better (`--no-gap … --better …`). Name the term of the objective each time (`--term`). When the person states a lasting
+improvement. Prefer an improvement that makes the next work do more by itself over one that adds
+a caution; a new caution says what stays allowed without asking. Work can always be done better: when nothing fell short, name the one thing that would have scored better (`--no-gap … --better …`). Name the term of the objective each time (`--term`). When the person states a lasting
 preference, record their words at once with `sisi learn`. When session start says the learned
 rules need organizing, have a cheap worker do it in the background.
 

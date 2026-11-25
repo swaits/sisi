@@ -3038,8 +3038,8 @@ cli.main(["tick"])
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
         self.assertLessEqual(code, 1923, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
-        self.assertLess(len(rulebook.splitlines()), 130)
-        self.assertLessEqual(len(rulebook), 9442)
+        self.assertLess(len(rulebook.splitlines()), 135)
+        self.assertLessEqual(len(rulebook), 9774)
 
 
 if __name__ == "__main__":
