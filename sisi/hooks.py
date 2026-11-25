@@ -122,7 +122,7 @@ def tick(p):
             store.append(env, "export SISI_SESSION_ID=%s" % sid)  # so `sisi retro` knows its session
     if not os.path.exists(os.path.join(store.DATA, "generated", "core.md")):
         rules.build_rulebook()
-    text = "\n".join(x for x in (rules.project_text(cwd), rules.due(cwd), models.stale(), "" if worker else _faults(cwd, False, free)) if x)
+    text = "\n".join(x for x in (rules.project_text(cwd), rules.due(cwd, claim=True), models.stale(), "" if worker else _faults(cwd, False, free)) if x)
     if text:
         print(text)
     return 0

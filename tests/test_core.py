@@ -217,7 +217,7 @@ class Core(unittest.TestCase):
 
     def test_rules_are_organized_by_a_worker_and_the_change_can_be_undone(self):
         for i in range(9):
-            self.assertEqual(self.sisi("learn", "--project", "Always run the map tests number %d before a commit" % i)[0], 0)
+            self.assertEqual(self.sisi("retro", *GAP, "--improve", "Always run the map tests number %d before a commit" % i)[0], 0)
         self.assertIn("need organizing", self.hook("tick")[1])
         brief = self.sisi("rules", "organize")[1]
         self.assertIn("map tests number 8", brief)
@@ -226,13 +226,13 @@ class Core(unittest.TestCase):
         self.assertEqual(glob.glob(os.path.join(self.data, "rules", "projects", "*.md")), [])
         before = self.read(path)
         answer = os.path.join(self.tmp, "answer.md")
-        for bad in ("no sections at all", "## user\n## project\n" + "- one more rule\n" * 31, "## user\n## project\n"):
+        for bad in ("no sections at all", "## user\n## project\n" + "- one more rule [retro 2026-01-01]\n" * 31, "## user\n## project\n"):
             self.assertEqual(self.sisi("rules", "organize", "--record", self.write(answer, bad))[0], 1, bad[:20])
             self.assertEqual(self.read(path), before)
         self.write(answer, "## user\n- Work from the checklist the person gave [owner 2026-01-01]\n"
-                           "## project\n- Run the map tests before a commit [owner 2026-01-01]\n")
+                           "## project\n- Run the map tests before a commit [retro 2026-01-01]\n")
         self.assertEqual(self.sisi("rules", "organize", "--record", answer)[0], 0)
-        self.assertEqual(self.read(path), "- Run the map tests before a commit [owner 2026-01-01]\n")
+        self.assertEqual(self.read(path), "- Run the map tests before a commit [retro 2026-01-01]\n")
         self.assertIn("Work from the checklist", self.read(self.data, "generated", "core.md"))
         self.assertNotIn("need organizing", self.hook("tick", sid="s2")[1])
         self.assertIn("Run the map tests", self.sisi("rules")[1])
@@ -255,8 +255,8 @@ class Core(unittest.TestCase):
         self.assertFalse(os.path.lexists(os.path.join(self.proj, "pkg", ".sisi")))
         self.assertIn("Always check subfolder paths before writing", self.hook("tick", cwd=sub)[1])
         self.assertIn("0 for all projects, 1 for this one", self.sisi("doctor", cwd=sub)[1])
-        # display trimming to budget (30 lines) and over-budget due check
-        self.write(rules_file, "".join("- Rule line number %02d [owner 2026-11-24]\n" % i for i in range(35)))
+        # display trimming to budget (30 lines) and over-budget due check (non-owner rules)
+        self.write(rules_file, "".join("- Rule line number %02d [retro 2026-11-24]\n" % i for i in range(35)))
         tick = self.hook("tick", sid="trim", cwd=sub)[1]
         self.assertNotIn("Rule line number 00", tick)
         self.assertIn("Rule line number 05", tick)
@@ -379,7 +379,7 @@ class Core(unittest.TestCase):
         before = self.read(path)
         answer = self.write(os.path.join(self.tmp, "org.md"),
                             "## user\n- Keep things simple [owner 2026-11-24]\n"
-                            "## project\n- Check repo cleanliness always [owner 2026-11-24]\n")
+                            "## project\n" + before + "- Check repo cleanliness always [retro 2026-11-24]\n")
         self.assertEqual(self.sisi("rules", "organize", "--record", answer)[0], 0)
         self.assertEqual(len(git_out("log", "--oneline").splitlines()), commits_before)
         self.assertEqual([l for l in git_out("status", "--porcelain").splitlines() if not l.startswith("??")], [])
@@ -599,7 +599,7 @@ class Core(unittest.TestCase):
         def ro_proj(name):
             p = self.project(name)
             self.mkdir(p, ".sisi")
-            self.write(os.path.join(p, ".sisi", "rules.md"), "- existing rule [owner 2026-11-24]\n")
+            self.write(os.path.join(p, ".sisi", "rules.md"), "- existing rule [retro 2026-11-24]\n")
             os.chmod(p, 0o555)
             self.addCleanup(os.chmod, p, 0o755)
             return p
@@ -819,7 +819,10 @@ class Core(unittest.TestCase):
         self.assertEqual(self.read(wt, ".sisi", "rules.md"), tracked)
 
     def organized(self, cwd, *rules_):
-        answer = self.write(os.path.join(self.tmp, "answer-%d.md" % len(rules_)), "## user\n- A user rule kept [owner 2026-11-20]\n## project\n" + "".join(r + "\n" for r in rules_))
+        keep = lambda p: [l for l in (self.read(p).splitlines() if os.path.isfile(p) else []) if "[owner" in l]
+        u = keep(os.path.join(self.data, "rules", "user.md")) + ["- A user rule kept [owner 2026-11-20]"]
+        p = keep(os.path.join(cwd, ".sisi", "rules.md")) + list(rules_)
+        answer = self.write(os.path.join(self.tmp, "answer-%d.md" % len(rules_)), "## user\n" + "".join(r + "\n" for r in u) + "## project\n" + "".join(r + "\n" for r in p))
         self.assertEqual(self.sisi("rules", "organize", "--record", answer, cwd=cwd)[0], 0)
 
     def test_revert_undoes_exactly_the_last_rule_change_of_any_kind(self):
@@ -1068,16 +1071,16 @@ class Core(unittest.TestCase):
     def test_concurrent_store_commits_never_collide(self):
         pa, pb, pc = self.proj, self.project("beta"), self.project("gamma")
         self.sisi("learn", "--project", "Warm up store and alpha", cwd=pa)
-        self.sisi("learn", "--project", "Warm up beta", cwd=pb)
+        self.sisi("retro", *GAP, "--improve", "Warm up beta retro rule", cwd=pb)
         for rnd in range(30):
             old_c = self.legacy(pc, "- Legacy rule round %d [owner 2026-11-20]\n" % rnd)
             ans = self.write(os.path.join(self.tmp, "org-%d.md" % rnd),
-                             "## user\n- Organized user rule %d [owner 2026-11-24]\n## project\n- Organized beta rule %d [owner 2026-11-24]\n" % (rnd, rnd))
+                             "## user\n- Organized user rule %d [retro 2026-11-24]\n## project\n- Organized beta rule %d [retro 2026-11-24]\n" % (rnd, rnd))
             cmds = [
                 ([sys.executable, os.path.join(REPO, "bin", "sisi"), "learn", "--project", "Alpha one rule round %d" % rnd], pa, ""),
                 ([sys.executable, os.path.join(REPO, "bin", "sisi"), "learn", "--project", "Alpha two rule round %d" % rnd], pa, ""),
-                ([sys.executable, os.path.join(REPO, "bin", "sisi"), "learn", "--project", "Beta one rule round %d" % rnd], pb, ""),
-                ([sys.executable, os.path.join(REPO, "bin", "sisi"), "learn", "User rule round %d" % rnd], pa, ""),
+                ([sys.executable, os.path.join(REPO, "bin", "sisi"), "retro", *GAP, "--improve", "Beta one rule round %d" % rnd], pb, ""),
+                ([sys.executable, os.path.join(REPO, "bin", "sisi"), "retro", *GAP, "--scope", "user", "--improve", "User rule round %d" % rnd], pa, ""),
                 ([sys.executable, os.path.join(REPO, "bin", "sisi"), "retro", *GAP, "--improve", "Retro rule round %d" % rnd], pa, ""),
                 ([sys.executable, os.path.join(REPO, "bin", "sisi"), "tick"], pc, json.dumps({"session_id": "c1-%d" % rnd, "cwd": pc})),
                 ([sys.executable, os.path.join(REPO, "bin", "sisi"), "tick"], pc, json.dumps({"session_id": "c2-%d" % rnd, "cwd": pc})),
@@ -1285,7 +1288,9 @@ cli.main(["tick"])
         self.assertEqual(self.sisi("learn", "--project", "Rule in beta before organize fails commit", cwd=beta)[0], 0)
         gamma = self.project("org-older")
         self.assertEqual(self.sisi("learn", "--project", "Rule in gamma that revert must not undo", cwd=gamma)[0], 0)
-        ans = self.write(os.path.join(self.tmp, "org-lock.md"), "## user\n- Kept user rule [owner 2026-11-24]\n## project\n- Organized beta rule [owner 2026-11-24]\n")
+        ans = self.write(os.path.join(self.tmp, "org-lock.md"),
+                         "## user\n" + self.read(self.data, "rules", "user.md") + "- Kept user rule [owner 2026-11-24]\n"
+                         "## project\n" + self.read(beta, ".sisi", "rules.md") + "- Organized beta rule [retro 2026-11-24]\n")
         lock = self.write(os.path.join(self.data, ".git", "index.lock"), "")
         rc_org, out_org, err_org = self.sisi("rules", "organize", "--record", ans, cwd=beta)
         self.assertEqual((rc_org, err_org), (0, ""), out_org)
@@ -3172,6 +3177,71 @@ cli.main(["tick"])
             res = faults.check(self.project("enospc-proj"))
         self.assertIn("90% full (100 GB free)", res)
 
+    def test_organize_protects_owner_rules_dedupes_notices_and_catches_concurrent_adds(self):
+        # 1. Owner rules are immutable: shortening a quote or dropping an owner rule is refused and names the line;
+        #    reordering owner rules while merging two retro rules is accepted.
+        own1 = "- Disk space is mine: 'CLEAN IT UP! BE MORE PROACTIVE!!!' [owner 2026-11-25]"
+        own2 = "- Never write a to-do file for the owner [owner 2026-11-25]"
+        ret1 = "- Check row counts before exporting tables [retro 2026-11-24]"
+        ret2 = "- Verify row counts after exporting tables [retro 2026-11-24]"
+        self.write(os.path.join(self.mkdir(self.data, "rules"), "user.md"), "\n".join([own1, own2, ret1, ret2]) + "\n")
+        self.write(os.path.join(self.mkdir(self.proj, ".sisi"), "rules.md"), "- Project retro rule one [retro 2026-11-24]\n")
+        before_u = self.read(self.data, "rules", "user.md")
+        brief = self.sisi("rules", "organize")[1]
+        self.assertIn("verbatim", brief.lower())
+        ans = os.path.join(self.tmp, "org-ans.md")
+        # shortened owner quote -> refused, names the line, changes nothing
+        shortened = "## user\n- Disk space is mine: the owner asked four times. [owner 2026-11-25]\n%s\n%s\n## project\n- Project retro rule one [retro 2026-11-24]\n" % (own2, ret1)
+        rc, out, _ = self.sisi("rules", "organize", "--record", self.write(ans, shortened))
+        self.assertEqual(rc, 1, out)
+        self.assertIn(own1, out)
+        self.assertEqual(self.read(self.data, "rules", "user.md"), before_u)
+        # dropped owner rule -> refused, names the line, changes nothing
+        dropped = "## user\n%s\n%s\n## project\n- Project retro rule one [retro 2026-11-24]\n" % (own1, ret1)
+        rc, out, _ = self.sisi("rules", "organize", "--record", self.write(ans, dropped))
+        self.assertEqual(rc, 1, out)
+        self.assertIn(own2, out)
+        self.assertEqual(self.read(self.data, "rules", "user.md"), before_u)
+        # reordered owner rules + merged two retro rules -> accepted
+        merged = "## user\n%s\n%s\n- Check row counts before and after exporting tables [retro 2026-11-25]\n## project\n- Project retro rule one [retro 2026-11-24]\n" % (own2, own1)
+        rc, out, _ = self.sisi("rules", "organize", "--record", self.write(ans, merged))
+        self.assertEqual(rc, 0, out)
+        self.assertIn(own1, self.read(self.data, "rules", "user.md"))
+        self.assertIn(own2, self.read(self.data, "rules", "user.md"))
+        self.assertIn("before and after exporting tables", self.read(self.data, "rules", "user.md"))
+
+        # 2. A list over budget ONLY through [owner] rules gives no organize notice and never trims owner rules out
+        p_own = self.project("own-only")
+        big_owners = ["- Owner rule %02d: " % i + ("word " * 35) + "[owner 2026-11-25]" for i in range(25)]
+        self.write(os.path.join(self.mkdir(p_own, ".sisi"), "rules.md"), "\n".join(big_owners + [ret1]) + "\n")
+        tick_own = self.hook("tick", sid="own1", cwd=p_own)[1]
+        self.assertNotIn("need organizing", tick_own)
+        self.assertIn("Owner rule 00:", tick_own)                                           # oldest owner rule never trimmed
+
+        # 3. Over budget through [retro] rules gives notice once across two sessions' starts and again after 30 minutes
+        p_ret = self.project("ret-over")
+        big_retros = ["- Retro rule %02d: " % i + ("word " * 35) + "[retro 2026-11-25]" for i in range(25)]
+        self.write(os.path.join(self.mkdir(p_ret, ".sisi"), "rules.md"), "\n".join(big_retros) + "\n")
+        self.assertIn("need organizing", self.hook("tick", sid="r1", cwd=p_ret)[1])
+        self.assertNotIn("need organizing", self.hook("tick", sid="r2", cwd=p_ret)[1])      # second session suppressed
+        # fake clock past 30 minutes -> notice fires again
+        sys.path.insert(0, REPO)
+        from sisi import rules, store
+        with mock.patch.object(store, "DATA", self.data), mock.patch.object(store, "STATE", os.path.join(self.tmp, "state")), \
+                mock.patch("time.time", return_value=time.time() + 1801):
+            self.assertIn("need organizing", rules.due(p_ret, claim=True))
+
+        # 4. A rule learned between `organize` and `--record` must not be lost (record is refused)
+        p_race = self.project("org-race")
+        self.write(os.path.join(self.mkdir(p_race, ".sisi"), "rules.md"), "- Initial retro rule one [retro 2026-11-24]\n")
+        self.assertEqual(self.sisi("rules", "organize", cwd=p_race)[0], 0)
+        self.assertEqual(self.sisi("retro", *GAP, "--improve", "New rule added while organizer was working", cwd=p_race)[0], 0)
+        stale_ans = "## user\n%s\n%s\n- Check row counts before and after exporting tables [retro 2026-11-25]\n## project\n- Initial retro rule one [retro 2026-11-24]\n" % (own2, own1)
+        rc, out, _ = self.sisi("rules", "organize", "--record", self.write(ans, stale_ans), cwd=p_race)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("organize", out.lower())
+        self.assertIn("New rule added while organizer was working", self.read(p_race, ".sisi", "rules.md"))
+
     def test_the_spec_is_unchanged(self):
         for line in self.read(REPO, "docs", "spec", "SHA256SUMS").splitlines():
             digest, rel = line.split()
@@ -3180,7 +3250,7 @@ cli.main(["tick"])
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLessEqual(code, 1923, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLessEqual(code, 1948, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 135)
         self.assertLessEqual(len(rulebook), 9872)

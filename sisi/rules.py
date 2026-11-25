@@ -3,10 +3,13 @@
 A rule is one line. It is in force as soon as it is added: rules for all of the person's work become the last
 section of the rulebook every session loads, and a project's rules live in `.sisi/rules.md` at its root.
 Now and then a cheap worker audits and organizes them. Store changes are committed and can be undone."""
-import json, os, re, time
+import contextlib, hashlib, json, os, re, time
 from . import store
 
 USER, PROJECT = "user", "project"
+OWNER = re.compile(r"\[owner\b[^\]]*\]")
+_owner, _retro = lambda l: bool(OWNER.search(l)), lambda ls: [l for l in ls if not _owner(l)]
+_snap = lambda u, p: hashlib.sha1(("\n".join(u) + "\0" + "\n".join(p)).encode()).hexdigest()[:16]
 HEAD_USER = "## Learned here\n\nAdded by retros and by the person. These add to the rules above and never relax them.\n"
 HEAD_PROJECT = "sisi: learned in this project (these add to the rules and never relax them):"
 
@@ -24,11 +27,11 @@ Rewrite both lists so they serve that objective best:
 - Word each rule as a direct instruction with its reason, on one line, standing on its own.
 - A rule seen in more than one project, or about how the person wants to be worked with, belongs in the
   first list. A rule about this project's own code belongs in the second.
-- Lines marked [owner ...] are the person's own words. Keep what each one asks for. You may tighten the
-  wording or merge them, and the result stays marked [owner <date>].
+- Lines marked [owner ...] are the person's own words: copy every one of them verbatim, unchanged by even
+  one character (you may reorder them). Only [retro ...] lines may be merged, reworded or dropped.
 - Keep the [source date] mark at the end of every line.
 - A `better` that recurs across retros has earned a rule: add it, worded as an instruction, marked [retro <date>].
-- Each list: at most %(lines)d lines and %(chars)d characters. Fewer is better.
+- Non-owner ([retro ...]) lines in each list: at most %(lines)d lines and %(chars)d characters. Fewer is better.
 
 Answer with exactly this shape and nothing else:
 ## user
@@ -196,13 +199,14 @@ def add(text, scope, source, cwd=None, log=None):
 
 
 def _fit(ls):
-    cfg, out, chars = store.config(), [], 0
-    for line in reversed(ls):
-        if len(out) >= cfg["rules_lines"] or chars + len(line) > cfg["rules_chars"]:
-            break
-        out.append(line)
-        chars += len(line)
-    return out[::-1]
+    cfg, keep, n, chars = store.config(), set(), 0, 0
+    for i in range(len(ls) - 1, -1, -1):
+        if not _owner(ls[i]):
+            if n >= cfg["rules_lines"] or chars + len(ls[i]) > cfg["rules_chars"]:
+                break
+            keep.add(i)
+            n, chars = n + 1, chars + len(ls[i])
+    return [l for i, l in enumerate(ls) if _owner(l) or i in keep]
 
 
 def delivered(p):
@@ -237,9 +241,9 @@ def objective():
     return " ".join(m.group(1).split()) if m else ""
 
 
-def _organized():
+def _organized(rel=("rules", "organized.json")):
     try:
-        return json.loads(store.read(store.data("rules", "organized.json")) or "{}")
+        return json.loads(store.read(os.path.join(store.DATA, *rel)) or "{}")
     except ValueError:
         return {}
 
@@ -248,30 +252,41 @@ def _mark_key(scope, cwd=None):
     return "rules/user.md" if scope == USER else os.path.realpath(path(PROJECT, cwd))
 
 
-def due(cwd):
+def due(cwd, claim=False):
     """One line when the learned rules need organizing, else ""."""
-    cfg, seen, why = store.config(), _organized(), []
+    cfg, seen, cl, now, need = store.config(), _organized(), _organized(("locks", "organize.json")), time.time(), []
+    active = lambda c, k: type(c.get("claim:" + k)) in (int, float) and 0 <= now - c["claim:" + k] < 1800
     for scope in (USER, PROJECT):
-        ls, k = scope_lines(scope, cwd, migrate=False), _mark_key(scope, cwd)
+        ls, k = _retro(scope_lines(scope, cwd, migrate=False)), _mark_key(scope, cwd)
         prev = int(seen.get(k, seen.get("rules/projects/%s.md" % store.project_key(cwd), 0) if scope == PROJECT else 0))
         over = len(ls) > cfg["rules_lines"] or sum(map(len, ls)) > cfg["rules_chars"]
-        added = len(ls) - prev
-        if over or added >= cfg["organize_after"]:
-            why.append("%s rules: %d lines, %s" % (scope, len(ls), "over the budget" if over else "%d new" % added))
-    if not why:
+        if not active(cl, k) and (over or len(ls) - prev >= cfg["organize_after"]):
+            need.append((k, "%s rules: %d lines, %s" % (scope, len(ls), "over the budget" if over else "%d new" % (len(ls) - prev))))
+    if not need:
         return ""
+    if claim:
+        with store.lock("organize", wait=False) as ok:
+            cl = _organized(("locks", "organize.json")) if ok else {}
+            if not ok or not (need := [(k, m) for k, m in need if not active(cl, k)]):
+                return ""
+            cl.update({"claim:" + k: now for k, _ in need})
+            with contextlib.suppress(OSError):
+                store.write(store.data("locks", "organize.json"), json.dumps(cl))
     return ("sisi: the learned rules need organizing (%s). In the background, give the output of "
             "`sisi rules organize` to a cheap worker and record its answer with `sisi rules organize --record FILE`."
-            % "; ".join(why))
+            % "; ".join(m for _, m in need))
 
 
 def organize_brief(cwd):
-    cfg = store.config()
+    cfg, u, p = store.config(), lines(path(USER)), scope_lines(PROJECT, cwd)
+    with contextlib.suppress(OSError), store.lock("organize"):
+        cl = _organized(("locks", "organize.json"))
+        cl["snap:" + _mark_key(PROJECT, cwd)] = _snap(u, p)
+        store.write(store.data("locks", "organize.json"), json.dumps(cl))
     return ORGANIZE % {
         "name": os.path.basename(store.project_root(cwd)), "objective": objective(),
         "lines": cfg["rules_lines"], "chars": cfg["rules_chars"],
-        "user": "\n".join(lines(path(USER))) or "(none)",
-        "project": "\n".join(scope_lines(PROJECT, cwd)) or "(none)",
+        "user": "\n".join(u) or "(none)", "project": "\n".join(p) or "(none)",
         "retros": "\n".join(store.read(store.data("retro.jsonl")).splitlines()[-40:]) or "(none)"}
 
 
@@ -284,9 +299,10 @@ def organize_record(answer_file, cwd):
     if set(got) != {USER, PROJECT}:
         return "the answer needs a `## user` section and a `## project` section, each a list of `- ` lines"
     for scope, ls in got.items():
-        if len(ls) > cfg["rules_lines"] or sum(map(len, ls)) > cfg["rules_chars"]:
+        r = _retro(ls)
+        if len(r) > cfg["rules_lines"] or sum(map(len, r)) > cfg["rules_chars"]:
             return "the %s list is over the budget of %d lines and %d characters (it has %d and %d)" % (
-                scope, cfg["rules_lines"], cfg["rules_chars"], len(ls), sum(map(len, ls)))
+                scope, cfg["rules_lines"], cfg["rules_chars"], len(r), sum(map(len, r)))
     up, pp = path(USER), path(PROJECT, cwd)
     if not pp or os.path.islink(os.path.dirname(pp)):
         return _migrate(cwd)[1].removeprefix("sisi: ")
@@ -295,6 +311,11 @@ def organize_record(answer_file, cwd):
         if msg:
             return msg.removeprefix("sisi: ")
         had = {USER: lines(up), PROJECT: scope_lines(PROJECT, cwd, migrate=False)}
+        if (want := _organized(("locks", "organize.json")).get("snap:" + _mark_key(PROJECT, cwd))) and _snap(had[USER], had[PROJECT]) != want:
+            return "the rules changed since `sisi rules organize` ran; run `sisi rules organize` again"
+        for scope in (USER, PROJECT):
+            if miss := [l for l in had[scope] if _owner(l) and got[scope].count(l) < had[scope].count(l)]:
+                return "owner rule missing or changed (%s): %s" % (scope, miss[0])
         if not any(got.values()) and any(had.values()):
             return "the answer holds no rules at all"
         try:
@@ -311,7 +332,7 @@ def organize_record(answer_file, cwd):
             store.write(up, "".join(l + "\n" for l in got[USER]))
             wrote_u = True
             seen = _organized()
-            seen.update({_mark_key(USER): len(got[USER]), _mark_key(PROJECT, cwd): len(got[PROJECT])})
+            seen.update({_mark_key(USER): len(_retro(got[USER])), _mark_key(PROJECT, cwd): len(_retro(got[PROJECT]))})
             seen.pop("rules/projects/%s.md" % store.project_key(cwd), None)
             marks = store.data("rules", "organized.json")
             store.write(marks, json.dumps(seen))
@@ -322,6 +343,10 @@ def organize_record(answer_file, cwd):
                 return "could not write %s (%s)" % (up, e)
             print("the organized rules are in %s; they could not be recorded for undo: %s" % (pp if wrote else up, e))
             return None
+    with contextlib.suppress(OSError), store.lock("organize"):
+        cl = {k: v for k, v in _organized(("locks", "organize.json")).items()
+              if k not in ("claim:" + _mark_key(USER), "claim:" + _mark_key(PROJECT, cwd), "snap:" + _mark_key(PROJECT, cwd))}
+        store.write(store.data("locks", "organize.json"), json.dumps(cl))
     build_rulebook()
     for scope in (USER, PROJECT):
         print("%s rules: %d lines (were %d)" % (scope, len(got[scope]), len(had[scope])))
