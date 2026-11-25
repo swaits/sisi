@@ -44,7 +44,7 @@ Hooks (the agent tool calls these): sisi tick | prompt | watch | gate
 Your own rules, models table and retro log live in ~/.local/share/sisi ($SISI_DATA, else $XDG_DATA_HOME/sisi), a git repository;
 a project's rules live in its .sisi/rules.md. Settings: "core" in
 its config.json (gate, meter, direct_calls, direct_extension, rules_lines, rules_chars, organize_after,
-research_days, shell_workers, worker_minutes, retro_minutes)."""
+research_days, shell_workers, worker_minutes, retro_minutes, disk_free_percent, disk_drop_percent, checkouts)."""
 
 
 def main(argv):

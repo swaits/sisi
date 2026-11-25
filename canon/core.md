@@ -119,7 +119,9 @@ disk, a slow build, a wrong result, a mess. In the turn you see it, start its fi
 blocks the fix and what would unblock it. Noting it, reporting it or working around it is not a
 fix. Fix the cause, not the symptom: ask why it happened, what else the same cause breaks, and
 whether your own work fed it. What your work makes is yours to clear: copies, checkouts,
-branches, build output, background jobs. A brief names what its worker may create; remove it when
-the piece merges, without asking. Record it with `sisi fault "<what is wrong>"`. sisi shows open
-faults at every request and will not let a turn end on one with no fix started and no blocker
-named. A worker fixes what its brief covers and reports the rest. Never wait to be told.
+branches, build output, background jobs. Before work that makes copies, checkouts or builds, know
+how much room they take, share one build folder between checkouts where the tool allows, and
+never start more than the machine has room for. A brief names what its worker may create; remove
+it when the piece merges, without asking. Record it with `sisi fault "<what is wrong>"`. sisi
+shows open faults at every request and will not let a turn end on one with no fix started and no
+blocker named. A worker fixes what its brief covers and reports the rest. Never wait to be told.

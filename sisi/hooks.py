@@ -97,28 +97,32 @@ def say(text):
 def _begin(state, cwd):
     if "started" not in state:
         state.update(started=time.time(), project=store.project_key(cwd), snapshot=store.snapshot(cwd))
+        try:
+            state["free_bytes"] = (st := os.statvfs(cwd)).f_bavail * st.f_frsize
+        except OSError:
+            pass
 
 
-def _faults(cwd, gate=False):
-    if not os.path.lexists(os.path.join(store.STATE, "core-faults", store.project_key(cwd) + ".json")):
+def _faults(cwd, gate=False, free=None):
+    if gate and not os.path.lexists(os.path.join(store.STATE, "core-faults", store.project_key(cwd) + ".json")):
         return ""
     from . import faults
-    return faults.show(cwd, gate)
+    return faults.gate(cwd) if gate else faults.check(cwd, free)
 
 
 def tick(p):
     """Session start: remember where the work began; print this project's learned rules and what is due."""
-    sid, cwd, worker = p["session_id"], p["cwd"] or os.getcwd(), p["subagent"]
+    sid, cwd, worker, free = p["session_id"], p["cwd"] or os.getcwd(), p["subagent"], None
     if sid:
         with store.session(sid) as s:
             _begin(s, cwd)
-            worker = worker or bool(s.get("worker"))
+            worker, free = worker or bool(s.get("worker")), s.get("free_bytes")
         env = os.environ.get("CLAUDE_ENV_FILE")
         if env and re.fullmatch(r"[A-Za-z0-9_-]+", str(sid)):
             store.append(env, "export SISI_SESSION_ID=%s" % sid)  # so `sisi retro` knows its session
     if not os.path.exists(os.path.join(store.DATA, "generated", "core.md")):
         rules.build_rulebook()
-    text = "\n".join(x for x in (rules.project_text(cwd), rules.due(cwd), models.stale(), "" if worker else _faults(cwd)) if x)
+    text = "\n".join(x for x in (rules.project_text(cwd), rules.due(cwd), models.stale(), "" if worker else _faults(cwd, False, free)) if x)
     if text:
         print(text)
     return 0
@@ -126,18 +130,18 @@ def tick(p):
 
 def prompt(p):
     """Each request: a new turn begins. The first request tells a delegated worker from a lead."""
-    sid, cwd, worker = p["session_id"], p["cwd"] or os.getcwd(), p["subagent"]
+    sid, cwd, worker, free = p["session_id"], p["cwd"] or os.getcwd(), p["subagent"], None
     if sid:
         with store.session(sid) as s:
             _begin(s, cwd)
             if not s.get("prompts") and WORKER.search(p["prompt"][:2000]):
                 s["worker"] = True
-            worker = worker or bool(s.get("worker"))
+            worker, free = worker or bool(s.get("worker")), s.get("free_bytes")
             s["prompts"] = s.get("prompts", 0) + 1
             s.get("prompts_since") or s.update(began=time.time())  # the first request of a piece of work
             s["prompts_since"] = s.get("prompts_since", 0) + 1
             s["direct"], s["extra"], s["blocks"] = 0, 0, 0
-    not worker and (text := _faults(cwd)) and print(text)
+    not worker and (text := _faults(cwd, False, free)) and print(text)
     return 0
 
 

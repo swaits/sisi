@@ -26,7 +26,9 @@ the numbers (minutes, messages, tool calls, delegations, checks) and the `term` 
 **Faults.** Record any fault you see with `sisi fault "<what is wrong>"` (kept per project across sessions).
 Session start and every request show the faults still not fixed, and the end-of-turn gate will not let a turn
 end on an open fault until a fix is started (`--started N`), a blocker is named (`--blocked N`), or evidence
-closes it (`--fixed N`). `sisi retro` lists the faults still open.
+closes it (`--fixed N`). sisi also opens faults itself at session start and each request when free disk space
+falls below `disk_free_percent`, this session uses more than `disk_drop_percent` of the disk, or the repository
+has more than `checkouts` linked worktrees. `sisi retro` lists the faults still open.
 
 ## Install
 
@@ -123,7 +125,8 @@ Rules live at three levels:
 
 Settings go under `"core"` in `config.json` in your store: `gate`, `meter`, `direct_calls` (8),
 `direct_extension` (8), `rules_lines` (30), `rules_chars` (4000), `organize_after` (8), `research_days` (7), `worker_minutes` (15),
-`shell_workers` (false), `retro_minutes` (5: work that passed every check, delegated nothing and took less than this many minutes from `sisi done` closes without a retro). Workers are started with the host's own delegation tool, so by default a shell command
+`shell_workers` (false), `retro_minutes` (5: work that passed every check, delegated nothing and took less than this many minutes from `sisi done` closes without a retro),
+`disk_free_percent` (20), `disk_drop_percent` (5), `checkouts` (8; setting any of these three to 0 turns that tripwire off). Workers are started with the host's own delegation tool, so by default a shell command
 that starts a worker (`opencode`, `muse`, `agy`: the first word of a command line in your models table) is
 refused. Set `"shell_workers": true` to allow it: it is then free on the meter, and needs a pick like any
 delegation, and `sisi pick` prints the command line.
