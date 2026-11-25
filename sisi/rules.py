@@ -92,14 +92,6 @@ def _check_writable(p):
         raise OSError("the project folder cannot be written")
 
 
-def _put(dest, before, after, **more):
-    """Write a project's list and record the change in the store, for the caller to commit, so it can be undone."""
-    after is not None and after != before and store.write(dest, after)
-    snap = store.data("rules", "last-project.json")
-    store.write(snap, json.dumps(dict(path=dest, before=before, after=after, **more)))
-    return snap
-
-
 def note(where, write=True):
     """Keep one marked note in `AGENTS.md` (write=True), or report whether it is there (write=False)."""
     root = os.path.dirname(os.path.dirname(where if write else path(PROJECT, where))) or where
@@ -121,97 +113,86 @@ def note(where, write=True):
         return print("sisi: could not add the rules note to %s (%s)." % (os.path.join(root, "AGENTS.md"), why)) if write else "missing (%s)" % why
 
 
-def _claims(old):
-    folder, base = os.path.split(old)
-    return [os.path.join(folder, n) for n in sorted(os.listdir(folder)) if n.startswith(base + ".") and n.endswith(".moving")] if os.path.isdir(folder) else []
-
-
-def _gone(claim):
-    """Whether the process that claimed this copy has ended: a crash left it behind."""
-    try:
-        os.kill(int(claim.split(".")[-2]), 0)
-    except ProcessLookupError:
-        return True
-    except (OSError, ValueError):
-        pass
-    return False
-
-
-def _pending(cwd):
-    """This project's rules wherever they are now: `.sisi/rules.md`, then the store's copy, also one being moved.
-    The copy being moved is read first: its mover removes it only after writing `.sisi/rules.md`."""
-    dest, old = path(PROJECT, cwd), _legacy(cwd)
-    moving = [l for c in _claims(old) for l in lines(c)]
-    mine = [] if not dest or os.path.islink(os.path.dirname(dest)) else lines(dest)
-    return list(dict.fromkeys(mine + lines(old) + moving))
-
-
 def _move(dest, old):
-    """Claim the store's copy by renaming it (one process wins), merge it into `.sisi/rules.md`, record the change,
-    and remove the copy only once the store has committed. Returns a warning, or ""."""
-    mine = "%s.%d.moving" % (old, os.getpid())
-    for src in [old] + [c for c in _claims(old) if _gone(c)]:  # the store's copy, else one a crashed run left behind
-        try:
-            os.rename(src, mine)
-            break
-        except OSError:
-            pass
-    else:
+    """Move the store's old file into `.sisi/rules.md` under the project lock. Returns a warning, or ""."""
+    if not os.path.isfile(old):
         return ""
-    raw = store.read(mine)
+    raw = store.read(old)
     try:
         _check_writable(dest)
         before = _text(dest)
         extra = [l for l in dict.fromkeys(_parse(raw)) if l not in set(_parse(before or ""))]
-        snap = _put(dest, before, _append(before, extra) if extra else before, moved=[old, raw])
+        rel = os.path.relpath(old, store.DATA)
+        uncommitted = not os.path.isdir(os.path.join(store.DATA, ".git")) or store.git(["status", "--porcelain", "--", rel], store.DATA)[1].strip()
+        if uncommitted and not store.commit("project rules before move to .sisi/rules.md", old):
+            raise OSError("could not commit store")
+        extra and store.write(dest, _append(before, extra))
+        (extra or _parse(raw)) and note(dest)
+        os.remove(old)
+        if not store.commit("project rules moved to .sisi/rules.md", old):
+            raise OSError("could not commit store")
     except OSError as e:
-        os.rename(mine, old)
+        not os.path.exists(old) and store.write(old, raw)
         return "sisi: could not move this project's rules to %s (%s); keeping the copy in your store." % (dest, e)
-    extra and note(dest)
-    tracked = store.git(["ls-files", "--", os.path.relpath(old, store.DATA)], store.DATA)[1].strip()
-    ok = store.commit("project rules moved to .sisi/rules.md", snap, *([old] if tracked else []))
-    os.remove(mine) if ok else os.rename(mine, old)
     return ""
 
 
-_moved = {}
-
-
 def _migrate(cwd=None):
-    """Move this project's rules out of the store, at most once per process. Returns (rules, warning)."""
-    dest = path(PROJECT, cwd)
-    if not dest:
-        return _pending(cwd), "sisi: project rules are not kept inside a git directory or a bare repository."
-    if os.path.islink(os.path.dirname(dest)):
-        return _pending(cwd), "sisi: %s is a link, and sisi does not use a linked .sisi; its rules are not read." % os.path.dirname(dest)
-    if dest not in _moved:
-        _moved[dest] = _move(dest, _legacy(cwd))
-    return _pending(cwd), _moved[dest]
+    """Move this project's rules out of the store if an old file exists. Returns (rules, warning)."""
+    dest, old = path(PROJECT, cwd), _legacy(cwd)
+    msg = ("sisi: project rules are not kept inside a git directory or a bare repository." if not dest
+           else "sisi: %s is a link, and sisi does not use a linked .sisi; its rules are not read." % os.path.dirname(dest) if os.path.islink(os.path.dirname(dest))
+           else "")
+    if not msg and os.path.isfile(old):
+        with store.lock(dest):
+            msg = _move(dest, old)
+    return scope_lines(PROJECT, cwd, migrate=False), msg
 
 
 def scope_lines(scope, cwd=None, migrate=True):
-    return lines(path(USER)) if scope == USER else _migrate(cwd)[0] if migrate else _pending(cwd)
+    if scope == USER:
+        return lines(path(USER))
+    if migrate:
+        return _migrate(cwd)[0]
+    dest, old = path(PROJECT, cwd), _legacy(cwd)
+    mine = [] if not dest or os.path.islink(os.path.dirname(dest)) else lines(dest)
+    return list(dict.fromkeys(mine + lines(old)))
+
+
+def _commit(msg, *paths, snap=None):
+    if snap:
+        p = store.data("rules", "last-project.json")
+        store.write(p, json.dumps(dict(zip(("path", "before", "after"), snap))))
+        paths = (p,) + paths
+    if not store.commit(msg, *paths):
+        raise OSError("store git commit failed")
 
 
 def add(text, scope, source, cwd=None, log=None):
-    """Put one rule in force. `source` is "owner" for the person's own words, "retro" for a retro's finding.
-    `log` is (file, line) to append once the rule is written, in the same commit. Raises OSError, changing nothing."""
+    """Put one rule in force; returns (line, warning). Raises OSError before writing when the list cannot be written."""
     line = "- %s [%s %s]" % (" ".join(str(text).split()), source, time.strftime("%Y-%m-%d"))
-    if scope == USER:
-        p = path(USER)
-        store.append(p, line)
-    else:
-        dest = path(PROJECT, cwd)
-        _check_writable(dest)
-        _, msg = _migrate(cwd)
-        msg and print(msg)
-        before = _text(dest)
-        p = _put(dest, before, _append(before, [line]))
-        note(dest)
-    log and store.append(*log)
-    store.commit("rule added (%s, %s)" % (scope, source), p, *log[:1] if log else ())
+    dest = path(scope, cwd)
+    scope == PROJECT and not dest and _check_writable(dest)
+    with store.lock(dest if scope == PROJECT else "user"):
+        if scope == USER:
+            store.append(dest, line)
+        else:
+            _check_writable(dest)
+            msg = _move(dest, _legacy(cwd))
+            msg and print(msg)
+            before = _text(dest)
+            after = _append(before, [line])
+            store.write(dest, after)
+            note(dest)
+        try:
+            log and store.append(*log)
+            extra = ([dest] if scope == USER else []) + ([log[0]] if log else [])
+            _commit("rule added (%s, %s)" % (scope, source), *extra, snap=(dest, before, after) if scope == PROJECT else None)
+            warn = ""
+        except OSError as e:
+            warn = "the rule is in %s; it could not be recorded for undo: %s" % (dest, e)
     scope == USER and build_rulebook()
-    return line
+    return line, warn
 
 
 def _fit(ls):
@@ -306,61 +287,85 @@ def organize_record(answer_file, cwd):
         if len(ls) > cfg["rules_lines"] or sum(map(len, ls)) > cfg["rules_chars"]:
             return "the %s list is over the budget of %d lines and %d characters (it has %d and %d)" % (
                 scope, cfg["rules_lines"], cfg["rules_chars"], len(ls), sum(map(len, ls)))
-    _, msg = _migrate(cwd)
-    if msg:
-        return msg.removeprefix("sisi: ")
-    had = {scope: scope_lines(scope, cwd) for scope in got}
-    if not any(got.values()) and any(had.values()):
-        return "the answer holds no rules at all"
     up, pp = path(USER), path(PROJECT, cwd)
-    try:
-        before = _text(pp)
-        after = "".join(l + "\n" for l in got[PROJECT]) if got[PROJECT] or before is not None else None
-        after is not None and _check_writable(pp)
-        backup = _put(pp, before, after)
-    except OSError as e:
-        return "could not write %s (%s)" % (pp, e)
-    after is not None and note(pp)
-    store.write(up, "".join(l + "\n" for l in got[USER]))
-    seen = _organized()
-    seen[_mark_key(USER)], seen[_mark_key(PROJECT, cwd)] = len(got[USER]), len(got[PROJECT])
-    seen.pop("rules/projects/%s.md" % store.project_key(cwd), None)
-    marks = store.data("rules", "organized.json")
-    store.write(marks, json.dumps(seen))
+    if not pp or os.path.islink(os.path.dirname(pp)):
+        return _migrate(cwd)[1].removeprefix("sisi: ")
+    with store.lock(pp):
+        msg = _move(pp, _legacy(cwd))
+        if msg:
+            return msg.removeprefix("sisi: ")
+        had = {USER: lines(up), PROJECT: lines(pp)}
+        if not any(got.values()) and any(had.values()):
+            return "the answer holds no rules at all"
+        try:
+            before = _text(pp)
+            after = "".join(l + "\n" for l in got[PROJECT]) if got[PROJECT] or before is not None else None
+            after is not None and _check_writable(pp)
+            wrote = after is not None and after != before
+            wrote and store.write(pp, after)
+        except OSError as e:
+            return "could not write %s (%s)" % (pp, e)
+        after is not None and note(pp)
+        wrote_u = False
+        try:
+            store.write(up, "".join(l + "\n" for l in got[USER]))
+            wrote_u = True
+            seen = _organized()
+            seen.update({_mark_key(USER): len(got[USER]), _mark_key(PROJECT, cwd): len(got[PROJECT])})
+            seen.pop("rules/projects/%s.md" % store.project_key(cwd), None)
+            marks = store.data("rules", "organized.json")
+            store.write(marks, json.dumps(seen))
+            _commit("rules organized", marks, up, snap=(pp, before, after))
+        except OSError as e:
+            wrote_u and build_rulebook()
+            if not wrote and not wrote_u:
+                return "could not write %s (%s)" % (up, e)
+            print("the organized rules are in %s; they could not be recorded for undo: %s" % (pp if wrote else up, e))
+            return None
+    build_rulebook()
     for scope in (USER, PROJECT):
         print("%s rules: %d lines (were %d)" % (scope, len(got[scope]), len(had[scope])))
-    store.commit("rules organized", marks, backup, up)
-    build_rulebook()
     return None
 
 
 def revert():
-    """Undo the last change to the learned rules, a project's list included: that list only while it holds exactly
-    what the change left in it. Returns why not, or None when it is done."""
-    rc, out = store.git(["log", "-1", "--format=%H %s", "--name-only", "--", "rules"], store.DATA)
+    """Undo the last rule change (learn, retro or organize): a project's list only while it holds what that change left."""
+    files = ("rules/user.md", "rules/last-project.json", "rules/owner.log", "rules/organized.json")
+    advice = " (edit by hand or restore with git)"
+    if os.path.isdir(os.path.join(store.DATA, ".git")) and store.git(["status", "--porcelain", "--", *files], store.DATA)[1].strip():
+        return "the store has uncommitted rule changes, so the previous change cannot be undone" + advice
+    rc, out = store.git(["log", "-1", "--format=%H %s", "--name-only", "--", *files], store.DATA)
     if rc != 0 or not out.strip():
         return "there is no change to the learned rules to undo"
-    (commit, _, subject), files = out.splitlines()[0].partition(" "), out.splitlines()[1:]
-    redo = len(re.match(r'(Revert ")*', subject).group(0)) // 8 % 2  # undoing an undo puts the change back
-    try:
-        snap = json.loads(store.git(["show", commit + "^" * redo + ":rules/last-project.json"], store.DATA)[1]) if "rules/last-project.json" in files else {}
-    except ValueError:
-        snap = {}
-    p, cur, (now, want) = snap.get("path"), None, (snap.get("before"), snap.get("after"))[::1 if redo else -1]
-    try:
-        cur = p and _text(p)
-        if p and (cur != now or not os.path.isdir(os.path.dirname(os.path.dirname(p)))):
-            return "%s has changed since `%s`, or its folder moved or is gone, so that change cannot be undone" % (p, subject)
-        p and _check_writable(p)
-        p and (os.remove(p) if want is None and cur is not None else want != cur and store.write(p, want))
-    except OSError as e:
-        return "could not restore %s (%s)" % (p, e)
-    if store.git(["-c", "user.name=sisi", "-c", "user.email=sisi@localhost", "revert", "--no-edit", commit], store.DATA)[0]:
-        store.git(["revert", "--abort"], store.DATA)
-        p and want != cur and (store.write(p, cur) if cur is not None else os.remove(p))
-        return "could not undo `%s`" % subject
-    old, raw = snap.get("moved") or (None, None)
-    old and not redo and not os.path.exists(old) and store.write(old, raw)  # the store's copy a move took comes back
+    (commit, _, subject), changed = out.splitlines()[0].partition(" "), out.splitlines()[1:]
+    redo = len(re.match(r'(Revert ")*', subject).group(0)) // 8 % 2
+    snap = {}
+    if "rules/last-project.json" in changed or "(project," in subject or "organized" in subject:
+        raw = store.git(["show", commit + "^" * redo + ":rules/last-project.json"], store.DATA)[1] if "rules/last-project.json" in changed else ""
+        try:
+            snap = json.loads(raw)
+        except ValueError:
+            snap = None
+        if (not isinstance(snap, dict) or not {"path", "before", "after"} <= set(snap)
+                or not isinstance(snap["path"], str) or not snap["path"].endswith("/.sisi/rules.md")
+                or any(snap[k] is not None and not isinstance(snap[k], str) for k in ("before", "after"))):
+            return "the undo record for `%s` is missing, corrupt or outside .sisi/rules.md, so it cannot be undone%s" % (subject, advice)
+    p, (now, want) = snap.get("path"), (snap.get("before"), snap.get("after"))[::1 if redo else -1]
+    with store.lock(p or "user"):
+        if store.git(["log", "-1", "--format=%H", "--", *files], store.DATA)[1].strip() != commit:
+            return "another rule change finished while waiting; run `sisi rules revert` again"
+        try:
+            cur = p and _text(p)
+            if p and (cur != now or not os.path.isdir(os.path.dirname(os.path.dirname(p)))):
+                return "%s has changed since `%s`, or its folder moved or is gone, so that change cannot be undone%s" % (p, subject, advice)
+            p and _check_writable(p)
+            p and (os.remove(p) if want is None and cur is not None else want != cur and store.write(p, want))
+        except OSError as e:
+            return "could not restore %s (%s)%s" % (p, e, advice)
+        if store.git(["-c", "user.name=sisi", "-c", "user.email=sisi@localhost", "revert", "--no-edit", commit], store.DATA)[0]:
+            store.git(["revert", "--abort"], store.DATA)
+            p and want != cur and (store.write(p, cur) if cur is not None else os.path.lexists(p) and os.remove(p))
+            return "could not undo `%s`%s" % (subject, advice)
     build_rulebook()
     print("undone: %s" % subject)
     return None
@@ -402,11 +407,11 @@ def learn(args, cwd=None):
     if len(text.split()) < 3:
         print('usage: sisi learn [--project] "<what the person said, in their words>"')
         return 1
-    log = store.data("rules", "owner.log")  # their exact words are kept, whatever organizing later does to the rule
+    log = os.path.join(store.DATA, "rules", "owner.log")  # their exact words are kept, whatever organizing later does to the rule
     try:
-        line = add(text, scope, "owner", cwd, (log, "%s %s %s" % (time.strftime("%Y-%m-%d"), scope, " ".join(text.split()))))
+        line, warn = add(text, scope, "owner", cwd, (log, "%s %s %s" % (time.strftime("%Y-%m-%d"), scope, " ".join(text.split()))))
     except OSError as e:
         print("sisi learn: could not write %s (%s). Nothing was changed, and your words were not kept." % (path(scope, cwd) or cwd or os.getcwd(), e))
         return 1
-    print("in force from the next session: %s" % line)
+    print(warn or "in force from the next session: %s" % line)
     return 0

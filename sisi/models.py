@@ -262,8 +262,8 @@ def research_record(answer_file):
         return "the answer is too long (at most 40 rows and 12,000 characters)"
     store.write(table(), text + "\n")
     os.path.isfile(store.data("models.stale")) and os.remove(store.data("models.stale"))
-    store.commit("models table researched", table())
-    print("models table recorded: %d workers." % (len(lines) - 2))
+    ok = store.commit("models table researched", table())
+    print("models table recorded: %d workers.%s" % (len(lines) - 2, "" if ok else " (store commit failed)"))
     return None
 
 
@@ -304,8 +304,8 @@ def judge(args, cwd=None):
         rec["minutes"] = minutes
     log = store.data("outcomes.jsonl")
     store.append(log, json.dumps(rec, sort_keys=True))
-    store.commit("delegation judged", log)
-    print("recorded: %d min%s." % (minutes, note) if minutes else "recorded, not timed.")
+    ok = store.commit("delegation judged", log)
+    print("%s%s" % ("recorded: %d min%s." % (minutes, note) if minutes else "recorded, not timed.", "" if ok else " (store commit failed)"))
     return 0
 
 

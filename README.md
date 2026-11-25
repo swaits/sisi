@@ -80,7 +80,7 @@ its limits are.
 | `sisi retro --no-gap … --term T --better …` | Nothing fell short, but work can always be done better: name the term and the one concrete thing that would have scored better (recorded with the retro; it becomes a rule only if it recurs, when the rules are organized) |
 | `sisi retro --later …` | The work is not finished yet |
 | `sisi learn [--project] "…"` | The person's own words become a rule at once |
-| `sisi rules` / `sisi rules organize [--record FILE]` / `sisi rules revert` | See the learned rules; have a worker organize them; undo the last change to them, a project's `.sisi/rules.md` included (it declines, changing nothing, when that file was changed since or its folder moved or is gone) |
+| `sisi rules` / `sisi rules organize [--record FILE]` / `sisi rules revert` | See the learned rules; have a worker organize them; undo the last rule change made with `learn`, a retro or `organize`, in the user list or a project's `.sisi/rules.md` (not the one-time move of old rules; it declines, changing nothing, when the project file changed since or its folder moved or is gone) |
 | `sisi models` / `sisi models research [--record FILE]` | The workers table; have a worker rebuild it |
 | `sisi judge WORKER good\|bad "…" [--minutes N] [--newest]` | How a delegation went; the minutes are measured from the pick's delegation (or `--minutes N`) and make the wheel favour faster workers. With several of one worker's jobs open, the oldest is judged first, `--newest` the newest |
 | `sisi direct "…"` | Allow more direct tool calls this turn, with the reason |
@@ -96,16 +96,18 @@ Rules live at three levels:
   `retro_seconds`, counts, goal, term) and `outcomes.jsonl` (each judged delegation: session, `project_key`, `model`,
   `started`/`ended`, minutes, verdict, why). All plain text you can read and edit.
 - **Each project** (`.sisi/rules.md` in the project's folder: in a git repository, the root of its main checkout, shared by
-  all its worktrees; outside git, the folder sisi is run in): rules specific to one project. A worktree's own checked-in
+  all its worktrees; outside git, the folder sisi is run in): rules specific to one project. In a bare repository with
+  worktrees, each worktree has its own list, and `GIT_DIR` in the environment is followed. A worktree's own checked-in
   copy of `.sisi/rules.md` is the committed version; new rules are written in the main checkout, for you to commit. You choose
-  whether to check `.sisi/` into git or ignore it (sisi works either way, and never commits or stages it for you). Whenever
-  sisi writes `.sisi/rules.md`, it also puts a marked note (`<!-- sisi:begin -->` ... `<!-- sisi:end -->`) in the project
-  root's `AGENTS.md` pointing to `.sisi/rules.md`, so the note is in the file those tools read. It is skipped with a
+  whether to check `.sisi/` into git or ignore it (sisi works either way, and never commits or stages it for you). When
+  sisi adds to, organizes or moves old rules into `.sisi/rules.md`, it also puts a marked note (`<!-- sisi:begin -->` ... `<!-- sisi:end -->`) in the project
+  root's `AGENTS.md` pointing to `.sisi/rules.md`, so the note is in the file those tools read; `revert` does not add or remove the note. It is skipped with a
   one-line reason when `AGENTS.md` is read-only, a folder, not UTF-8, a link that is broken or points outside the project
   or into `.git` or `.sisi`, or if writing fails. Deleting the block removes it only until the next rule is written, when
   sisi puts it back. If `AGENTS.md` is checked in, git shows it as modified until you commit it (sisi never commits it),
   and if `.sisi/` is git-ignored, people who clone the project get a note pointing at a file they do not have. A
-  hard-linked `AGENTS.md` is replaced by a separate file.
+  hard-linked `AGENTS.md` is replaced by a separate file. Old project rules moved from your store are not undone by
+  `revert`; the old list stays in your store's git history (`git -C ~/.local/share/sisi log -p -- rules/projects`).
 - **The rulebook every session loads** (`generated/core.md`) is built from the product (`canon/core.md`) and your user
   rules (`rules/user.md`). Project rules are not in the generated rulebook; they are printed at session start by the `tick`
   hook (for tools whose session-start output reaches the agent), pointed to by the `AGENTS.md` note, and shown by `sisi rules`.

@@ -19,8 +19,8 @@ The learning loop
   sisi rules                       the learned rules in force here
   sisi rules organize [--record FILE]
                                    the brief for a cheap worker to audit and organize them; record its answer
-  sisi rules revert                undo the last change to the learned rules, a project's .sisi/rules.md included;
-                                   it declines, changing nothing, if that file changed since or its folder moved
+  sisi rules revert                undo the last rule change made with learn, a retro or organize (user or project;
+                                   not the one-time move of old rules); declines if the project file changed since
 
 Delegation
   sisi models                      the workers you have: what each is good at and what it costs
@@ -43,7 +43,7 @@ Hooks (the agent tool calls these): sisi tick | prompt | watch | gate
 Your own rules, models table and retro log live in ~/.local/share/sisi ($SISI_DATA, else $XDG_DATA_HOME/sisi), a git repository;
 a project's rules live in its .sisi/rules.md. Settings: "core" in
 its config.json (gate, meter, direct_calls, direct_extension, rules_lines, rules_chars, organize_after,
-research_days, shell_workers, worker_minutes)."""
+research_days, shell_workers, worker_minutes, retro_minutes)."""
 
 
 def main(argv):

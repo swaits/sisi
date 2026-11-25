@@ -109,7 +109,8 @@ def record(s, cwd, opt, sid=None):
         entry["retro_seconds"] = max(0, int(round(now - dem)))
     log = store.data("retro.jsonl")
     store.append(log, json.dumps(entry, sort_keys=True))
-    store.commit("retro recorded", log)
+    if not store.commit("retro recorded", log):
+        print("sisi: retro saved, but store git commit failed.")
     s["snapshot"], s["changed"], s["retro_at"] = store.snapshot(cwd), False, now
     for key in ("prompts_since", "direct_since", "delegations_since", "reasons_since", "workers_since", "done", "paused",
                 "fails_since", "picked", "starts", "retro_demanded", "began"):
@@ -203,11 +204,11 @@ def run(args, cwd=None):
         record({}, cwd, dict(opt, scope=scope) if kind == "gap" else opt)
     if kind == "gap":
         try:
-            added = rules.add(opt["improve"], scope, "retro", cwd)
-            print("recorded. In force from the next session%s: %s" % (
+            added, warn = rules.add(opt["improve"], scope, "retro", cwd)
+            print(warn or "recorded. In force from the next session%s: %s" % (
                 " in every project" if scope == rules.USER else " in this project", added))
         except OSError as e:
-            print("recorded, but could not write %s (%s)." % (rules.path(scope, cwd), e))
+            print("recorded, but could not write %s (%s)." % (rules.path(scope, cwd) or cwd, e))
         if rules.due(cwd):
             print(rules.due(cwd))
     else:

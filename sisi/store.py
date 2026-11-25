@@ -172,6 +172,15 @@ def session(sid):
         write(path, json.dumps(state))
 
 
+@contextlib.contextmanager
+def lock(key):
+    """Exclusive lock in the store for one project (or user)."""
+    p = data("locks", "%s-%s.lock" % (os.path.basename(key) or "root", hashlib.sha1(key.encode()).hexdigest()[:8]))
+    with open(p, "a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        yield
+
+
 def current_session(cwd=None):
     """The session a command typed by an agent belongs to: the id session start exported, else the most
     recently active lead (not worker) session of this project. None when there is none (a person at a terminal)."""
