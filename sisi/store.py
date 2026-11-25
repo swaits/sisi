@@ -92,11 +92,12 @@ def git(args, cwd, timeout=15):
 
 def commit(message, *paths):
     """One commit in the person's store holding only these paths, so the change can be undone on its own."""
-    if not os.path.isdir(os.path.join(DATA, ".git")):
-        git(["init", "-q"], DATA)
-    rel = [os.path.relpath(p, DATA) for p in paths]
-    return (git(["add", "-A", "--"] + rel, DATA)[0] == 0 and
-            git(["-c", "user.name=sisi", "-c", "user.email=sisi@localhost", "commit", "-q", "-m", message, "--"] + rel, DATA)[0] == 0)
+    with lock("store"):
+        os.path.isdir(os.path.join(DATA, ".git")) or git(["init", "-q"], DATA)
+        rel = [os.path.relpath(p, DATA) for p in paths]
+        return (git(["add", "-A", "--"] + rel, DATA)[0] == 0 and
+                (git(["status", "--porcelain", "--"] + rel, DATA) == (0, "") or
+                 git(["-c", "user.name=sisi", "-c", "user.email=sisi@localhost", "commit", "-q", "-m", message, "--"] + rel, DATA)[0] == 0))
 
 
 _roots = {}
@@ -128,6 +129,19 @@ def project_key(cwd=None):
     return "%s-%s" % (os.path.basename(root) or "root", hashlib.sha1(root.encode()).hexdigest()[:8])
 
 
+def regular(path, load=False):
+    """("", bytes|None) if `path` is absent or a regular non-link file within 64,000 bytes, else (reason, None)."""
+    try:
+        st = os.lstat(path)
+        why = "a symlink" if stat.S_ISLNK(st.st_mode) else "not a regular file" if not stat.S_ISREG(st.st_mode) else "over 64,000 bytes" if st.st_size > 64000 else ""
+        if why or not load:
+            return why, None
+        with open(path, "rb") as f:
+            return ("", raw) if len(raw := f.read(64001)) <= 64000 else ("over 64,000 bytes", None)
+    except (FileNotFoundError, NotADirectoryError):
+        return "", None
+
+
 def agents_target(root):
     """(real_path, rel_path, "") for `root/AGENTS.md` when safe, else (None, "", reason)."""
     agents, real_root = os.path.join(root, "AGENTS.md"), os.path.realpath(root)
@@ -136,7 +150,7 @@ def agents_target(root):
     why = ("it is a dangling symlink" if link and not os.path.exists(agents) else "it is a directory" if os.path.isdir(agents)
            else "it is a symlink outside the project" if link and os.path.commonpath([real_root, real]) != real_root
            else "it is a symlink into " + rel.split(os.sep)[0] if link and rel.split(os.sep)[0] in (".git", ".sisi")
-           else "it is not a regular file" if os.path.lexists(agents) and not os.path.isfile(agents) else "")
+           else "it is " + issue if (issue := regular(real if link else agents)[0]) else "")
     return (None, "", why) if why else (real, rel, "")
 
 
@@ -149,7 +163,7 @@ def snapshot(cwd):
     real, rel, _ = agents_target(top)
     spec = ["--", ":(top)", ":(top,exclude).sisi"] + ([":(top,exclude)" + rel] if rel else [])
     head, status, diff = (out if rc == 0 else ""), git(["status", "--porcelain"] + spec, cwd)[1], git(["diff", "HEAD"] + spec, cwd)[1]
-    body = NOTE_RE.sub("", read(real)).rstrip("\r\n") if real and os.path.isfile(real) else ""
+    body = NOTE_RE.sub("", (regular(real, True)[1] or b"").decode("utf-8", "replace") if real else "").rstrip("\r\n")
     return hashlib.sha1((head + status + diff + "\0" + body).encode()).hexdigest()[:16]
 
 
@@ -173,12 +187,15 @@ def session(sid):
 
 
 @contextlib.contextmanager
-def lock(key):
-    """Exclusive lock in the store for one project (or user)."""
-    p = data("locks", "%s-%s.lock" % (os.path.basename(key) or "root", hashlib.sha1(key.encode()).hexdigest()[:8]))
+def lock(key, wait=True):
+    """Exclusive lock in the store for one project (or user); with wait=False, yields False if busy."""
+    p, ok = data("locks", "%s-%s.lock" % (os.path.basename(key) or "root", hashlib.sha1(key.encode()).hexdigest()[:8])), True
     with open(p, "a") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        yield
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+        except BlockingIOError:
+            ok = False
+        yield ok
 
 
 def current_session(cwd=None):

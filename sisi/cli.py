@@ -20,7 +20,7 @@ The learning loop
   sisi rules organize [--record FILE]
                                    the brief for a cheap worker to audit and organize them; record its answer
   sisi rules revert                undo the last rule change made with learn, a retro or organize (user or project;
-                                   not the one-time move of old rules); declines if the project file changed since
+                                   not the move of old rules; a second re-applies it); declines if the project file changed
 
 Delegation
   sisi models                      the workers you have: what each is good at and what it costs

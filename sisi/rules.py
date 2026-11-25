@@ -66,12 +66,12 @@ def lines(p):
 
 
 def _text(p):
-    """What a project's rule list holds now, None when there is none; OSError when it is not UTF-8."""
+    """What a regular file holds now, None when absent; OSError when unusable or not UTF-8."""
+    why, raw = store.regular(p, True)
+    if why:
+        raise OSError("%s is %s" % (p, why))
     try:
-        with open(p, "rb") as f:
-            return f.read().decode("utf-8")
-    except FileNotFoundError:
-        return None
+        return None if raw is None else raw.decode("utf-8")
     except UnicodeDecodeError:
         raise OSError(".sisi/rules.md is not valid UTF-8")
 
@@ -84,8 +84,8 @@ def _check_writable(p):
     if not p:
         raise OSError("this folder is inside a git directory or a bare repository")
     for t, label, folder in ((os.path.dirname(p), ".sisi", True), (p, ".sisi/rules.md", False)):
-        why = ("a symlink" if os.path.islink(t) else ("not a directory" if folder else "a directory") if os.path.lexists(t) and os.path.isdir(t) != folder
-               else "read-only" if os.path.exists(t) and not os.access(t, os.W_OK) else "")
+        why = (("a symlink" if os.path.islink(t) else "not a directory" if os.path.lexists(t) and not os.path.isdir(t) else "") if folder
+               else store.regular(t)[0]) or ("read-only" if os.path.exists(t) and not os.access(t, os.W_OK) else "")
         if why:
             raise OSError("%s is %s" % (label, why))
     if not os.path.exists(os.path.dirname(p)) and not os.access(os.path.dirname(os.path.dirname(p)), os.W_OK):
@@ -137,15 +137,15 @@ def _move(dest, old):
     return ""
 
 
-def _migrate(cwd=None):
+def _migrate(cwd=None, wait=True):
     """Move this project's rules out of the store if an old file exists. Returns (rules, warning)."""
     dest, old = path(PROJECT, cwd), _legacy(cwd)
     msg = ("sisi: project rules are not kept inside a git directory or a bare repository." if not dest
-           else "sisi: %s is a link, and sisi does not use a linked .sisi; its rules are not read." % os.path.dirname(dest) if os.path.islink(os.path.dirname(dest))
-           else "")
+           else "sisi: %s is a link, and sisi does not use a linked .sisi; its rules are not read." % d if os.path.islink(d := os.path.dirname(dest))
+           else "sisi: %s is %s; its rules are not read." % (dest, why) if not os.path.isfile(old) and (why := "not a directory" if os.path.lexists(d) and not os.path.isdir(d) else store.regular(dest)[0]) else "")
     if not msg and os.path.isfile(old):
-        with store.lock(dest):
-            msg = _move(dest, old)
+        with store.lock(dest, wait=wait) as ok:
+            msg = _move(dest, old) if ok else ""
     return scope_lines(PROJECT, cwd, migrate=False), msg
 
 
@@ -155,8 +155,8 @@ def scope_lines(scope, cwd=None, migrate=True):
     if migrate:
         return _migrate(cwd)[0]
     dest, old = path(PROJECT, cwd), _legacy(cwd)
-    mine = [] if not dest or os.path.islink(os.path.dirname(dest)) else lines(dest)
-    return list(dict.fromkeys(mine + lines(old)))
+    raw = store.regular(dest, True)[1] if dest and not os.path.islink(os.path.dirname(dest)) else None
+    return list(dict.fromkeys((_parse(raw.decode("utf-8", "replace")) if raw is not None else []) + lines(old)))
 
 
 def _commit(msg, *paths, snap=None):
@@ -227,7 +227,7 @@ def build_rulebook():
 
 
 def project_text(cwd):
-    ls, note = _migrate(cwd)
+    ls, note = _migrate(cwd, wait=False)
     mine = _fit(ls)
     return "\n".join(x for x in (note, HEAD_PROJECT + "\n" + "\n".join(mine) if mine else "") if x)
 
@@ -252,7 +252,7 @@ def due(cwd):
     """One line when the learned rules need organizing, else ""."""
     cfg, seen, why = store.config(), _organized(), []
     for scope in (USER, PROJECT):
-        ls, k = scope_lines(scope, cwd), _mark_key(scope, cwd)
+        ls, k = scope_lines(scope, cwd, migrate=False), _mark_key(scope, cwd)
         prev = int(seen.get(k, seen.get("rules/projects/%s.md" % store.project_key(cwd), 0) if scope == PROJECT else 0))
         over = len(ls) > cfg["rules_lines"] or sum(map(len, ls)) > cfg["rules_chars"]
         added = len(ls) - prev
@@ -294,7 +294,7 @@ def organize_record(answer_file, cwd):
         msg = _move(pp, _legacy(cwd))
         if msg:
             return msg.removeprefix("sisi: ")
-        had = {USER: lines(up), PROJECT: lines(pp)}
+        had = {USER: lines(up), PROJECT: scope_lines(PROJECT, cwd, migrate=False)}
         if not any(got.values()) and any(had.values()):
             return "the answer holds no rules at all"
         try:
@@ -346,12 +346,12 @@ def revert():
             snap = json.loads(raw)
         except ValueError:
             snap = None
-        if (not isinstance(snap, dict) or not {"path", "before", "after"} <= set(snap)
-                or not isinstance(snap["path"], str) or not snap["path"].endswith("/.sisi/rules.md")
+        if (not isinstance(snap, dict) or not {"path", "before", "after"} <= set(snap) or not isinstance(sp := snap["path"], str)
+                or not os.path.isabs(sp) or os.path.normpath(sp) != sp or not sp.endswith("/.sisi/rules.md") or ".git" in sp.split(os.sep)
                 or any(snap[k] is not None and not isinstance(snap[k], str) for k in ("before", "after"))):
             return "the undo record for `%s` is missing, corrupt or outside .sisi/rules.md, so it cannot be undone%s" % (subject, advice)
     p, (now, want) = snap.get("path"), (snap.get("before"), snap.get("after"))[::1 if redo else -1]
-    with store.lock(p or "user"):
+    with store.lock(p or "user"), store.lock("store"):
         if store.git(["log", "-1", "--format=%H", "--", *files], store.DATA)[1].strip() != commit:
             return "another rule change finished while waiting; run `sisi rules revert` again"
         try:
