@@ -6,6 +6,7 @@ not installed, and nothing is touched that sisi cannot edit safely: it is left a
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from . import models, rules, store
 
+BLOCK = re.compile(r"<!-- sisi:begin -->\n.*?<!-- sisi:end -->\n?", re.S)
 SISI = re.compile(r"bin/sisi (tick|prompt|watch|gate)\b")  # what marks a hook entry as sisi's, old or new
 SUBS = ("tick", "prompt", "watch", "gate")
 
@@ -126,21 +127,22 @@ def _rulebook(h, d, book, mode):
             return "link removed"
         return "linked"
     text = _read(target)
-    body = "@%s\n" % book if h.get("import") else store.read(book)
-    found = store.BLOCK.search(text)
+    block = "<!-- sisi:begin -->\n%s<!-- sisi:end -->\n" % ("@%s\n" % book if h.get("import") else store.read(book))
+    found = BLOCK.search(text)
     if mode == "remove":
         if found:
-            rest = store.BLOCK.sub("", text, count=1)
+            rest = BLOCK.sub("", text, count=1)
             os.remove(target) if not rest else _save(target, rest)
         return "removed" if found else ""
-    if not found and mode == "add" and not os.path.exists(target) and not h.get("import"):
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        os.symlink(book, target)
-        return "linked"
-    if mode != "check" and (found or mode == "add"):
-        new = store.put_block(text, body)
-        new != text and _save(target, new)
+    if not found and mode == "add":
+        if not os.path.exists(target) and not h.get("import"):
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            os.symlink(book, target)
+            return "linked"
+        _save(target, block + text)
         found = True
+    elif found and mode != "check":
+        (new := BLOCK.sub(lambda m: block, text, count=1)) != text and _save(target, new)
     if not found:
         return "MISSING (run `sisi install`)"
     return "imported" if h.get("import") else "in a marked block"
@@ -304,8 +306,8 @@ def doctor(cwd=None):
     print("release in use:  %s" % (os.path.realpath(_current()) if os.path.lexists(_current()) else "none: run `sisi release`"))
     print("your store:      %s" % store.DATA)
     print("rulebook:        %d lines, %d characters" % (len(book.splitlines()), len(book)))
-    proj_n = len(rules.scope_lines(rules.PROJECT, cwd))
-    print("learned rules:   %d for all projects, %d for this one" % (len(rules.lines(rules.path(rules.USER))), proj_n))
+    proj_n = len(rules.scope_lines(rules.PROJECT, cwd, migrate=False))
+    print("learned rules:   %d for all projects, %d for this one%s" % (len(rules.lines(rules.path(rules.USER))), proj_n, " (waiting to be moved from store)" if os.path.isfile(rules._legacy(cwd)) else ""))
     proj_n and print("project note:    %s" % rules.note(cwd, write=False))
     print("models table:    %s" % ("none yet" if age is None else "%d days old" % age))
     print("sisi on PATH:    %s" % (shutil.which("sisi") or "no: add ~/.local/bin to PATH (`sisi install` links it there)"))

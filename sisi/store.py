@@ -6,9 +6,8 @@ import contextlib, fcntl, hashlib, json, os, re, stat, subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 HOME = os.path.expanduser("~")
-BLOCK = re.compile(r"<!-- sisi:begin -->\r?\n.*?<!-- sisi:end -->\r?\n?", re.S)
 NOTE = "This project's learned rules are in `.sisi/rules.md`. Read that file before any work here and follow it."
-_NOTE_RE = re.compile(r"(?:\r?\n)*<!-- sisi:begin -->\r?\n" + re.escape(NOTE) + r"\r?\n<!-- sisi:end -->\r?\n?")
+NOTE_RE = re.compile(r"^<!-- sisi:begin -->\r?\n" + re.escape(NOTE) + r"\r?\n<!-- sisi:end -->(?:\r?\n|$)", re.M)
 def _where(own, xdg, fallback):
     """The folder in the environment variable `own`, else `xdg`/sisi, else the default under the home."""
     base = os.environ.get(xdg)
@@ -64,23 +63,16 @@ def records(name):
 def write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = "%s.%d.tmp" % (path, os.getpid())
-    with open(tmp, "w", encoding="utf-8", newline="") as f:
-        f.write(text)
     try:
-        os.chmod(tmp, stat.S_IMODE(os.stat(path).st_mode))  # a rewritten file keeps its permissions
-    except OSError:
-        pass
-    os.replace(tmp, path)
-
-
-def put_block(text, body, append=False):
-    """Insert or refresh the marked sisi block in `text`, collapsing duplicates."""
-    nl = "\r\n" if "\r\n" in text else "\n"
-    block = "<!-- sisi:begin -->%s%s%s<!-- sisi:end -->%s" % (nl, body.rstrip("\r\n"), nl, nl)
-    it = iter((block,))
-    new, n = BLOCK.subn(lambda m: next(it, ""), text)
-    sep = "" if not append or not text or text.endswith(nl * 2) else nl if text.endswith(nl) else nl * 2
-    return new if n else (text + sep + block) if append else (block + text)
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        with contextlib.suppress(OSError):
+            os.chmod(tmp, stat.S_IMODE(os.stat(path).st_mode))  # a rewritten file keeps its permissions
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
 
 
 def append(path, line):
@@ -122,24 +114,26 @@ def project_key(cwd=None):
 def agents_target(root):
     """(real_path, rel_path, "") for `root/AGENTS.md` when safe, else (None, "", reason)."""
     agents, real_root = os.path.join(root, "AGENTS.md"), os.path.realpath(root)
-    real, link = os.path.realpath(agents) if os.path.islink(agents) else agents, os.path.islink(agents)
+    real, link = os.path.realpath(agents) if os.path.islink(agents) else os.path.join(real_root, "AGENTS.md"), os.path.islink(agents)
+    rel = os.path.relpath(real, real_root) if link else "AGENTS.md"
     why = ("it is a dangling symlink" if link and not os.path.exists(agents) else "it is a directory" if os.path.isdir(agents)
            else "it is a symlink outside the project" if link and os.path.commonpath([real_root, real]) != real_root
+           else "it is a symlink into " + rel.split(os.sep)[0] if link and rel.split(os.sep)[0] in (".git", ".sisi")
            else "it is not a regular file" if os.path.lexists(agents) and not os.path.isfile(agents) else "")
-    return (None, "", why) if why else (real, os.path.relpath(real, real_root), "")
+    return (None, "", why) if why else (real, rel, "")
 
 
 def snapshot(cwd):
     """A fingerprint of the working tree: the commit, what is uncommitted, what is untracked. "" outside git."""
-    rc, top = git(["rev-parse", "--path-format=absolute", "--show-toplevel"], cwd)
-    if rc != 0:
+    rc, out = git(["rev-parse", "--path-format=absolute", "--show-toplevel", "HEAD"], cwd)
+    top = (out.splitlines() or [""])[0]
+    if not top:
         return ""
-    real, rel, _ = agents_target(top.strip())
+    real, rel, _ = agents_target(top)
     spec = ["--", ":(top)", ":(top,exclude).sisi"] + ([":(top,exclude)" + rel] if rel else [])
-    head, status, diff = git(["rev-parse", "HEAD"], cwd)[1], git(["status", "--porcelain"] + spec, cwd)[1], git(["diff", "HEAD"] + spec, cwd)[1]
-    staged = git(["diff", "--cached", "--", ":(top)" + rel], cwd)[1] if rel else ""
-    body = _NOTE_RE.sub("", read(real)).rstrip("\r\n") if real and os.path.isfile(real) else ""
-    return hashlib.sha1((head + status + diff + staged + "\0" + body).encode()).hexdigest()[:16]
+    head, status, diff = (out if rc == 0 else ""), git(["status", "--porcelain"] + spec, cwd)[1], git(["diff", "HEAD"] + spec, cwd)[1]
+    body = NOTE_RE.sub("", read(real)).rstrip("\r\n") if real and os.path.isfile(real) else ""
+    return hashlib.sha1((head + status + diff + "\0" + body).encode()).hexdigest()[:16]
 
 
 def _session_path(sid):

@@ -96,16 +96,18 @@ def note(where, write=True):
     try:
         if not target:
             raise OSError(why)
-        bad = (target, "it is read-only") if os.path.exists(target) else (root, "project folder is read-only")
-        if write and os.path.exists(bad[0]) and not (os.stat(bad[0]).st_mode & 0o200):
-            raise OSError(bad[1])
+        if write and os.path.exists(target) and not (os.stat(target).st_mode & 0o200):
+            raise OSError("it is read-only")
         text = open(target, "rb").read().decode("utf-8") if os.path.exists(target) else ""
+        if not write:
+            return "in AGENTS.md" if store.NOTE_RE.search(text) else "missing from AGENTS.md"
+        if not store.NOTE_RE.search(text):
+            nl = "\r\n" if "\r\n" in text else "\n"
+            sep = "" if not text or text.endswith(nl * 2) else nl if text.endswith(nl) else nl * 2
+            store.write(target, "%s%s<!-- sisi:begin -->%s%s%s<!-- sisi:end -->%s" % (text, sep, nl, store.NOTE, nl, nl))
     except (OSError, UnicodeDecodeError) as e:
         why = "it is not valid UTF-8" if isinstance(e, UnicodeDecodeError) else str(e)
         return print("sisi: could not add the rules note to %s (%s)." % (os.path.join(root, "AGENTS.md"), why)) if write else "missing (%s)" % why
-    if not write:
-        return "in AGENTS.md" if (m := store.BLOCK.search(text)) and store.NOTE in m.group(0) else "missing from AGENTS.md"
-    (new := store.put_block(text, store.NOTE, append=True)) != text and store.write(target, new)
 
 
 def _migrate(cwd=None, add_note=True):
@@ -134,8 +136,8 @@ def _migrate(cwd=None, add_note=True):
         return list(dict.fromkeys(cur + old)), "sisi: could not move this project's rules to %s (%s); keeping the copy in your store." % (dest, e)
 
 
-def scope_lines(scope, cwd=None):
-    return lines(path(USER)) if scope == USER else _migrate(cwd)[0]
+def scope_lines(scope, cwd=None, migrate=True):
+    return lines(path(USER)) if scope == USER else _migrate(cwd)[0] if migrate else list(dict.fromkeys(lines(path(PROJECT, cwd)) + lines(_legacy(cwd))))
 
 
 def add(text, scope, source, cwd=None):

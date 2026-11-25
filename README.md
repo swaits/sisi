@@ -98,8 +98,12 @@ Rules live at three levels:
 - **Each project** (`.sisi/rules.md` at the project root, never in a subfolder): rules specific to one project. You choose
   whether to check `.sisi/` into git or ignore it (sisi works either way, and never commits or stages it for you). Whenever
   sisi writes `.sisi/rules.md`, it also puts a marked note (`<!-- sisi:begin -->` ... `<!-- sisi:end -->`) in the project
-  root's `AGENTS.md` pointing to `.sisi/rules.md`, so the note is in the file those tools read. To remove the note, delete
-  the marked block from `AGENTS.md`.
+  root's `AGENTS.md` pointing to `.sisi/rules.md`, so the note is in the file those tools read. It is skipped with a
+  one-line reason when `AGENTS.md` is read-only, a folder, not UTF-8, a link that is broken or points outside the project
+  or into `.git` or `.sisi`, or if writing fails. Deleting the block removes it only until the next rule is written, when
+  sisi puts it back. If `AGENTS.md` is checked in, git shows it as modified until you commit it (sisi never commits it),
+  and if `.sisi/` is git-ignored, people who clone the project get a note pointing at a file they do not have. A
+  hard-linked `AGENTS.md` is replaced by a separate file.
 - **The rulebook every session loads** (`generated/core.md`) is built from the product (`canon/core.md`) and your user
   rules (`rules/user.md`). Project rules are not in the generated rulebook; they are printed at session start by the `tick`
   hook (for tools whose session-start output reaches the agent), pointed to by the `AGENTS.md` note, and shown by `sisi rules`.

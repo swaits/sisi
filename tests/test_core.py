@@ -425,10 +425,10 @@ class Core(unittest.TestCase):
         self.assertEqual(self.read(a_nonl), "# No final newline\n\n" + self.NOTE_BLOCK)
 
         p_dup = self.project("dup")
-        a_dup = self.write(os.path.join(p_dup, "AGENTS.md"),
-                           "# Two\n\n<!-- sisi:begin -->\nold one\n<!-- sisi:end -->\n<!-- sisi:begin -->\nold two\n<!-- sisi:end -->\n")
-        self.assertEqual(self.sisi("learn", "--project", "Collapse duplicate marked blocks to one", cwd=p_dup)[0], 0)
-        self.assertEqual(self.read(a_dup), "# Two\n\n" + self.NOTE_BLOCK)
+        own_blocks = "# Two\n\n<!-- sisi:begin -->\nold one\n<!-- sisi:end -->\n<!-- sisi:begin -->\nold two\n<!-- sisi:end -->\n"
+        a_dup = self.write(os.path.join(p_dup, "AGENTS.md"), own_blocks)
+        self.assertEqual(self.sisi("learn", "--project", "Leave user marked blocks untouched", cwd=p_dup)[0], 0)
+        self.assertEqual(self.read(a_dup), own_blocks + "\n" + self.NOTE_BLOCK)
 
     def test_retro_organize_and_migration_each_add_agents_note(self):
         p_retro = self.project("retro-note")
@@ -535,6 +535,178 @@ class Core(unittest.TestCase):
         self.assertEqual(self.sisi("learn", "--project", "Add a rule so doctor sees the note")[0], 0)
         out_present = self.sisi("doctor")[1]
         self.assertRegex(out_present, r"project note:.*in AGENTS\.md")
+
+    def test_stray_and_user_markers_in_agents_md_are_preserved(self):
+        cases = [
+            ("stray-begin", "# Doc\n<!-- sisi:begin -->\nmy text\nmore\n"),
+            ("stray-both", "<!-- sisi:end -->\nhello\n<!-- sisi:begin -->\nkeep me\n"),
+            ("own-block", "# T\n<!-- sisi:begin -->\nMY OWN IMPORTANT TEXT\n<!-- sisi:end -->\nafter\n"),
+            ("fenced", "# Doc\n```\n<!-- sisi:begin -->\nexample\n<!-- sisi:end -->\n```\n"),
+            ("inline-marker", "x<!-- sisi:begin -->\n" + self.NOTE_BLOCK.split("\n", 1)[1]),
+        ]
+        for name, initial in cases:
+            p = self.project("markers-" + name)
+            a = self.write(os.path.join(p, "AGENTS.md"), initial)
+            expected = initial + ("\n" if initial.endswith("\n") else "\n\n") + self.NOTE_BLOCK
+            for n in ("one", "two", "three"):
+                rc, out, _ = self.sisi("learn", "--project", "a rule about x " + n, cwd=p)
+                self.assertEqual(rc, 0, (name, n, out))
+                self.assertEqual(self.read(a), expected, (name, n))
+
+    def test_duplicate_exact_note_blocks_stay_untouched(self):
+        p = self.project("dup-exact")
+        initial = "a\n\n" + self.NOTE_BLOCK + "\n" + self.NOTE_BLOCK + "\nz\n"
+        a = self.write(os.path.join(p, "AGENTS.md"), initial)
+        self.assertEqual(self.sisi("learn", "--project", "Duplicate exact blocks stay untouched", cwd=p)[0], 0)
+        self.assertEqual(self.read(a), initial)
+
+    def test_agents_symlink_into_git_or_sisi_is_refused(self):
+        p_git = self.project("sym-git")
+        git_cfg = os.path.join(p_git, ".git", "config")
+        before_cfg = self.read(git_cfg)
+        os.symlink(".git/config", os.path.join(p_git, "AGENTS.md"))
+        rc, out, _ = self.sisi("learn", "--project", "a rule about gitconf x", cwd=p_git)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("a rule about gitconf x", self.read(p_git, ".sisi", "rules.md"))
+        self.assertEqual(self.read(git_cfg), before_cfg)
+        self.assertEqual(subprocess.run(["git", "status", "--porcelain"], cwd=p_git, capture_output=True, text=True).returncode, 0)
+        self.assertEqual(len([l for l in out.splitlines() if "could not add" in l.lower()]), 1, out)
+
+        p_sisi = self.project("sym-sisi")
+        self.mkdir(p_sisi, ".sisi")
+        rules_f = self.write(os.path.join(p_sisi, ".sisi", "rules.md"), "")
+        os.symlink(".sisi/rules.md", os.path.join(p_sisi, "AGENTS.md"))
+        rc, out, _ = self.sisi("learn", "--project", "a rule about sisiconf x", cwd=p_sisi)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("sisi:begin", self.read(rules_f))
+        self.assertEqual(len([l for l in out.splitlines() if "could not add" in l.lower()]), 1, out)
+
+    def test_failed_agents_note_write_never_raises_or_leaves_tmp(self):
+        from unittest import mock
+        from sisi import store
+
+        # store.write removes its temp file when os.replace fails
+        p_tmp = self.project("replace-fail")
+        with mock.patch("os.replace", side_effect=OSError("replace failed")):
+            with self.assertRaises(OSError):
+                store.write(os.path.join(p_tmp, "AGENTS.md"), "hello\n")
+        self.assertEqual([n for n in os.listdir(p_tmp) if ".tmp" in n], [])
+
+        def ro_proj(name):
+            p = self.project(name)
+            self.mkdir(p, ".sisi")
+            self.write(os.path.join(p, ".sisi", "rules.md"), "- existing rule [owner 2026-11-24]\n")
+            os.chmod(p, 0o555)
+            self.addCleanup(os.chmod, p, 0o755)
+            return p
+
+        p_learn = ro_proj("ro-learn")
+        rc, out, err = self.sisi("learn", "--project", "a rule about rc x", cwd=p_learn)
+        self.assertEqual((rc, err), (0, ""), out)
+        self.assertIn("a rule about rc x", self.read(p_learn, ".sisi", "rules.md"))
+        self.assertIn("rules note", out.lower())
+
+        p_org = ro_proj("ro-org")
+        ans = self.write(os.path.join(self.tmp, "ro-ans.md"), "## user\n- user rule kept [owner 2026-11-24]\n## project\n- organized rule [owner 2026-11-24]\n")
+        rc, out, err = self.sisi("rules", "organize", "--record", ans, cwd=p_org)
+        self.assertEqual((rc, err), (0, ""), out)
+        self.assertIn("user rule kept", self.read(self.data, "rules", "user.md"))
+        self.assertIn("rules note", out.lower())
+        os.chmod(p_org, 0o755)
+        self.assertEqual(self.sisi("rules", "revert", cwd=p_org)[0], 0)
+        self.assertIn("existing rule", self.read(p_org, ".sisi", "rules.md"))
+
+        p_ret = ro_proj("ro-retro")
+        self.hook("tick", sid="ro-r", cwd=p_ret)
+        rc, out, err = self.sisi("retro", *GAP, "--improve", "Record retro rule when dir is read only", cwd=p_ret, sid="ro-r")
+        self.assertEqual((rc, err), (0, ""), out)
+        self.assertNotIn("could not write", out.lower())
+        self.assertIn("rules note", out.lower())
+
+        p_mig = ro_proj("ro-mig")
+        legacy_dir = self.mkdir(self.data, "rules", "projects")
+        legacy = self.write(os.path.join(legacy_dir, self.project_key_for(p_mig) + ".md"), "- migrated rule under ro dir [owner 2026-11-24]\n")
+        rc, out, err = self.hook("tick", sid="ro-m", cwd=p_mig)
+        self.assertEqual((rc, err), (0, ""), out)
+        self.assertFalse(os.path.exists(legacy))
+        self.assertNotIn("could not move", out.lower())
+        self.assertIn("rules note", out.lower())
+
+    def test_note_pattern_speed_and_trailing_blank_equivalence(self):
+        from sisi import rules, store
+
+        p = self.project("perf")
+        a = os.path.join(p, "AGENTS.md")
+        self.write(a, "\n" * 200000 + self.NOTE_BLOCK)
+        t0 = time.monotonic()
+        fp1 = store.snapshot(p)
+        self.assertLess(time.monotonic() - t0, 0.5)
+        self.write(a, "u\n\n\n" + self.NOTE_BLOCK)
+        fp2 = store.snapshot(p)
+        self.write(a, "u\n")
+        self.assertEqual(fp2, store.snapshot(p))
+        self.assertNotEqual(fp1, fp2)
+
+        p_begins = self.project("perf-begins")
+        begins = "<!-- sisi:begin -->\n" * 8000
+        a_begins = self.write(os.path.join(p_begins, "AGENTS.md"), begins)
+        t1 = time.monotonic()
+        rules.note(os.path.join(p_begins, ".sisi", "rules.md"))
+        self.assertLess(time.monotonic() - t1, 0.5)
+        self.assertEqual(self.read(a_begins), begins + "\n" + self.NOTE_BLOCK)
+
+    def test_git_add_agents_md_does_not_change_snapshot_and_process_count_is_three(self):
+        from unittest import mock
+        from sisi import store
+
+        p = self.project("snap")
+        a = self.write(os.path.join(p, "AGENTS.md"), "# Tracked\n")
+        subprocess.run(["git", "add", "AGENTS.md"], cwd=p, check=True, capture_output=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init"], cwd=p, check=True, capture_output=True)
+        self.assertEqual(self.sisi("learn", "--project", "Add note to tracked AGENTS.md", cwd=p)[0], 0)
+        fp_before = store.snapshot(p)
+        subprocess.run(["git", "add", "AGENTS.md"], cwd=p, check=True, capture_output=True)
+        self.assertEqual(store.snapshot(p), fp_before)
+        self.write(a, self.read(a) + "\nHand edit.\n")
+        fp_edit = store.snapshot(p)
+        self.assertNotEqual(fp_edit, fp_before)
+        subprocess.run(["git", "add", "AGENTS.md"], cwd=p, check=True, capture_output=True)
+        self.assertEqual(store.snapshot(p), fp_edit)
+
+        empty = self.mkdir(self.tmp, "empty-repo")
+        subprocess.run(["git", "init", "-q"], cwd=empty, check=True, capture_output=True)
+        nongit = self.mkdir(self.tmp, "non-git-snap")
+        for folder, max_calls, expect_empty in ((p, 3, False), (empty, 3, False), (nongit, 1, True)):
+            real_run = subprocess.run
+            calls = []
+            def counting(*args, **kwargs):
+                calls.append(args[0])
+                return real_run(*args, **kwargs)
+            with mock.patch("subprocess.run", side_effect=counting):
+                fp = store.snapshot(folder)
+            self.assertLessEqual(len(calls), max_calls, (folder, calls))
+            self.assertEqual(fp == "", expect_empty, (folder, fp))
+        fp_empty = store.snapshot(empty)
+        self.write(os.path.join(empty, "hello.txt"), "hi\n")
+        self.assertNotEqual(store.snapshot(empty), fp_empty)
+
+    def test_doctor_is_read_only_with_legacy_store_file(self):
+        p = self.project("doc-ro")
+        legacy_dir = self.mkdir(self.data, "rules", "projects")
+        legacy = self.write(os.path.join(legacy_dir, self.project_key_for(p) + ".md"),
+                            "- Legacy rule waiting in store [owner 2026-11-24]\n")
+        subprocess.run(["git", "init", "-q"], cwd=self.data, check=True, capture_output=True)
+        subprocess.run(["git", "add", "-A"], cwd=self.data, check=True, capture_output=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "legacy"], cwd=self.data, check=True, capture_output=True)
+        commits_before = subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=self.data, capture_output=True, text=True, check=True).stdout.strip()
+        listing_before = sorted(os.listdir(p))
+        rc, out, _ = self.sisi("doctor", cwd=p)
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(os.path.isfile(legacy))
+        self.assertEqual(self.read(legacy), "- Legacy rule waiting in store [owner 2026-11-24]\n")
+        self.assertEqual(sorted(os.listdir(p)), listing_before)
+        self.assertEqual(subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=self.data, capture_output=True, text=True, check=True).stdout.strip(), commits_before)
+        self.assertRegex(out, r"waiting to be moved")
 
     # delegation
 
@@ -1356,6 +1528,21 @@ class Core(unittest.TestCase):
         self.assertFalse(os.path.lexists(os.path.join(home, ".pi", "agent", "AGENTS.md")))
         self.assertEqual(self.read(mine), "# my notes\nno newline at the end")
 
+    def test_installer_preserves_second_marked_block_in_global_instructions(self):
+        home = self.harness(".codex")
+        target = os.path.join(home, ".codex", "AGENTS.md")
+        second = "<!-- sisi:begin -->\nsecond block kept\n<!-- sisi:end -->\n"
+        self.write(target, "<!-- sisi:begin -->\nold rulebook\n<!-- sisi:end -->\n# my notes\n" + second)
+        self.assertEqual(self.sisi("install")[0], 0)
+        book = self.read(self.data, "generated", "core.md")
+        self.assertEqual(self.read(target), "<!-- sisi:begin -->\n%s<!-- sisi:end -->\n# my notes\n%s" % (book, second))
+        self.assertEqual(self.sisi("learn", "Keep second marked block in global instructions")[0], 0)
+        new_book = self.read(self.data, "generated", "core.md")
+        self.assertIn("Keep second marked block in global instructions", new_book)
+        self.assertEqual(self.read(target), "<!-- sisi:begin -->\n%s<!-- sisi:end -->\n# my notes\n%s" % (new_book, second))
+        self.assertEqual(self.sisi("uninstall")[0], 0)
+        self.assertEqual(self.read(target), "# my notes\n" + second)
+
     def test_hostile_files_are_handled_or_refused_and_never_damaged(self):
         home = self.harness(".claude")
         spath, mpath = os.path.join(home, ".claude", "settings.json"), os.path.join(home, ".claude", "CLAUDE.md")
@@ -1931,7 +2118,7 @@ class Core(unittest.TestCase):
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLess(code, 1690, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLess(code, 1688, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 120)
         self.assertLess(len(rulebook), 8360)
