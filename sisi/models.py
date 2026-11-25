@@ -5,22 +5,30 @@ next research knows. The table is plain text a person can read and correct."""
 import json, math, os, re, time
 from . import rules, store
 
+ASK_FRESH = ("which providers and models from the shipped baseline table below are usable on this machine, how to call each, and what each costs here; map them to whatever providers this user has",
+             "Reuse the shipped baseline table below for class (`use for`), baseline score, benchmarks, list price, and public good-at/bad-at — do not re-research them online. Combine them with our own judged record below, which outranks a benchmark.",
+             "Order rows within each class by baseline score descending (the picker's row weighting uses row order); break ties or unranked models by cheapest capable first.")
+ASK_STALE = ("which AI models this machine can delegate work to, what each is good at and what it costs",
+             "What each is good at. Use current public software-engineering benchmarks and the maker's own description (search the web), then our own record below, which outranks a benchmark.",
+             "Only the newest version of each model belongs in the table. A smaller or faster variant is a different model.")
+EXTRA_SHARED = ("\nThen a second, separately marked section starting on its own line with `=== Shared models ===`, followed by `researched YYYY-MM-DD` on its first line and a baseline ranking table "
+                "(`| model | maker | class | score | released | list price | benchmarks | good at, bad at |`) with one row per model (keyed by model id, never provider route), sorted by class then score descending, "
+                "holding only shared public facts (no plans, allowances, `out until` dates, judged records, or personal notes).\n")
+
 RESEARCH = """You are a worker. Do this task yourself; do not delegate it further.
 
-Find out which AI models this machine can delegate work to, what each is good at and what it costs, and write
-the table an engineering lead will route by.
+Find out %(intro)s, and write the personal table an engineering lead will route by.
 
 1. What is there. Look for AI coding command-line tools on PATH and run each one's own model listing. Add the
    models the host offers its own subagents. Do not log in, change a setting or run a paid task.
-2. What each is good at. Use current public software-engineering benchmarks and the maker's own description
-   (search the web), then our own record below, which outranks a benchmark.
+2. %(step2)s
 3. What it costs here: free, a flat plan with an allowance, or paid per use, and anything that limits it.
-4. Only the newest version of each model belongs in the table. A smaller or faster variant is a different model.
+4. %(step4)s
 5. What the person has said, below, stands exactly: their limits and preferences are not yours to change.
 
 List only workers the host's delegation tool can actually start: check the host's own list of enabled providers.
 Answer with exactly this and nothing else. First a markdown table of at most 40 rows, the cheapest capable
-worker first within each level, with these columns:
+worker first within each level (or ordered by baseline score descending when reusing the baseline), with these columns:
 | worker | maker | how to call it | use for | cost | good at, bad at | notes |
 "maker" is the company or lab that trained the model, lower case, one word. "use for" is exactly one of: routine,
 ordinary, hard. It is the model's capability class, not a list of tasks it could do. Routine is the small, fast,
@@ -33,6 +41,9 @@ delegate_task); the host's subagent model name where it has subagents; the full 
 the brief goes only for a worker the host's tool cannot reach. A worker that is unavailable carries exactly
 `out until YYYY-MM-DD` in its notes.
 Then one line starting "Fallback order:" that says who takes over when a worker is out, level by level.
+%(extra)s
+=== Shipped baseline table ===
+%(shared)s
 
 === The table now ===
 %(table)s
@@ -48,6 +59,31 @@ ASK = ("In the background, give the output of `sisi models research` to a resear
 
 
 def table(): return store.data("models.md")
+def shared_canon(): return os.path.join(store.ROOT, "canon", "models.md")
+def shared_store(): return store.data("models-shared.md")
+
+
+def _shared_date(text):
+    m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", (text.splitlines() or [""])[0])
+    try:
+        return (m.group(1), time.mktime(time.strptime(m.group(1), "%Y-%m-%d"))) if m else ("", None)
+    except ValueError:
+        return "", None
+
+
+def sync_shared(cwd=None):
+    """In the sisi repo itself, copy the store's models-shared.md into canon/models.md if it is newer."""
+    top = store.git(["rev-parse", "--path-format=absolute", "--show-toplevel"], cwd or os.getcwd())[1].rstrip("\r\n")
+    canon, src = shared_canon(), shared_store()
+    if (not top or os.path.realpath(top) != os.path.realpath(store.ROOT) or not os.path.isfile(src)
+            or store.ROOT.startswith(os.path.realpath(os.path.join(store.LIB, "releases")) + os.sep)):
+        return False
+    s_text, c_text = store.read(src), store.read(canon)
+    s_date, c_date = _shared_date(s_text)[0], _shared_date(c_text)[0]
+    if not s_date or (c_date and (s_date < c_date or (s_date == c_date and os.path.getmtime(src) <= os.path.getmtime(canon)))):
+        return False
+    s_text != c_text and store.write(canon, s_text)
+    return True
 
 
 def age_days():
@@ -244,12 +280,18 @@ def outcomes(n):
 
 def research_brief():
     owner = [l for l in rules.lines(rules.path(rules.USER)) if "[owner" in l]
-    return RESEARCH % {"table": store.read(table()).rstrip() or "(none yet)",
+    shipped = store.read(shared_canon()).strip()
+    _, ts = _shared_date(shipped)
+    fresh = ts is not None and (time.time() - ts) / 86400.0 <= store.config()["research_days"]
+    intro, step2, step4 = ASK_FRESH if fresh else ASK_STALE
+    return RESEARCH % {"intro": intro, "step2": step2, "step4": step4, "extra": "" if fresh else EXTRA_SHARED,
+                       "shared": shipped or "(none yet)", "table": store.read(table()).rstrip() or "(none yet)",
                        "owner": "\n".join(owner) or "(nothing)", "outcomes": "\n".join(outcomes(60)) or "(none yet)"}
 
 
 def research_record(answer_file):
-    text = store.read(answer_file).strip()
+    parts = re.split(r"(?im)^===\s*shared\b.*===\s*$", store.read(answer_file).strip(), maxsplit=1)
+    text, shared = parts[0].strip(), (parts[1].strip() if len(parts) > 1 else "")
     lines = [l for l in text.splitlines() if l.startswith("|")]
     if "| worker" not in text.lower() or "fallback order:" not in text.lower() or len(lines) < 3:
         return "the answer needs the table (a `| worker |` header and at least one row) and a `Fallback order:` line"
@@ -260,9 +302,15 @@ def research_record(answer_file):
             return "a worker that is out needs exactly `out until YYYY-MM-DD` in its notes: | %s |" % " | ".join(r[:6])
     if len(lines) > 42 or len(text) > 12000:
         return "the answer is too long (at most 40 rows and 12,000 characters)"
-    store.write(table(), text + "\n")
-    os.path.isfile(store.data("models.stale")) and os.remove(store.data("models.stale"))
-    ok = store.commit("models table researched", table())
+    if shared and ("|" not in shared or not _shared_date(shared)[0]):
+        return "the shared section needs a `researched YYYY-MM-DD` line and a table"
+    paths = [table()] + ([shared_store()] if shared else [])
+    with store.lock("models"):
+        store.write(table(), text + "\n")
+        if shared:
+            store.write(shared_store(), shared + "\n")
+        os.path.isfile(store.data("models.stale")) and os.remove(store.data("models.stale"))
+        ok = store.commit("models table researched", *paths)
     print("models table recorded: %d workers.%s" % (len(lines) - 2, "" if ok else " (store commit failed)"))
     return None
 

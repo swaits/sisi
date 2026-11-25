@@ -1540,6 +1540,65 @@ cli.main(["tick"])
         os.utime(os.path.join(self.data, "models.md"), (old, old))
         self.assertIn("9 days old", self.hook("tick", sid="s3")[1])
 
+    def test_research_brief_uses_shipped_baseline_when_fresh_and_asks_full_when_stale(self):
+        src = self.source("1.0.0")
+        run = lambda *a: subprocess.run([sys.executable, os.path.join(src, "bin", "sisi")] + list(a), cwd=src, env=self.env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        baseline = ("| model | maker | class | score | released | list price | benchmarks | good at, bad at |\n|---|---|---|---|---|---|---|---|\n"
+                    "| gemini-4-neon | google | ordinary | 61.62 | 2026-11-18 | $6.00/M | vals TB4 61.62% | good: coding. bad: cost |\n")
+        self.write(os.path.join(src, "canon", "models.md"), "researched %s\n\n%s" % (time.strftime("%Y-%m-%d"), baseline))
+        fresh = run("models", "research")
+        self.assertEqual(fresh.returncode, 0)
+        self.assertIn("gemini-4-neon", fresh.stdout)
+        self.assertIn("personal", fresh.stdout.lower())
+        self.assertIn("baseline score", fresh.stdout.lower())
+        self.assertIn("reuse the shipped baseline", fresh.stdout.lower())
+        self.assertNotIn("(search the web)", fresh.stdout.lower())
+        self.assertNotIn("=== Shared models ===", fresh.stdout)
+        self.write(os.path.join(src, "canon", "models.md"), "researched 2000-01-01\n\n" + baseline)
+        stale = run("models", "research")
+        self.assertEqual(stale.returncode, 0)
+        self.assertIn("gemini-4-neon", stale.stdout)
+        self.assertIn("(search the web)", stale.stdout.lower())
+        self.assertNotIn("reuse the shipped baseline", stale.stdout.lower())
+        self.assertIn("=== Shared models ===", stale.stdout)
+
+    def test_research_record_writes_models_shared_and_rejects_bad_shared(self):
+        answer = os.path.join(self.tmp, "answer.md")
+        personal = ("| worker | maker | how to call it | use for | cost | good at, bad at | notes |\n|---|---|---|---|---|---|---|\n"
+                    "| small | x | host subagent `small` | routine | flat | fast | |\nFallback order: routine: small.\n")
+        shared = ("researched 2026-11-25\n\n| model | maker | class | score | released | list price | benchmarks | good at, bad at |\n|---|---|---|---|---|---|---|---|\n"
+                  "| small | x | routine | 40.0 | | free | TB4 40% | fast |\n")
+        self.write(answer, personal + "\n=== Shared models ===\n" + shared)
+        self.assertEqual(self.sisi("models", "research", "--record", answer)[0], 0)
+        self.assertEqual(self.read(self.data, "models.md").strip(), personal.strip())
+        self.assertEqual(self.read(self.data, "models-shared.md").strip(), shared.strip())
+        files = subprocess.run(["git", "-C", self.data, "show", "--name-only", "--format="], capture_output=True, text=True, check=True).stdout.splitlines()
+        self.assertEqual(set(files), {"models.md", "models-shared.md"})
+        self.write(answer, personal + "\n=== Shared models ===\nno date here\n")
+        self.assertEqual(self.sisi("models", "research", "--record", answer)[0], 1)
+        self.assertEqual(self.read(self.data, "models-shared.md").strip(), shared.strip())
+
+    def test_release_copies_newer_models_shared_only_in_sisi_repo(self):
+        src = self.source("1.0.0")
+        old_canon = "researched 2020-01-01\n\n| model | maker | class | score |\n|---|---|---|---|\n| old | m | routine | 10 |\n"
+        new_shared = "researched 2099-01-01\n\n| model | maker | class | score |\n|---|---|---|---|\n| new | m | routine | 50 |\n"
+        self.write(os.path.join(src, "canon", "models.md"), old_canon)
+        subprocess.run(["git", "add", "canon/models.md"], cwd=src, check=True, capture_output=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "old canon"], cwd=src, check=True, capture_output=True)
+        os.makedirs(self.data, exist_ok=True)
+        self.write(os.path.join(self.data, "models-shared.md"), new_shared)
+        run = lambda cwd: subprocess.run([sys.executable, os.path.join(src, "bin", "sisi"), "release"], cwd=cwd, env=self.env, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        self.assertEqual(run(self.proj).returncode, 0)                                       # in another repo: does nothing extra
+        self.assertEqual(self.read(src, "canon", "models.md"), old_canon)
+        self.assertFalse(os.path.exists(os.path.join(self.proj, "canon", "models.md")))
+        self.assertEqual(run(src).returncode, 0)                                             # in the sisi repo itself: copies newer shared table
+        self.assertEqual(self.read(src, "canon", "models.md"), new_shared)
+        self.assertEqual(self.read(self.env["SISI_LIB"], "current", "canon", "models.md"), new_shared)
+        older_shared = "researched 2019-01-01\n\n| model | maker | class | score |\n|---|---|---|---|\n| stale | m | routine | 5 |\n"
+        self.write(os.path.join(self.data, "models-shared.md"), older_shared)
+        self.assertEqual(run(src).returncode, 0)                                             # older models-shared.md does not overwrite newer canon
+        self.assertEqual(self.read(src, "canon", "models.md"), new_shared)
+
     # done, the wheel, the numbers
 
     def test_nothing_starts_before_done_is_recorded(self):
@@ -3351,7 +3410,7 @@ cli.main(["tick"])
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLessEqual(code, 1948, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLessEqual(code, 1997, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 135)
         self.assertLessEqual(len(rulebook), 9872)

@@ -90,7 +90,7 @@ its limits are.
 | `sisi retro --later …` | The work is not finished yet |
 | `sisi learn [--project] "…"` | The person's own words become a rule at once |
 | `sisi rules` / `sisi rules organize [--record FILE]` / `sisi rules revert` | See the learned rules; have a worker organize them; undo the last rule change made with `learn`, a retro or `organize`, in the user list or a project's `.sisi/rules.md` (not the one-time move of old rules; a second `revert` re-applies what the first undid; it declines, changing nothing, when the project file changed since or its folder moved or is gone) |
-| `sisi models` / `sisi models research [--record FILE]` | The workers table; have a worker rebuild it |
+| `sisi models` / `sisi models research [--record FILE]` | The workers table (the shared baseline table ships with sisi in `canon/models.md`); have a worker rebuild it |
 | `sisi judge WORKER good\|bad "…" [--minutes N] [--newest]` | How a delegation went; the minutes are measured from the pick's delegation (or `--minutes N`) and make the wheel favour faster workers. With several of one worker's jobs open, the oldest is judged first, `--newest` the newest |
 | `sisi direct "…"` | Allow more direct tool calls this turn, with the reason |
 

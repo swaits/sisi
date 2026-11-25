@@ -71,6 +71,7 @@ def main(argv):
         return one[cmd](args)
     if cmd in ("install", "uninstall", "release", "update", "rollback", "doctor"):
         from . import install
+        cmd == "release" and models.sync_shared()
         return getattr(install, cmd)()
     if cmd in ("rulebook", "version"):
         print(rules.build_rulebook() if cmd == "rulebook" else store.read(os.path.join(store.ROOT, "VERSION")).strip())
