@@ -17,7 +17,6 @@ def _where(own, xdg, fallback):
     base = os.environ.get(xdg)
     return os.environ.get(own) or (os.path.join(base, "sisi") if base else os.path.join(HOME, *fallback, "sisi"))
 
-
 DATA = _where("SISI_DATA", "XDG_DATA_HOME", (".local", "share"))
 STATE = _where("SISI_STATE", "XDG_STATE_HOME", (".local", "state"))
 LIB = os.environ.get("SISI_LIB") or os.path.join(HOME, ".local", "lib", "sisi")
@@ -26,7 +25,6 @@ LIB = os.environ.get("SISI_LIB") or os.path.join(HOME, ".local", "lib", "sisi")
 DEFAULTS = {"gate": True, "meter": True, "direct_calls": 8, "direct_extension": 8,
             "rules_lines": 30, "rules_chars": 4000, "organize_after": 8, "research_days": 7, "shell_workers": False,
             "worker_minutes": 15, "retro_minutes": 5, "disk_free_percent": 20, "disk_drop_percent": 5, "checkouts": 8}
-
 
 def config():
     cfg = dict(DEFAULTS)
@@ -79,11 +77,13 @@ def write(path, text):
         raise
 
 
-def append(path, line):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        f.write(line.rstrip("\n") + "\n")
+def append(path, line, once=False):
+    line = line.rstrip("\n").encode() + b"\n"
+    with contextlib.suppress(OSError) if once else contextlib.nullcontext():
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a+b", opener=lambda p, f: os.open(p, f | os.O_NOFOLLOW)) as f:
+            fcntl.flock(f, fcntl.LOCK_EX); f.seek(0); raw = f.read(64001)
+            (not once or len(raw) <= 64000 and b"\0" not in raw and line[:-1] not in raw.splitlines()) and f.write(line)
 
 
 def git(args, cwd, timeout=15):

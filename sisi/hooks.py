@@ -119,7 +119,7 @@ def tick(p):
             worker, free = worker or bool(s.get("worker")), s.get("free_bytes")
         env = os.environ.get("CLAUDE_ENV_FILE")
         if env and re.fullmatch(r"[A-Za-z0-9_-]+", str(sid)):
-            store.append(env, "export SISI_SESSION_ID=%s" % sid)  # so `sisi retro` knows its session
+            store.append(env, "export SISI_SESSION_ID=%s" % sid, once=True)  # so `sisi retro` knows its session
     if not os.path.exists(os.path.join(store.DATA, "generated", "core.md")):
         rules.build_rulebook()
     text = "\n".join(x for x in (rules.project_text(cwd), rules.due(cwd, claim=True), models.stale(), "" if worker else _faults(cwd, False, free)) if x)

@@ -2091,6 +2091,34 @@ cli.main(["tick"])
             self.assertEqual(self.sisi(name, stdin="not json")[0], 0, name)
             self.assertEqual(self.sisi(name, stdin=json.dumps({"session_id": "s1", "cwd": "/no/such/place"}))[0], 0, name)
 
+    def test_session_start_exports_each_session_once(self):
+        env = self.write(os.path.join(self.tmp, "env"), "")
+        self.env["CLAUDE_ENV_FILE"] = env
+        for _ in range(3):
+            self.assertEqual(self.hook("tick", sid="s1")[0], 0)
+        for _ in range(3):
+            self.assertEqual(self.hook("tick", sid="s2")[0], 0)
+        self.assertEqual(self.read(env), "export SISI_SESSION_ID=s1\nexport SISI_SESSION_ID=s2\n")
+
+    def test_session_start_leaves_unsafe_environment_files_alone(self):
+        missing = os.path.join(self.tmp, "new-env")
+        self.env["CLAUDE_ENV_FILE"] = missing
+        self.assertEqual(self.hook("tick")[0], 0)
+        self.assertEqual(self.read(missing), "export SISI_SESSION_ID=s1\n")
+        unreadable = self.write(os.path.join(self.tmp, "unreadable-env"), "keep\n")
+        os.chmod(unreadable, 0)
+        self.env["CLAUDE_ENV_FILE"] = unreadable
+        self.assertEqual(self.hook("tick", sid="unreadable")[0], 0)
+        os.chmod(unreadable, 0o600)
+        self.assertEqual(self.read(unreadable), "keep\n")
+        target = self.write(os.path.join(self.tmp, "target-env"), "keep\n")
+        link = os.path.join(self.tmp, "linked-env")
+        os.symlink(target, link)
+        self.env["CLAUDE_ENV_FILE"] = link
+        self.assertEqual(self.hook("tick", sid="linked")[0], 0)
+        self.assertEqual(self.read(target), "keep\n")
+        self.assertTrue(os.path.islink(link))
+
     # any agent in any harness
 
     def watch(self, fields, sid="s1"):
