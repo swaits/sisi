@@ -89,7 +89,26 @@ def _check_writable(p):
         raise OSError("project folder is read-only")
 
 
-def _migrate(cwd=None):
+def note(where, write=True):
+    """Keep one marked note in `AGENTS.md` (write=True), or report whether it is there (write=False)."""
+    root = os.path.dirname(os.path.dirname(where)) if write else rules_root(where)
+    target, _, why = store.agents_target(root)
+    try:
+        if not target:
+            raise OSError(why)
+        bad = (target, "it is read-only") if os.path.exists(target) else (root, "project folder is read-only")
+        if write and os.path.exists(bad[0]) and not (os.stat(bad[0]).st_mode & 0o200):
+            raise OSError(bad[1])
+        text = open(target, "rb").read().decode("utf-8") if os.path.exists(target) else ""
+    except (OSError, UnicodeDecodeError) as e:
+        why = "it is not valid UTF-8" if isinstance(e, UnicodeDecodeError) else str(e)
+        return print("sisi: could not add the rules note to %s (%s)." % (os.path.join(root, "AGENTS.md"), why)) if write else "missing (%s)" % why
+    if not write:
+        return "in AGENTS.md" if (m := store.BLOCK.search(text)) and store.NOTE in m.group(0) else "missing from AGENTS.md"
+    (new := store.put_block(text, store.NOTE, append=True)) != text and store.write(target, new)
+
+
+def _migrate(cwd=None, add_note=True):
     """Move a legacy store rule file into `.sisi/rules.md`. Returns (lines, warning)."""
     dest, old_path = path(PROJECT, cwd), _legacy(cwd)
     cur = [] if os.path.islink(os.path.dirname(dest)) or os.path.islink(dest) else lines(dest)
@@ -103,6 +122,7 @@ def _migrate(cwd=None):
             if extra or not os.path.exists(dest):
                 raw = store.read(dest) if os.path.exists(dest) else ""
                 store.write(dest, raw + ("\n" if raw and not raw.endswith("\n") else "") + "".join(l + "\n" for l in extra))
+            add_note and note(dest)
             cur = cur + extra
         rel = os.path.relpath(old_path, store.DATA)
         if not os.path.isdir(os.path.join(store.DATA, ".git")) or store.git(["status", "--porcelain", "--", rel], store.DATA)[1].strip():
@@ -127,11 +147,12 @@ def add(text, scope, source, cwd=None):
         store.commit("rule added (%s, %s)" % (scope, source), p)
         build_rulebook()
         return line
-    _, note = _migrate(cwd)
-    note and print(note)
+    _, msg = _migrate(cwd, False)
+    msg and print(msg)
     p = path(PROJECT, cwd)
     _check_writable(p)
     store.append(p, line)
+    note(p)
     return line
 
 
@@ -227,9 +248,9 @@ def organize_record(answer_file, cwd):
         if len(ls) > cfg["rules_lines"] or sum(map(len, ls)) > cfg["rules_chars"]:
             return "the %s list is over the budget of %d lines and %d characters (it has %d and %d)" % (
                 scope, cfg["rules_lines"], cfg["rules_chars"], len(ls), sum(map(len, ls)))
-    _, note = _migrate(cwd)
-    if note:
-        return note.removeprefix("sisi: ")
+    _, msg = _migrate(cwd, False)
+    if msg:
+        return msg.removeprefix("sisi: ")
     had = {scope: scope_lines(scope, cwd) for scope in got}
     if not any(got.values()) and any(had.values()):
         return "the answer holds no rules at all"
@@ -242,6 +263,7 @@ def organize_record(answer_file, cwd):
             store.write(pp, after_proj)
         except OSError as e:
             return "could not write %s (%s)" % (pp, e)
+        note(pp)
     store.write(up, "".join(l + "\n" for l in got[USER]))
     seen = _organized()
     seen[_mark_key(USER)], seen[_mark_key(PROJECT, cwd)] = len(got[USER]), len(got[PROJECT])

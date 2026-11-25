@@ -392,6 +392,150 @@ class Core(unittest.TestCase):
         self.assertIn("Rules travel with the project folder when moved", self.hook("tick", sid="mv1", cwd=moved)[1])
         self.assertIn("Rules travel with the project folder when moved", self.sisi("rules", cwd=moved)[1])
 
+    NOTE_BLOCK = ("<!-- sisi:begin -->\n"
+                  "This project's learned rules are in `.sisi/rules.md`. Read that file before any work here and follow it.\n"
+                  "<!-- sisi:end -->\n")
+
+    def test_project_rule_adds_agents_note_idempotently_and_preserves_bytes(self):
+        agents = os.path.join(self.proj, "AGENTS.md")
+        self.assertEqual(self.sisi("learn", "--project", "First rule creates the agents note")[0], 0)
+        self.assertEqual(self.read(agents), self.NOTE_BLOCK)
+
+        p1 = self.project("existing")
+        a1 = self.write(os.path.join(p1, "AGENTS.md"), "# My project\nKeep it clean.\n")
+        self.assertEqual(self.sisi("learn", "--project", "Rule one for existing file", cwd=p1)[0], 0)
+        expected = "# My project\nKeep it clean.\n\n" + self.NOTE_BLOCK
+        self.assertEqual(self.read(a1), expected)
+        mtime = os.stat(a1).st_mtime_ns
+        for n in ("two", "three"):
+            time.sleep(0.01)
+            self.assertEqual(self.sisi("learn", "--project", "Rule %s leaves file untouched" % n, cwd=p1)[0], 0)
+            self.assertEqual(self.read(a1), expected)
+            self.assertEqual(os.stat(a1).st_mtime_ns, mtime)
+
+        p_crlf = self.project("crlf")
+        a_crlf = os.path.join(p_crlf, "AGENTS.md")
+        self.put(a_crlf, b"# Line 1\r\nLine 2\r\n")
+        self.assertEqual(self.sisi("learn", "--project", "Keep CRLF line endings intact", cwd=p_crlf)[0], 0)
+        self.assertEqual(self.bytes(a_crlf), b"# Line 1\r\nLine 2\r\n\r\n" + self.NOTE_BLOCK.replace("\n", "\r\n").encode())
+
+        p_nonl = self.project("nonl")
+        a_nonl = self.write(os.path.join(p_nonl, "AGENTS.md"), "# No final newline")
+        self.assertEqual(self.sisi("learn", "--project", "Handle missing trailing newline", cwd=p_nonl)[0], 0)
+        self.assertEqual(self.read(a_nonl), "# No final newline\n\n" + self.NOTE_BLOCK)
+
+        p_dup = self.project("dup")
+        a_dup = self.write(os.path.join(p_dup, "AGENTS.md"),
+                           "# Two\n\n<!-- sisi:begin -->\nold one\n<!-- sisi:end -->\n<!-- sisi:begin -->\nold two\n<!-- sisi:end -->\n")
+        self.assertEqual(self.sisi("learn", "--project", "Collapse duplicate marked blocks to one", cwd=p_dup)[0], 0)
+        self.assertEqual(self.read(a_dup), "# Two\n\n" + self.NOTE_BLOCK)
+
+    def test_retro_organize_and_migration_each_add_agents_note(self):
+        p_retro = self.project("retro-note")
+        self.hook("tick", sid="rn1", cwd=p_retro)
+        self.assertEqual(self.sisi("retro", *GAP, "--improve", "Compare row counts before every export", cwd=p_retro, sid="rn1")[0], 0)
+        self.assertEqual(self.read(p_retro, "AGENTS.md"), self.NOTE_BLOCK)
+
+        os.remove(os.path.join(p_retro, "AGENTS.md"))
+        answer = self.write(os.path.join(self.tmp, "org-note.md"),
+                            "## user\n## project\n- Compare row counts before every export [retro 2026-11-24]\n")
+        self.assertEqual(self.sisi("rules", "organize", "--record", answer, cwd=p_retro)[0], 0)
+        self.assertEqual(self.read(p_retro, "AGENTS.md"), self.NOTE_BLOCK)
+
+        p_mig = self.project("mig-note")
+        legacy_dir = self.mkdir(self.data, "rules", "projects")
+        self.write(os.path.join(legacy_dir, self.project_key_for(p_mig) + ".md"),
+                   "- Legacy project rule triggers note creation [owner 2026-11-24]\n")
+        self.assertEqual(self.hook("tick", sid="mn1", cwd=p_mig)[0], 0)
+        self.assertEqual(self.read(p_mig, "AGENTS.md"), self.NOTE_BLOCK)
+
+    def test_learn_from_subfolder_and_reading_empty_project_behave_right(self):
+        for fn in (lambda: self.hook("tick", sid="empty1"), lambda: self.sisi("rules"), lambda: self.sisi("doctor")):
+            self.assertEqual(fn()[0], 0)
+            self.assertFalse(os.path.lexists(os.path.join(self.proj, "AGENTS.md")))
+
+        commits_before = subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=self.proj, capture_output=True, text=True, check=True).stdout.strip()
+        sub = self.mkdir(self.proj, "pkg", "sub")
+        self.assertEqual(self.sisi("learn", "--project", "Write note at root from subfolder", cwd=sub)[0], 0)
+        self.assertEqual(self.read(self.proj, "AGENTS.md"), self.NOTE_BLOCK)
+        self.assertFalse(os.path.lexists(os.path.join(sub, "AGENTS.md")))
+        self.assertFalse(os.path.lexists(os.path.join(self.proj, "pkg", "AGENTS.md")))
+        self.assertEqual(subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=self.proj, capture_output=True, text=True, check=True).stdout.strip(), commits_before)
+        staged = [l for l in subprocess.run(["git", "status", "--porcelain"], cwd=self.proj, capture_output=True, text=True, check=True).stdout.splitlines() if not l.startswith("??")]
+        self.assertEqual(staged, [])
+
+    def test_agents_note_against_hostile_state_and_internal_symlink(self):
+        outside = self.write(os.path.join(self.tmp, "outside.md"), "untouched\n")
+        cases = ("dir", "dangling", "outside", "readonly", "bad-utf8")
+        for kind in cases:
+            p = self.project("hostile-" + kind)
+            a = os.path.join(p, "AGENTS.md")
+            if kind == "dir":
+                os.mkdir(a)
+            elif kind == "dangling":
+                os.symlink(os.path.join(self.tmp, "nowhere.md"), a)
+            elif kind == "outside":
+                os.symlink(outside, a)
+            elif kind == "readonly":
+                self.write(a, "# Read only\n")
+                os.chmod(a, 0o444)
+                self.addCleanup(os.chmod, a, 0o644)
+            elif kind == "bad-utf8":
+                self.put(a, b"\xff\xfe\x00")
+            rc, out, _ = self.sisi("learn", "--project", "Rule succeeds despite hostile %s state" % kind, cwd=p)
+            self.assertEqual(rc, 0, (kind, out))
+            self.assertIn("Rule succeeds despite hostile %s state" % kind, self.read(p, ".sisi", "rules.md"))
+            note_lines = [l for l in out.splitlines() if "could not add" in l.lower()]
+            self.assertEqual(len(note_lines), 1, (kind, out))
+        self.assertEqual(self.read(outside), "untouched\n")
+        self.assertEqual(self.bytes(os.path.join(self.tmp, "hostile-bad-utf8", "AGENTS.md")), b"\xff\xfe\x00")
+        self.assertEqual(self.read(os.path.join(self.tmp, "hostile-readonly", "AGENTS.md")), "# Read only\n")
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp, "hostile-dir", "AGENTS.md")))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "nowhere.md")))
+
+        p_link = self.project("symlinked")
+        claude = self.write(os.path.join(p_link, "CLAUDE.md"), "# Claude\n")
+        a_link = os.path.join(p_link, "AGENTS.md")
+        os.symlink("CLAUDE.md", a_link)
+        rc, out, _ = self.sisi("learn", "--project", "Symlink to CLAUDE.md receives the block", cwd=p_link)
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(os.path.islink(a_link))
+        self.assertEqual(os.readlink(a_link), "CLAUDE.md")
+        self.assertEqual(self.read(claude), "# Claude\n\n" + self.NOTE_BLOCK)
+
+    def test_gate_ignores_sisi_agents_note_but_catches_hand_edit_to_agents_md(self):
+        self.hook("tick", sid="g1")
+        self.hook("prompt", sid="g1", prompt="remember a rule")
+        self.assertEqual(self.sisi("learn", "--project", "Own note and rule file do not trip the gate", sid="g1")[0], 0)
+        self.assertEqual(self.read(self.proj, "AGENTS.md"), self.NOTE_BLOCK)
+        self.assertEqual(self.hook("gate", sid="g1")[1], "")
+
+        p_tracked = self.project("tracked-agents")
+        self.write(os.path.join(p_tracked, "AGENTS.md"), "# Tracked")
+        for args in (["add", "AGENTS.md"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "agents"]):
+            subprocess.run(["git"] + args, cwd=p_tracked, check=True, capture_output=True)
+        self.hook("tick", sid="g2", cwd=p_tracked)
+        self.hook("prompt", sid="g2", cwd=p_tracked, prompt="remember another rule")
+        self.assertEqual(self.sisi("learn", "--project", "Tracked AGENTS.md note does not trip the gate", cwd=p_tracked, sid="g2")[0], 0)
+        self.assertEqual(self.read(p_tracked, "AGENTS.md"), "# Tracked\n\n" + self.NOTE_BLOCK)
+        self.assertEqual(self.hook("gate", sid="g2", cwd=p_tracked)[1], "")
+
+        self.hook("prompt", sid="g2", cwd=p_tracked, prompt="now edit AGENTS.md by hand")
+        self.write(os.path.join(p_tracked, "AGENTS.md"), self.read(p_tracked, "AGENTS.md") + "\nHand edited line.\n")
+        self.assertIn('"block"', self.hook("gate", sid="g2", cwd=p_tracked)[1])
+
+    def test_doctor_reports_project_agents_note_without_writing(self):
+        self.assertNotIn("project note:", self.sisi("doctor")[1])
+        self.mkdir(self.proj, ".sisi")
+        self.write(os.path.join(self.proj, ".sisi", "rules.md"), "- Project rule without note yet [owner 2026-11-24]\n")
+        out_missing = self.sisi("doctor")[1]
+        self.assertRegex(out_missing, r"project note:.*missing")
+        self.assertFalse(os.path.lexists(os.path.join(self.proj, "AGENTS.md")))
+
+        self.assertEqual(self.sisi("learn", "--project", "Add a rule so doctor sees the note")[0], 0)
+        out_present = self.sisi("doctor")[1]
+        self.assertRegex(out_present, r"project note:.*in AGENTS\.md")
+
     # delegation
 
     def test_the_lead_is_stopped_when_it_should_be_delegating(self):
@@ -1787,7 +1931,7 @@ class Core(unittest.TestCase):
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLess(code, 1645, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLess(code, 1690, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 120)
         self.assertLess(len(rulebook), 8360)

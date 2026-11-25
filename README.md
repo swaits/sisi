@@ -52,14 +52,16 @@ not installed (its folder is absent) gets nothing created. For a tool that is in
   everything else in the file is kept. A file sisi cannot edit safely (comments, a trailing comma, a symlink to
   nowhere, read-only, hooks of an unexpected shape) is left alone and reported.
 
-| Tool | Rulebook (in its folder) | Hooks |
-|---|---|---|
-| Claude Code | `~/.claude/CLAUDE.md` | `settings.json` |
-| Codex | `~/.codex/AGENTS.md` | `hooks.json` (the person trusts them once in Codex's `/hooks`) |
-| Qwen Code | `~/.qwen/QWEN.md` | `settings.json` |
-| Grok | `~/.grok/AGENTS.md` | none: Grok runs the hooks in `~/.claude/settings.json` |
-| OpenCode, Antigravity (`~/.gemini`), Pi, Kiro, Copilot, Crush, Amp | their global instructions file | none: not confirmed |
-| Muse, Cursor | none documented | not covered |
+| Tool | Rulebook (in its folder) | Hooks | Project rules |
+|---|---|---|---|
+| Claude Code | `~/.claude/CLAUDE.md` | `settings.json` | session-start print (reads `AGENTS.md` only without `CLAUDE.md`) |
+| Codex | `~/.codex/AGENTS.md` | `hooks.json` (the person trusts them once in Codex's `/hooks`) | session-start print; `AGENTS.md` note is in the file it reads |
+| Qwen Code | `~/.qwen/QWEN.md` | `settings.json` | session-start print; `AGENTS.md` note is in the file it reads |
+| Grok | `~/.grok/AGENTS.md` | none: Grok runs the hooks in `~/.claude/settings.json` | `AGENTS.md` note is in the file it reads |
+| OpenCode, Antigravity (`~/.gemini`), Pi, Kiro, Copilot, Amp | their global instructions file | none: not confirmed | `AGENTS.md` note is in the file the tool reads |
+| Crush | `~/.config/crush/CRUSH.md` | none: not confirmed | `AGENTS.md` note is read only when started at project root |
+| Cursor | none documented | not covered | `AGENTS.md` note is in the file Cursor CLI reads |
+| Muse | none documented | not covered | unconfirmed |
 
 Hooks read a tool's input under whichever field names it uses (`session_id`, `sessionId`, `conversationId`,
 `toolCall.name`, …), and the class of each tool call (shell, read, edit, search, web, delegate) comes from
@@ -94,10 +96,13 @@ Rules live at three levels:
   `retro_seconds`, counts, goal, term) and `outcomes.jsonl` (each judged delegation: session, `project_key`, `model`,
   `started`/`ended`, minutes, verdict, why). All plain text you can read and edit.
 - **Each project** (`.sisi/rules.md` at the project root, never in a subfolder): rules specific to one project. You choose
-  whether to check `.sisi/` into git or ignore it (sisi works either way, and never commits or stages it for you).
+  whether to check `.sisi/` into git or ignore it (sisi works either way, and never commits or stages it for you). Whenever
+  sisi writes `.sisi/rules.md`, it also puts a marked note (`<!-- sisi:begin -->` ... `<!-- sisi:end -->`) in the project
+  root's `AGENTS.md` pointing to `.sisi/rules.md`, so the note is in the file those tools read. To remove the note, delete
+  the marked block from `AGENTS.md`.
 - **The rulebook every session loads** (`generated/core.md`) is built from the product (`canon/core.md`) and your user
   rules (`rules/user.md`). Project rules are not in the generated rulebook; they are printed at session start by the `tick`
-  hook and shown by `sisi rules`.
+  hook (for tools whose session-start output reaches the agent), pointed to by the `AGENTS.md` note, and shown by `sisi rules`.
 - **Scratch** (session state, bytecode): `$SISI_STATE`, else `$XDG_STATE_HOME/sisi`, else `~/.local/state/sisi`.
   Releases live in `$SISI_LIB`, else `~/.local/lib/sisi`.
 
