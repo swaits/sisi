@@ -2,59 +2,58 @@
 import json, os, time
 from . import store
 
-USAGE = 'usage: sisi fault "<what is wrong, 4+ words>" | --started N "<fix>" | --blocked N "<blocker and unblock>" | --fixed N "<evidence>"'
+USAGE = 'usage: sisi fault "<what is wrong, 4+ words>" | --started N "<fix, 4+ words>" | --blocked N "<blocker and unblock, 4+ words>" | --fixed N "<evidence, 4+ words>"'
 HEAD = 'sisi: open faults. Fix each now or say what blocks it (`sisi fault --started N "<fix>"` | `--blocked N "<blocker>"` | `--fixed N "<evidence>"`):'
 BLOCK = 'sisi: open fault(s) with no fix started and no blocker named: %s. Start a fix (`sisi fault --started N "<fix>"`), name what blocks it (`sisi fault --blocked N "<blocker and unblock>"`), or close it (`sisi fault --fixed N "<evidence>"`).'
 _path = lambda cwd=None: os.path.join(store.STATE, "core-faults", store.project_key(cwd) + ".json")
 _gb = lambda b: "%d GB" % round(b / 1e9) if b >= 1e9 else "%.1f GB" % (b / 1e9)
+_safe = lambda s: str(s).encode("utf-8", "replace").decode("utf-8")
+lines = lambda cwd=None: [_fmt(f) for f in _load(_path(cwd))[0]["items"]]
 
-def _load(p, strict=False):
-    d = os.path.dirname(p)
-    why, raw = (("a symlink", None) if os.path.islink(d) else ("not a directory", None) if os.path.lexists(d) and not os.path.isdir(d) else store.regular(p, True))
-    if why and strict:
-        raise OSError("%s is %s" % (p, why))
+def _load(p):
+    empty = {"next": 1, "items": []}
     try:
-        doc = json.loads(raw.decode("utf-8")) if raw is not None and not why else {"next": 1, "items": []}
+        d = os.path.dirname(p)
+        why, raw = (("a symlink", None) if os.path.islink(d) else ("not a directory", None) if os.path.lexists(d) and not os.path.isdir(d) else store.regular(p, True))
+        if why or raw is None:
+            return empty, ("sisi: fault list %s could not be read (%s)." % (p, why) if why else "")
+        doc = json.loads(raw.decode("utf-8", "replace"))
         if not (isinstance(doc, dict) and isinstance(doc.get("items"), list)):
-            raise ValueError
+            raise ValueError("unexpected format")
         items = [x for x in doc["items"] if isinstance(x, dict) and type(x.get("id")) is int and x.get("state") in ("open", "started", "blocked") and isinstance(x.get("text"), str)]
-        return {"next": doc["next"] if type(doc.get("next")) is int and doc["next"] > 0 else max((x["id"] for x in items), default=0) + 1, "items": items}
-    except (ValueError, KeyError, TypeError, UnicodeDecodeError):
-        if strict:
-            raise OSError("%s is not valid JSON" % p)
-        return {"next": 1, "items": []}
+        return {"next": doc["next"] if type(doc.get("next")) is int and doc["next"] > 0 else max((x["id"] for x in items), default=0) + 1, "items": items}, ""
+    except (OSError, ValueError, RecursionError, UnicodeError, KeyError, TypeError) as e:
+        return empty, "sisi: fault list %s could not be read (%s)." % (p, _safe(" ".join(str(e).split())) or type(e).__name__)
 
 def _fmt(f):
     s = max(0, int(time.time() - f["at"])) if type(f.get("at")) in (int, float) and f["at"] == f["at"] and abs(f["at"]) < 1e12 else 0
     age = "%ds" % s if s < 60 else "%dm" % (s // 60) if s < 3600 else "%dh" % (s // 3600) if s < 86400 else "%dd" % (s // 86400)
-    return "#%d [%s, %s] %s%s" % (f["id"], f["state"], age, f["text"], " — " + str(f["note"]) if f.get("note") else "")
-
-def lines(cwd=None):
-    return [_fmt(f) for f in _load(_path(cwd))["items"]]
+    return "#%d [%s, %s] %s%s" % (f["id"], f["state"], age, _safe(f["text"]), " — " + _safe(f["note"]) if f.get("note") else "")
 
 def gate(cwd=None):
-    opened = [f for f in _load(_path(cwd))["items"] if f["state"] == "open"]
-    return BLOCK % "; ".join("#%d %s" % (f["id"], f["text"]) for f in opened) if opened else ""
+    opened = [f for f in _load(_path(cwd))[0]["items"] if f["state"] == "open"]
+    return BLOCK % "; ".join("#%d %s" % (f["id"], _safe(f["text"])) for f in opened) if opened else ""
 
 def add(cwd, text, kind="", flag="", fid=0):
-    p = _path(cwd)
+    p, text = _path(cwd), store.clean(text)[:300]
     with store.lock(p):
-        doc = _load(p, strict=True)
-        if os.path.exists(p) and not (os.stat(p).st_mode & 0o200):
-            raise OSError("%s is read-only" % p)
+        doc, err = _load(p)
+        if err := err or ("%s is read-only" % p if os.path.exists(p) and not (os.stat(p).st_mode & 0o200) else ""):
+            raise OSError(err)
         if flag:
             hit = next((f for f in doc["items"] if f["id"] == fid), None)
             if not hit:
                 return None
             doc["items"] = [f for f in doc["items"] if f["id"] != fid] if flag == "--fixed" else doc["items"]
             hit.update(state=flag[2:], note=text)
+        elif kind and any(f.get("kind") == kind for f in doc["items"]):
+            return None
+        elif len(doc["items"]) >= 50:
+            raise OSError("already 50 open faults; fix or close some first")
         else:
-            if kind and any(f.get("kind") == kind for f in doc["items"]):
-                return None
             hit = {"id": doc["next"], "state": "open", "at": time.time(), "text": text, "note": "", **({"kind": kind} if kind else {})}
             doc["next"], doc["items"] = doc["next"] + 1, doc["items"] + [hit]
-        out = json.dumps(doc)
-        if len(out.encode("utf-8")) > 64000:
+        if len((out := json.dumps(doc)).encode("utf-8")) > 64000:
             raise OSError("%s would exceed 64,000 bytes" % p)
         store.write(p, out)
     return hit
@@ -87,23 +86,26 @@ def check(cwd, start_free=None):
         pass
     if pos("checkouts") and (n := _checkouts(cwd)) > cfg["checkouts"]:
         hits.append(("checkouts", "This repository has %d checkouts. Remove the ones whose work is merged or abandoned." % n))
-    have, unsaved = {f.get("kind") for f in _load(_path(cwd))["items"]}, []
+    doc, err = _load(_path(cwd))
+    have, unsaved = {f.get("kind") for f in doc["items"]}, []
     for kind, text in [h for h in hits if h[0] not in have]:
         try:
             add(cwd, text, kind)
         except OSError:
             unsaved.append("[open] " + text)
-    return "\n".join([HEAD] + ls) if (ls := lines(cwd) + unsaved) else ""
+    ls = ([] if err else lines(cwd)) + unsaved
+    return "\n".join(([err] if err else []) + ([HEAD] + ls[:10] + (["and %d more: sisi fault" % (len(ls) - 10)] if len(ls) > 10 else []) if ls else []))
 
 def run(args, cwd=None):
     if not args:
-        return print("\n".join(lines(cwd)) or "no open faults.") or 0
+        doc, err = _load(_path(cwd))
+        return print(err) or 1 if err else print("\n".join(_fmt(f) for f in doc["items"]) or "no open faults.") or 0
     flag = args[0] if args[0] in ("--started", "--blocked", "--fixed") else ""
-    body = " ".join(" ".join(args[2:] if flag else args).split())[:300]
-    if (flag and (len(args) < 3 or not args[1].isdecimal() or len(body.split()) < 2)) or (not flag and (args[0].startswith("-") or len(body.split()) < 4)):
+    body = store.clean(" ".join(args[2:] if flag else args))[:300]
+    if (flag and not (len(args) >= 3 and args[1].isascii() and args[1].isdigit() and len(args[1]) <= 9 and int(args[1]) > 0)) or (not flag and args[0].startswith("-")) or len(body.split()) < 4:
         return print(USAGE) or 1
     try:
         hit = add(cwd, body, flag=flag, fid=int(args[1]) if flag else 0)
     except OSError as e:
-        return print("sisi fault: %s" % e) or 1
+        return print(str(e) if str(e).startswith("sisi:") else "sisi fault: %s" % e) or 1
     return print(_fmt(hit)) or 0 if hit else print("sisi fault: #%s not found; %s" % (args[1], USAGE)) or 1

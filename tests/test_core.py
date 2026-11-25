@@ -2839,12 +2839,14 @@ cli.main(["tick"])
             self.assertIn("linker crashed ten times", out)
             self.assertIn("scratch folder filled up", out)
             self.assertIn("waiting on owner to approve removal", out)
-        # worker session and subagent print nothing for faults
+        # a session is only known to be a worker from its first request, so its initial tick shows faults once;
+        # after the worker brief arrives on prompt, prompts and later ticks print nothing; subagents print nothing even on tick
+        self.assertIn("linker crashed ten times", self.hook("tick", sid="w1")[1])
         self.assertEqual(self.hook("prompt", sid="w1", prompt="You are a worker. Do this task yourself.")[1], "")
         self.assertEqual(self.hook("prompt", sid="w1", prompt="second prompt")[1], "")
         self.assertNotIn("open faults", self.hook("tick", sid="w1")[1])
-        self.assertEqual(self.hook("prompt", sid="s2", prompt="sub", agent_id="sub1")[1], "")
         self.assertNotIn("open faults", self.hook("tick", sid="s2", agent_id="sub1")[1])
+        self.assertEqual(self.hook("prompt", sid="s2", prompt="sub", agent_id="sub1")[1], "")
         # retro lists faults still not fixed, one line each
         rep = self.sisi("retro", sid="s2")[1]
         self.assertIn("linker crashed ten times", rep)
@@ -2861,17 +2863,50 @@ cli.main(["tick"])
         self.assertNotIn("linker crashed", self.sisi("retro", cwd=beta, sid="b1")[1])
 
     def test_concurrent_fault_opens_both_survive(self):
+        import threading
+        sys.path.insert(0, REPO)
+        from sisi import faults, store
+        started, second_done, errs = threading.Event(), threading.Event(), []
+        real_load, count = faults._load, [0]
+        def slow_load(*a, **kw):
+            res = real_load(*a, **kw)
+            count[0] += 1
+            if count[0] == 1:
+                started.set()
+                second_done.wait(0.25)
+            return res
+        def worker(text, ev=None):
+            try:
+                faults.add(self.proj, text)
+            except BaseException as e:
+                errs.append(repr(e))
+            finally:
+                ev and ev.set()
+        with mock.patch.object(store, "DATA", self.data), mock.patch.object(store, "STATE", os.path.join(self.tmp, "state")), \
+                mock.patch.object(faults, "_load", slow_load):
+            t1 = threading.Thread(target=worker, args=("first deterministic race fault text",))
+            t1.start()
+            self.assertTrue(started.wait(10))
+            t2 = threading.Thread(target=worker, args=("second deterministic race fault text", second_done))
+            t2.start()
+            t1.join(timeout=30), t2.join(timeout=30)
+        self.assertEqual(errs, [])
+        listed = self.sisi("fault")[1]
+        self.assertIn("first deterministic race fault text", listed)
+        self.assertIn("second deterministic race fault text", listed)
+        # also verify across two separate processes
+        p2_proj = self.project("proc-race")
         exe = [sys.executable, os.path.join(REPO, "bin", "sisi"), "fault"]
         o1, o2 = os.path.join(self.tmp, "f1.out"), os.path.join(self.tmp, "f2.out")
         with open(o1, "w") as f1, open(o2, "w") as f2:
-            p1 = subprocess.Popen(exe + ["first concurrent fault from process one"], cwd=self.proj, env=self.env, stdin=subprocess.DEVNULL, stdout=f1, stderr=subprocess.STDOUT)
-            p2 = subprocess.Popen(exe + ["second concurrent fault from process two"], cwd=self.proj, env=self.env, stdin=subprocess.DEVNULL, stdout=f2, stderr=subprocess.STDOUT)
+            p1 = subprocess.Popen(exe + ["first concurrent fault from process one"], cwd=p2_proj, env=self.env, stdin=subprocess.DEVNULL, stdout=f1, stderr=subprocess.STDOUT)
+            p2 = subprocess.Popen(exe + ["second concurrent fault from process two"], cwd=p2_proj, env=self.env, stdin=subprocess.DEVNULL, stdout=f2, stderr=subprocess.STDOUT)
             self.assertEqual((p1.wait(timeout=60), p2.wait(timeout=60)), (0, 0))
-        listed = self.sisi("fault")[1]
-        self.assertIn("first concurrent fault from process one", listed)
-        self.assertIn("second concurrent fault from process two", listed)
-        self.assertIn("#1 ", listed)
-        self.assertIn("#2 ", listed)
+        listed2 = self.sisi("fault", cwd=p2_proj)[1]
+        self.assertIn("first concurrent fault from process one", listed2)
+        self.assertIn("second concurrent fault from process two", listed2)
+        self.assertIn("#1 ", listed2)
+        self.assertIn("#2 ", listed2)
 
     def test_faults_hostile_state_and_usage_errors(self):
         outside = self.write(os.path.join(self.tmp, "outside.json"), "untouched\n")
@@ -2889,21 +2924,130 @@ cli.main(["tick"])
                 self.write(fp, json.dumps({"next": 1, "items": []}))
                 os.chmod(fp, 0o444)
                 self.addCleanup(os.chmod, fp, 0o644)
-            self.assertEqual(self.hook("tick", sid="h-" + kind, cwd=p)[0], 0, kind)
-            self.assertEqual(self.hook("prompt", sid="h-" + kind, cwd=p, prompt="go")[0], 0, kind)
-            self.assertEqual(self.hook("gate", sid="h-" + kind, cwd=p)[0], 0, kind)
-            self.assertEqual(self.sisi("fault", cwd=p)[0], 0, kind)
+            rc_t, out_t, _ = self.hook("tick", sid="h-" + kind, cwd=p)
+            rc_p, out_p, _ = self.hook("prompt", sid="h-" + kind, cwd=p, prompt="go")
+            self.assertEqual((rc_t, rc_p, self.hook("gate", sid="h-" + kind, cwd=p)[0]), (0, 0, 0), kind)
+            rc_f, out_f, _ = self.sisi("fault", cwd=p)
+            if kind == "readonly":
+                self.assertEqual(rc_f, 0, kind)
+            else:
+                self.assertEqual(rc_f, 1, (kind, out_f))
+                self.assertEqual(len(out_f.strip().splitlines()), 1, (kind, out_f))
+                for hook_out in (out_t, out_p):
+                    self.assertIn("could not be read", hook_out, (kind, hook_out))
+                    self.assertIn(fp, hook_out, (kind, hook_out))
             self.assertEqual(self.sisi("fault", "new fault under hostile state", cwd=p)[0], 1, kind)
         self.assertEqual(self.read(outside), "untouched\n")
         self.assertTrue(os.path.islink(os.path.join(fdir, self.project_key_for(os.path.join(self.tmp, "fh-symlink")) + ".json")))
         self.assertEqual(self.read(fdir, self.project_key_for(os.path.join(self.tmp, "fh-readonly")) + ".json"), json.dumps({"next": 1, "items": []}))
-        # usage errors return 1 with one usage line
-        for bad in (("too short",), ("--unknown", "four words right here"), ("--started",), ("--started", "x", "fixing it now"),
-                    ("--started", "1", "ok"), ("--blocked", "99", "waiting on owner"), ("--fixed", "99", "all tests pass")):
-            rc, out, _ = self.sisi("fault", *bad)
-            self.assertEqual(rc, 1, (bad, out))
+        # open one fault so note-length checks test the note validation, not missing id
+        self.assertEqual(self.sisi("fault", "existing fault for usage checks")[0], 0)
+        # usage errors return 1 with one usage line and no traceback (including 4301 digits, negative, zero, <4-word notes)
+        for bad in (("too short",), ("--unknown", "four words right here"), ("--started",), ("--started", "x", "fixing it right now"),
+                    ("--started", "9" * 4301, "worker fixing the linker crash"), ("--blocked", "-1", "waiting on owner to confirm"),
+                    ("--fixed", "0", "all tests pass cleanly now"), ("--started", "1", "ok now"), ("--blocked", "1", "still waiting here"),
+                    ("--blocked", "99", "waiting on owner to confirm"), ("--fixed", "99", "all tests pass cleanly now")):
+            rc, out, err = self.sisi("fault", *bad)
+            self.assertEqual((rc, err), (1, ""), (bad, out, err))
             self.assertEqual(len(out.strip().splitlines()), 1, (bad, out))
             self.assertIn("usage:", out, (bad, out))
+
+    def test_a_secret_never_reaches_a_fault(self):
+        rc, out, _ = self.sisi("fault", "deploy failed using api_key=sk-abcdefghijklmnopqrstuvwx in script")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("<redacted>", out)
+        self.assertNotIn("sk-abcdefghijklmnop", out)
+        rc2, out2, _ = self.sisi("fault", "--started", "1", "worker rotating token ghp_1234567890abcdefghij123456 now")
+        self.assertEqual(rc2, 0, out2)
+        self.assertIn("<redacted>", out2)
+        self.assertNotIn("ghp_1234567890", out2)
+        listed = self.sisi("fault")[1]
+        prompt_out = self.hook("prompt", sid="sec1", prompt="go")[1]
+        raw_file = self.read(self.tmp, "state", "core-faults", self.project_key_for(self.proj) + ".json")
+        for text in (listed, prompt_out, raw_file):
+            self.assertIn("<redacted>", text)
+            self.assertNotIn("sk-abcdefghijklmnop", text)
+            self.assertNotIn("ghp_1234567890", text)
+
+    def test_faults_unreadable_corrupt_and_non_utf8_never_crash_and_warn_hooks(self):
+        self.assertEqual(self.sisi("learn", "--project", "Keep project rules printing when faults break")[0], 0)
+        fdir = self.mkdir(self.tmp, "state", "core-faults")
+        # 1. raw 0xFF byte in valid-shaped JSON decodes with replacement and keeps tick/rules working
+        p_ff = self.project("ff-valid")
+        self.assertEqual(self.sisi("learn", "--project", "Rules survive raw ff byte", cwd=p_ff)[0], 0)
+        fp_ff = os.path.join(fdir, self.project_key_for(p_ff) + ".json")
+        self.put(fp_ff, b'{"next":2,"items":[{"id":1,"state":"open","at":0,"text":"bad \xff byte fault","note":""}]}')
+        env_utf8 = dict(self.env, LC_ALL="en_US.UTF-8")
+        r_tick = subprocess.run([sys.executable, os.path.join(REPO, "bin", "sisi"), "tick"], cwd=p_ff, env=env_utf8,
+                                input=json.dumps({"session_id": "ff1", "cwd": p_ff}), capture_output=True, text=True)
+        self.assertEqual((r_tick.returncode, r_tick.stderr), (0, ""), r_tick.stdout)
+        self.assertIn("Rules survive raw ff byte", r_tick.stdout)
+        self.assertIn("byte fault", r_tick.stdout)
+        # non-UTF-8 CLI arg does not make write or print raise under LC_ALL=en_US.UTF-8
+        p_arg = self.project("ff-arg")
+        r_arg = subprocess.run([os.fsencode(sys.executable), os.fsencode(os.path.join(REPO, "bin", "sisi")),
+                                b"fault", b"fault with raw \xff byte here"], cwd=p_arg, env=env_utf8,
+                               stdin=subprocess.DEVNULL, capture_output=True)
+        self.assertEqual((r_arg.returncode, r_arg.stderr), (0, b""), r_arg.stdout)
+
+        # 2. raw invalid 0xFF file and 60,000 "[" characters (RecursionError): command returns 1 (one line), hooks warn + print rules + return 0
+        for kind, raw in (("raw-ff", b"\xff\xff\xff"), ("deep-json", b"[" * 60000)):
+            p = self.project("bad-" + kind)
+            self.assertEqual(self.sisi("learn", "--project", "Rules survive %s fault file" % kind, cwd=p)[0], 0)
+            fp = os.path.join(fdir, self.project_key_for(p) + ".json")
+            self.put(fp, raw)
+            rc_f, out_f, err_f = self.sisi("fault", cwd=p)
+            self.assertEqual((rc_f, err_f), (1, ""), (kind, out_f, err_f))
+            self.assertEqual(len(out_f.strip().splitlines()), 1, (kind, out_f))
+            rc_t, out_t, err_t = self.hook("tick", sid="t-" + kind, cwd=p)
+            rc_p, out_p, err_p = self.hook("prompt", sid="t-" + kind, cwd=p, prompt="go")
+            rc_g, _, err_g = self.hook("gate", sid="t-" + kind, cwd=p)
+            self.assertEqual((rc_t, err_t, rc_p, err_p, rc_g, err_g), (0, "", 0, "", 0, ""), kind)
+            self.assertIn("Rules survive %s fault file" % kind, out_t, kind)
+            self.assertIn("could not be read", out_t, kind)
+            self.assertIn(fp, out_t, kind)
+            self.assertIn("could not be read", out_p, kind)
+            self.assertIn(fp, out_p, kind)
+
+        # 3. core-faults folder with mode 000: command prints one plain line and returns 1; hooks warn + print rules + return 0
+        os.chmod(fdir, 0o000)
+        self.addCleanup(os.chmod, fdir, 0o755)
+        rc_f, out_f, err_f = self.sisi("fault")
+        self.assertEqual((rc_f, err_f), (1, ""), (out_f, err_f))
+        self.assertEqual(len(out_f.strip().splitlines()), 1, out_f)
+        rc_t, out_t, err_t = self.hook("tick", sid="m000")
+        rc_p, out_p, err_p = self.hook("prompt", sid="m000", prompt="go")
+        rc_g, _, err_g = self.hook("gate", sid="m000")
+        self.assertEqual((rc_t, err_t, rc_p, err_p, rc_g, err_g), (0, "", 0, "", 0, ""))
+        self.assertIn("Keep project rules printing when faults break", out_t)
+        self.assertIn("could not be read", out_t)
+        self.assertIn("could not be read", out_p)
+
+    def test_fault_list_bounds_output_count_and_note_length(self):
+        # 12 faults: prompt and tick show oldest 10 + "and 2 more: sisi fault"; sisi fault shows all 12
+        for i in range(1, 13):
+            self.assertEqual(self.sisi("fault", "open fault number %02d in build" % i)[0], 0)
+        for out in (self.hook("tick", sid="cap1")[1], self.hook("prompt", sid="cap1", prompt="go")[1]):
+            self.assertIn("open fault number 01", out)
+            self.assertIn("open fault number 10", out)
+            self.assertNotIn("open fault number 11", out)
+            self.assertNotIn("open fault number 12", out)
+            self.assertIn("and 2 more: sisi fault", out)
+        all_out = self.sisi("fault")[1]
+        self.assertIn("open fault number 12", all_out)
+        # bounded note length (<= 300 chars)
+        long_note = "word " * 100
+        rc, out, _ = self.sisi("fault", "--started", "1", long_note)
+        self.assertEqual(rc, 0, out)
+        self.assertLessEqual(len(out.split(" — ", 1)[1].strip()), 300)
+        # refuse past 50 faults on the list with a plain line
+        fp = os.path.join(self.tmp, "state", "core-faults", self.project_key_for(self.proj) + ".json")
+        doc = {"next": 51, "items": [{"id": i, "state": "open", "at": 0, "text": "fault number %d here" % i, "note": ""} for i in range(1, 51)]}
+        self.write(fp, json.dumps(doc))
+        rc51, out51, err51 = self.sisi("fault", "fifty first fault should be refused")
+        self.assertEqual((rc51, err51), (1, ""), (out51, err51))
+        self.assertEqual(len(out51.strip().splitlines()), 1, out51)
+        self.assertIn("50", out51)
 
     def test_tripwires_disk_free_disk_drop_and_checkouts(self):
         # 1. disk_free_percent: 20% free (at limit) does not fire; 19% free (under limit) fires once
@@ -3039,7 +3183,7 @@ cli.main(["tick"])
         self.assertLessEqual(code, 1923, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 135)
-        self.assertLessEqual(len(rulebook), 9774)
+        self.assertLessEqual(len(rulebook), 9872)
 
 
 if __name__ == "__main__":

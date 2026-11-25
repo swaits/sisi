@@ -10,7 +10,7 @@ FLAGS = ("--gap", "--cause", "--improve", "--no-gap", "--later", "--scope", "--t
 TERMS = {"value": "what the person wanted", "evidence": "verified by checks that fit the risk", "time": "elapsed time",
          "cost": "compute and tool cost", "attention": "the person's attention", "learning": "getting better at the next piece of work"}
 TERM_HELP = "--term is one of: %s." % ", ".join(TERMS)
-SECRET = re.compile(r"\b(sk-[a-z0-9_-]{16,}|gh[pousr]_[a-z0-9]{20,}|xox[abp]-[a-z0-9-]{10,}|akia[0-9a-z]{16}|[a-f0-9]{40,})|\b(password|passwd|secret|token|api[_-]?key)\s*[:=]\s*\S+", re.I)
+clean = store.clean
 USAGE = """Record one of these:
   sisi retro --gap "<where the work fell short of the objective, with the evidence>" \\
              --cause "<the root cause>" \\
@@ -21,10 +21,6 @@ USAGE = """Record one of these:
       TERM is where the work fell short, or could most have scored better: %s.
       A piece of work can always be done better; the better is recorded with the retro, and becomes a rule only if it recurs, when the rules are organized.
   sisi retro --later "<what the unfinished work is waiting for>\"""" % "; ".join("%s = %s" % kv for kv in TERMS.items())
-
-
-def clean(text):
-    return SECRET.sub("<redacted>", " ".join(str(text or "").split()))
 
 
 def counts(state, cwd):

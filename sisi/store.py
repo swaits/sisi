@@ -8,6 +8,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 HOME = os.path.expanduser("~")
 NOTE = "This project's learned rules are in `.sisi/rules.md`. Read that file before any work here and follow it."
 NOTE_RE = re.compile(r"^<!-- sisi:begin -->\r?\n" + re.escape(NOTE) + r"\r?\n<!-- sisi:end -->(?:\r?\n|$)", re.M)
+SECRET = re.compile(r"\b(sk-[a-z0-9_-]{16,}|gh[pousr]_[a-z0-9]{20,}|xox[abp]-[a-z0-9-]{10,}|akia[0-9a-z]{16}|[a-f0-9]{40,})|\b(password|passwd|secret|token|api[_-]?key)\s*[:=]\s*\S+", re.I)
+
+def clean(text):
+    return SECRET.sub("<redacted>", " ".join(str(text or "").encode("utf-8", "replace").decode("utf-8").split()))
 def _where(own, xdg, fallback):
     """The folder in the environment variable `own`, else `xdg`/sisi, else the default under the home."""
     base = os.environ.get(xdg)

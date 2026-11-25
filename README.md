@@ -24,11 +24,12 @@ the numbers (minutes, messages, tool calls, delegations, checks) and the `term` 
 `attention` or `learning`: the terms of the objective), and `sisi retro` lays the facts out under those terms and shows their trend.
 
 **Faults.** Record any fault you see with `sisi fault "<what is wrong>"` (kept per project across sessions).
-Session start and every request show the faults still not fixed, and the end-of-turn gate will not let a turn
-end on an open fault until a fix is started (`--started N`), a blocker is named (`--blocked N`), or evidence
-closes it (`--fixed N`). sisi also opens faults itself at session start and each request when free disk space
-falls below `disk_free_percent`, this session uses more than `disk_drop_percent` of the disk, or the repository
-has more than `checkouts` linked worktrees. `sisi retro` lists the faults still open.
+Where the tool has hooks, session start and every request show the faults still not fixed, and with the gate
+on, the end-of-turn hook sends the lead back up to twice on an open fault until a fix is started (`--started N`),
+a blocker is named (`--blocked N`), or evidence closes it (`--fixed N`). sisi also opens faults itself at
+session start and each request when free disk space falls below `disk_free_percent`, this session uses more
+than `disk_drop_percent` of the disk, or the repository has more than `checkouts` linked worktrees. `sisi retro`
+lists the faults still open.
 
 ## Install
 
