@@ -99,11 +99,11 @@ def _begin(state, cwd):
             pass
 
 
-def _faults(cwd, gate=False, free=None):
+def _faults(cwd, gate=False, free=None, sid=""):
     if gate and not os.path.lexists(os.path.join(store.STATE, "core-faults", store.project_key(cwd) + ".json")):
         return ""
     from . import faults
-    return faults.gate(cwd) if gate else faults.check(cwd, free)
+    return faults.gate(cwd, sid) if gate else faults.check(cwd, free, sid)
 
 
 def tick(p):
@@ -118,7 +118,7 @@ def tick(p):
             store.append(env, "export SISI_SESSION_ID=%s" % sid, once=True)  # so `sisi retro` knows its session
     if not os.path.exists(os.path.join(store.DATA, "generated", "core.md")):
         rules.build_rulebook()
-    text = "\n".join(x for x in (rules.project_text(cwd), rules.due(cwd, claim=True), models.stale(), "" if worker else _faults(cwd, False, free)) if x)
+    text = "\n".join(x for x in (rules.project_text(cwd), rules.due(cwd, claim=True), models.stale(), "" if worker else _faults(cwd, False, free, sid)) if x)
     if text:
         print(text)
     return 0
@@ -141,13 +141,13 @@ def prompt(p):
             if not s.get("prompts") and WORKER.search(p["prompt"][:2000]):
                 s["worker"] = True
             worker, free = worker or bool(s.get("worker")), s.get("free_bytes")
-            worker or not p["prompt"].strip() or s.update(said=(s.get("said", []) + [" ".join(p["prompt"].split())[:8000]])[-20:])  # the person's own words
+            worker or not p["prompt"].strip() or WORKER.search(p["prompt"][:2000]) or s.update(said=((s["said"] if isinstance(s.get("said"), list) else []) + [" ".join(p["prompt"].split())[:8000]])[-20:])  # the person's own words
             s["prompts"] = s.get("prompts", 0) + 1
             s.get("prompts_since") or s.update(began=time.time())  # the first request of a piece of work
             s["prompts_since"] = s.get("prompts_since", 0) + 1
             s["direct"], s["extra"], s["blocks"] = 0, 0, 0
             not worker and (models.sync_late(s, cwd, sid), late1 := models.late(s, 1))
-    not worker and (text := "\n".join(x for x in [_faults(cwd, False, free)] + _late_lines(late1, cwd) if x)) and print(text)
+    not worker and (text := "\n".join(x for x in [_faults(cwd, False, free, sid)] + _late_lines(late1, cwd) if x)) and print(text)
     return 0
 
 
@@ -218,7 +218,7 @@ def gate(p, for_subagent=False):
         if s.get("worker"):
             return 0
         models.sync_late(s, cwd, sid)
-        open_f, starts = _faults(cwd, True), s["starts"] if isinstance(s.get("starts"), dict) else {}
+        open_f, starts = _faults(cwd, True, None, sid), s["starts"] if isinstance(s.get("starts"), dict) else {}
         seen = [x for x in (s["reminded"] if isinstance(s.get("reminded"), list) else [])
                 if isinstance(x, list) and len(x) == 2 and x[1] in (starts.get(x[0]) if isinstance(starts.get(x[0]), list) else ())]
         late = models.overdue({"starts": {w: [t for t in v if [w, t] not in seen] for w, v in starts.items() if isinstance(v, list)}, "meta": s.get("meta")})

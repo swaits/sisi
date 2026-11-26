@@ -45,7 +45,7 @@ def facts(state, cwd):
             "evidence (measured): %d check(s) passed, %d failed" % (n["checks_pass"], n["checks_fail"])] + d[1:-1]
     out += ["value (judged): did the person get what they wanted? changed: %d commit(s), %d file(s) uncommitted" % (n["commits"], len(dirty))]
     from . import faults
-    fs = faults.lines(cwd)
+    fs = faults.lines(cwd, store.current_session(cwd))
     return out + d[:1] + d[1:][-1:] + (["open faults (%d):" % len(fs)] + ["  " + l for l in fs] if fs else []) + ["learning (measured): last 10 pieces of work named: %s" % (named or "none yet")]
 
 

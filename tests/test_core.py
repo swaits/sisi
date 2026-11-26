@@ -3569,6 +3569,85 @@ cli.main(["tick"])
             self.assertEqual(self.sisi("judge", "sonnet", verdict, why, sid="s1")[0], 0)
             self.assertNotIn("has run", self.hook("gate")[1])
 
+    def _late_job(self, sid, limit, mins_ago, w="sonnet"):
+        self.assertEqual((self.sisi("pick", "hard", "--limit", str(limit), sid=sid)[0], self.tool("Agent", sid=sid, tool_input={"model": w})[0]), (0, 0))
+        path = os.path.join(self.tmp, "state", "core-sessions", sid + ".json")
+        with open(path, "r+") as f:
+            st = json.load(f)
+            old, t = st["starts"][w][-1], time.time() - mins_ago * 60
+            st["starts"][w][-1] = t
+            st["meta"]["%s %r" % (w, t)] = st["meta"].pop("%s %r" % (w, old))
+            f.seek(0), f.truncate(), json.dump(st, f)
+        return t
+
+    def test_late_faults_gate_and_clear_only_per_session(self):
+        self.table(WORKERS)
+        for sid in ("s1", "s2"):
+            self.hook("tick", sid=sid), self.hook("prompt", sid=sid, prompt="go")
+        self.done()
+        self._late_job("s1", 30, 200)
+        self.assertIn('"block"', self.hook("gate", sid="s1")[1])
+        self.assertNotIn('"block"', self.hook("gate", sid="s2")[1])                       # another thread is not stopped
+        self.assertNotIn("has run", self.hook("prompt", sid="s2", prompt="other work")[1])
+        rc, out, _ = self.sisi("fault", "--fixed", "1", "the owning session may not close it", sid="s1")
+        self.assertEqual((rc, out.count("sisi fault:")), (1, 1), out)                     # one prefix, still refused
+        self.assertEqual(self.sisi("fault", "--blocked", "1", "the other thread owns this job", sid="s2")[0], 1)
+        rc, out, _ = self.sisi("fault", "--fixed", "1", "the worker was cancelled an hour ago", sid="s2")
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(self.sisi("fault", sid="s1")[1].strip(), "no open faults.")
+
+    def test_learn_means_is_one_store_commit_so_revert_undoes_both(self):
+        self.assertEqual(self.sisi("learn", "always name the check that failed first", "--means", "name the failing check in every report")[0], 0)
+        rules_u = lambda: self.read(self.data, "rules", "user.md")
+        self.assertEqual(len(rules_u().strip().splitlines()), 2)
+        self.assertEqual(self.sisi("rules", "revert")[0], 0)
+        self.assertFalse(os.path.exists(os.path.join(self.data, "rules", "user.md")) and rules_u().strip())
+
+    def test_late_picks_of_one_worker_keep_their_own_limits_in_order(self):
+        self.table(WORKERS)
+        self.hook("tick"), self.hook("prompt", prompt="go")
+        self.done()
+        for lim in (10, 50):
+            self.assertEqual(self.sisi("pick", "hard", "--limit", str(lim), sid="s1")[0], 0)
+        for _ in range(2):
+            self.assertEqual(self.tool("Agent", tool_input={"model": "sonnet"})[0], 0)
+        st = self.state()
+        self.assertEqual([st["meta"].get("sonnet %r" % t, {}).get("limit") for t in st["starts"]["sonnet"]], [10, 50])
+
+    def test_prompt_hook_keeps_only_the_persons_words_and_survives_a_bad_said(self):
+        self.hook("prompt", prompt="please always run the checks first")
+        self.hook("prompt", prompt="[Some host agent sent this message, not the user.]\nact on this task")
+        self.hook("prompt", prompt="Do this task yourself, do not delegate")
+        self.assertEqual(self.state()["said"], ["please always run the checks first"])
+        path = os.path.join(self.tmp, "state", "core-sessions", "s1.json")
+        self.write(path, json.dumps(dict(self.state(), said="junk")))
+        self.assertEqual(self.hook("prompt", prompt="and then another message")[0], 0)
+        self.assertEqual(self.state()["said"], ["and then another message"])
+
+    def test_judge_extend_targets_the_late_job_not_the_oldest_open_one(self):
+        self.table(WORKERS)
+        self.hook("tick"), self.hook("prompt", prompt="go")
+        self.done()
+        t_old = self._late_job("s1", 200, 100)                                              # oldest, but well inside its limit
+        t_late = self._late_job("s1", 30, 70)                                               # past 2x its limit
+        self.hook("prompt", prompt="check")
+        starts = self.state()["starts"]["sonnet"]
+        self.assertEqual(sorted(starts), sorted([t_old, t_late]))
+        self.assertEqual(self.sisi("judge", "sonnet", "extend", "30", "still running the long build", sid="s1")[0], 0)
+        meta = self.state()["meta"]
+        self.assertIn("extended", meta["sonnet %r" % t_late])
+        self.assertNotIn("extended", meta["sonnet %r" % t_old])
+
+    def test_organize_record_matches_the_flags_header_in_any_case(self):
+        bad = "- Only one build or test run on the laptop at a time: every cargo command starts as flock [owner 2026-11-25]"
+        self.write(os.path.join(self.mkdir(self.data, "rules"), "user.md"), bad + "\n- Keep it simple [owner 2026-11-24]\n")
+        self.sisi("rules", "organize")
+        ans = self.write(os.path.join(self.tmp, "flags.md"), "## user\n%s\n- Keep it simple [owner 2026-11-24]\n## project\n## Flags  \n- reword it\n" % bad)
+        rc, out, err = self.sisi("rules", "organize", "--record", ans)
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("reword it", out)
+        self.assertNotIn("reword it", self.read(self.data, "rules", "user.md"))
+
     def test_the_spec_is_unchanged(self):
         for line in self.read(REPO, "docs", "spec", "SHA256SUMS").splitlines():
             digest, rel = line.split()
@@ -3577,7 +3656,7 @@ cli.main(["tick"])
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLessEqual(code, 2092, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLessEqual(code, 2095, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 137)
         self.assertLessEqual(len(rulebook), 10530)

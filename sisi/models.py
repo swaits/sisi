@@ -165,7 +165,7 @@ def claim(s, text, segment=False):
             t, starts = time.time(), (s["starts"] if isinstance(s.get("starts"), dict) else {})
             starts[name] = (starts[name] if isinstance(starts.get(name), list) else []) + [t]
             s["starts"] = starts  # `sisi judge` times the job from here
-            if isinstance(s.get("pending"), dict) and isinstance(meta := s["pending"].pop(name, None), dict):
+            if isinstance(s.get("pending"), dict) and isinstance(q := s["pending"].get(name), list) and q and isinstance(meta := q.pop(0), dict):
                 s["meta"] = {**(s["meta"] if isinstance(s.get("meta"), dict) else {}), "%s %r" % (name, t): meta}
             s.setdefault("workers_since", []).append(name)
             return True
@@ -276,7 +276,8 @@ def pick(args, cwd=None, rand=None):
     if sid:
         with store.session(sid) as s:
             s.setdefault("picked", []).append(w := short(r[0]))
-            if limit is not None or branch is not None: s["pending"] = {**(s["pending"] if isinstance(s.get("pending"), dict) else {}), w: {"limit": limit, "branch": branch}}
+            q = s["pending"] if isinstance(s.get("pending"), dict) else {}
+            s["pending"] = {**q, w: (q[w] if isinstance(q.get(w), list) else []) + [{"limit": limit, "branch": branch}]}  # one entry per pick, claimed in order
     print("worker: %s (model id: %s)\nstart it with the host's delegation tool; one pick buys one delegation" % (r[0], short(r[0])))
     if store.config()["shell_workers"] or not command(r):
         print("how to call it: " + r[1])
@@ -363,6 +364,8 @@ def judge(args, cwd=None):
         with store.session(sid) as s:
             starts = s["starts"].get(wkey) if isinstance(s.get("starts"), dict) else None
             cand = (starts.pop(-1 if newest else 0) if not ext else starts[-1 if newest else 0]) if isinstance(starts, list) and starts else None
+            if ext and not newest:  # the job that is late, not just the oldest open one
+                cand = next((min(t for w, t, *_ in l if w == wkey) for l in (late(s, 2), late(s, 1)) if any(w == wkey for w, *_ in l)), cand)
             ok_t = type(cand) in (int, float) and math.isfinite(cand) and cand <= now
             if ext:
                 if not ok_t: return print("sisi judge: no open job for %s." % args[0]) or 1

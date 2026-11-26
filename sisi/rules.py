@@ -182,20 +182,20 @@ def _commit(msg, *paths, snap=None):
         raise OSError("store git commit failed")
 
 
-def add(text, scope, source, cwd=None, log=None):
+def add(text, scope, source, cwd=None, log=None, means=""):
     """Put one rule in force; returns (line, warning). Raises OSError before writing when the list cannot be written."""
-    line = "- %s [%s %s]" % (" ".join(str(text).split()), source, time.strftime("%Y-%m-%d"))
+    line, *more = ["- %s [%s %s]" % (" ".join(str(t).split()), src, time.strftime("%Y-%m-%d")) for t, src in ((text, source), (means, "agent reading")) if t]  # one commit holds both
     dest = path(scope, cwd)
     scope == PROJECT and not dest and _check_writable(dest)
     with store.lock(dest if scope == PROJECT else "user"):
         if scope == USER:
-            store.append(dest, line)
+            [store.append(dest, l) for l in [line, *more]]
         else:
             _check_writable(dest)
             msg = _move(dest, _legacy(cwd))
             msg and print(msg)
             before = _text(dest)
-            after = _append(before, [line])
+            after = _append(before, [line, *more])
             store.write(dest, after)
             note(dest)
         try:
@@ -305,7 +305,7 @@ def organize_brief(cwd):
 def organize_record(answer_file, cwd):
     """Replace both lists with the worker's answer. Returns why not, or None when it is done."""
     cfg = store.config()
-    body, *flags = re.split(r"(?m)^## flags[ \t]*$", store.read(answer_file), 1)  # the flags are for the person, not rules
+    body, *flags = re.split(r"(?im)^##\s*flags\s*$", store.read(answer_file), 1)  # the flags are for the person, not rules
     flags = "".join(flags)
     parts = re.split(r"(?m)^## (user|project)[ \t]*$", body)
     got = {parts[i]: [l.rstrip() for l in parts[i + 1].splitlines() if l.startswith("- ")]
@@ -466,8 +466,7 @@ def learn(args, cwd=None):
     heard = _said(text, cwd)
     log = os.path.join(store.DATA, "rules", "owner.log")  # their exact words are kept, whatever organizing later does to the rule
     try:
-        line, warn = add(text, scope, "owner" if heard else "agent, attributed to owner", cwd, (log, "%s %s %s" % (time.strftime("%Y-%m-%d"), scope, " ".join(text.split()))))
-        means and add(means, scope, "agent reading", cwd)
+        line, warn = add(text, scope, "owner" if heard else "agent, attributed to owner", cwd, (log, "%s %s %s" % (time.strftime("%Y-%m-%d"), scope, " ".join(text.split()))), means)
     except OSError as e:
         print("sisi learn: could not write %s (%s). Nothing was changed, and your words were not kept." % (path(scope, cwd) or cwd or os.getcwd(), e))
         return 1

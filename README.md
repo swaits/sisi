@@ -83,15 +83,16 @@ its limits are.
 | `sisi done --goal … --check … [--check …] --next …` | Record what done means and what comes next; nothing starts before |
 | `sisi done --pass N "…"` / `--fail N "…"` | Give a check its verdict and evidence; `sisi done` alone shows it |
 | `sisi fault "<what is wrong>"` / `--started\|--blocked\|--fixed N "…"` | Record an open fault in this project, start a fix, name a blocker, or close it; `sisi fault` alone lists them |
-| `sisi pick routine\|ordinary\|hard [--review-of WORKER] [--not WORKER]` | The wheel gives one worker; a review goes to a different maker |
+| `sisi pick routine\|ordinary\|hard [--review-of WORKER] [--not WORKER] [--limit MINUTES] [--branch REF]` | The wheel gives one worker; a review goes to a different maker. `--limit` sets this delegation's lateness limit (default `worker_minutes`) and `--branch` names the branch whose last commit shows its progress; picks of one worker are matched to its delegations in order. A job past twice its limit becomes a late-worker fault in the session that started it (only that session is stopped by it; `sisi fault --fixed N "…"` from any other session clears it) |
 | `sisi retro` | Print what happened in this piece of work, to set against the objective |
 | `sisi retro --gap … --cause … --improve … --term T [--scope user]` | Record the gap and the term of the objective it fell short on; the improvement is a rule at once |
 | `sisi retro --no-gap … --term T --better …` | Nothing fell short, but work can always be done better: name the term and the one concrete thing that would have scored better (recorded with the retro; it becomes a rule only if it recurs, when the rules are organized) |
 | `sisi retro --later …` | The work is not finished yet |
-| `sisi learn [--project] "…"` | The person's own words become a rule at once |
+| `sisi learn [--project] "…" [--means "…"]` | The person's own words become a rule at once, tagged `[owner]` only when they appear in the person's recent messages in this session. `--means` adds, in the same undoable step, one line saying how the agent will apply it |
 | `sisi rules` / `sisi rules organize [--record FILE]` / `sisi rules revert` | See the learned rules; have a worker organize them; undo the last rule change made with `learn`, a retro or `organize`, in the user list or a project's `.sisi/rules.md` (not the one-time move of old rules; a second `revert` re-applies what the first undid; it declines, changing nothing, when the project file changed since or its folder moved or is gone) |
 | `sisi models` / `sisi models research [--record FILE]` | The workers table (the shared baseline table ships with sisi in `canon/models.md`); have a worker rebuild it |
 | `sisi judge WORKER good\|bad "…" [--minutes N] [--newest]` | How a delegation went; the minutes are measured from the pick's delegation (or `--minutes N`) and make the wheel favour faster workers. With several of one worker's jobs open, the oldest is judged first, `--newest` the newest |
+| `sisi judge WORKER extend MINUTES "<reason>" [--newest]` | Give a late job more time instead of judging it: the job that is past its limit (past twice it first, else past once, else the oldest) gets MINUTES more from now, and its late fault clears |
 | `sisi direct "…"` | Allow more direct tool calls this turn, with the reason |
 
 ## Where things live
@@ -125,7 +126,7 @@ Rules live at three levels:
   Releases live in `$SISI_LIB`, else `~/.local/lib/sisi`.
 
 Settings go under `"core"` in `config.json` in your store: `gate`, `meter`, `direct_calls` (8),
-`direct_extension` (8), `rules_lines` (30), `rules_chars` (4000), `organize_after` (8), `research_days` (7), `worker_minutes` (15),
+`direct_extension` (8), `rules_lines` (30), `rules_chars` (4000), `organize_after` (8), `research_days` (7), `worker_minutes` (90: a delegation is late after this many minutes, or its own `--limit`),
 `shell_workers` (false), `retro_minutes` (5: work that passed every check, delegated nothing and took less than this many minutes from `sisi done` closes without a retro),
 `disk_free_percent` (20), `disk_drop_percent` (5), `checkouts` (8; setting any of these three to 0 turns that tripwire off). Workers are started with the host's own delegation tool, so by default a shell command
 that starts a worker (`opencode`, `muse`, `agy`: the first word of a command line in your models table) is

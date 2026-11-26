@@ -8,7 +8,8 @@ BLOCK = 'sisi: open fault(s) with no fix started and no blocker named: %s. Start
 _path = lambda cwd=None: os.path.join(store.STATE, "core-faults", store.project_key(cwd) + ".json")
 _gb = lambda b: "%d GB" % round(b / 1e9) if b >= 1e9 else "%.1f GB" % (b / 1e9)
 _safe = lambda s: str(s).encode("utf-8", "replace").decode("utf-8")
-lines = lambda cwd=None: [_fmt(f) for f in _load(_path(cwd))[0]["items"]]
+_mine = lambda f, sid: not f.get("kind", "").startswith("late:") or bool(sid) and f["kind"].startswith("late:%s:" % sid[:8])  # a late fault belongs to the session that started the job
+lines = lambda cwd=None, sid="": [_fmt(f) for f in _load(_path(cwd))[0]["items"] if _mine(f, sid)]
 
 def _load(p):
     empty = {"next": 1, "items": []}
@@ -30,8 +31,8 @@ def _fmt(f):
     age = "%ds" % s if s < 60 else "%dm" % (s // 60) if s < 3600 else "%dh" % (s // 3600) if s < 86400 else "%dd" % (s // 86400)
     return "#%d [%s, %s] %s%s" % (f["id"], f["state"], age, _safe(f["text"]), " — " + _safe(f["note"]) if f.get("note") else "")
 
-def gate(cwd=None):
-    opened = [f for f in _load(_path(cwd))[0]["items"] if f["state"] == "open"]
+def gate(cwd=None, sid=""):
+    opened = [f for f in _load(_path(cwd))[0]["items"] if f["state"] == "open" and _mine(f, sid)]
     return BLOCK % "; ".join("#%d %s" % (f["id"], _safe(f["text"])) for f in opened) if opened else ""
 
 def add(cwd, text, kind="", flag="", fid=0):
@@ -44,8 +45,8 @@ def add(cwd, text, kind="", flag="", fid=0):
             hit = next((f for f in doc["items"] if f["id"] == fid), None)
             if not hit:
                 return None
-            if hit.get("kind", "").startswith("late:"):
-                raise OSError('sisi fault: #%d is a late worker fault; run `sisi judge WORKER good|bad "<why>"` or `sisi judge WORKER extend MINUTES "<reason>"`.' % fid)
+            if hit.get("kind", "").startswith("late:") and (flag != "--fixed" or hit["kind"].startswith("late:%s:" % (store.current_session(cwd) or "")[:8])):
+                raise OSError('#%d is a late worker fault; run `sisi judge WORKER good|bad "<why>"` or `sisi judge WORKER extend MINUTES "<reason>"`.' % fid)
             doc["items"] = [f for f in doc["items"] if f["id"] != fid] if flag == "--fixed" else doc["items"]
             hit.update(state=flag[2:], note=text)
         elif kind and any(f.get("kind") == kind for f in doc["items"]):
@@ -82,7 +83,7 @@ def _checkouts(cwd):
     except OSError:
         return 0
 
-def check(cwd, start_free=None):
+def check(cwd, start_free=None, sid=""):
     cfg, hits, pos = store.config(), [], lambda k: type(cfg[k]) in (int, float) and cfg[k] > 0
     try:
         st = os.statvfs(cwd) if pos("disk_free_percent") or (pos("disk_drop_percent") and type(start_free) in (int, float)) else None
@@ -102,7 +103,7 @@ def check(cwd, start_free=None):
             add(cwd, text, kind)
         except OSError:
             unsaved.append("[open] " + text)
-    ls = ([] if err else lines(cwd)) + unsaved
+    ls = ([] if err else lines(cwd, sid)) + unsaved
     return "\n".join(([err] if err else []) + ([HEAD] + ls[:10] + (["and %d more: sisi fault" % (len(ls) - 10)] if len(ls) > 10 else []) if ls else []))
 
 def run(args, cwd=None):
