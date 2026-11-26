@@ -1,6 +1,6 @@
 """The hooks the agent tool calls: session start, each request, before each tool call, end of turn.
 
-Session start loads what was learned. The tool hook counts what the lead does itself and stops it when it
+Session start loads what was learned. The tool hook counts what the lead does itself and reminds it when it
 should be delegating. The end-of-turn hook forces the retro when work was done."""
 import json, os, re, sys, time
 from . import models, rules, store
@@ -10,21 +10,18 @@ from . import models, rules, store
 WORKER = re.compile(r"(?im)^\W*(you are a (worker|subagent|sub-agent|delegate)\b|do this task yourself|do not delegate)|\A\s*\[[^\]\n]{0,200}\bsent this message, not the user\.?\]")
 DIRECT = ("shell", "read", "edit", "search", "web")  # the classes of tool call the meter counts
 
-METER = ("sisi: %d direct tool calls this turn (the limit is %d). Delegate the rest: `sisi models` lists your "
-         "workers; brief one and judge what comes back. If doing this yourself really costs less than briefing "
-         "it, say why first: `sisi direct \"<reason>\"` allows %d more.\n")
-GATE = ("sisi: this piece of work changed things and has no retro yet. Run `sisi retro`: it prints what happened. Set that against the objective and record the gap and the improvement, or that there was none. "
-        "If the work is not finished and you are only pausing (for the person, for background work), say so instead: `sisi retro --later \"<what it waits for>\"`.")
-NODONE = ("sisi: nothing starts before done is recorded. Work out what the person wants and what they will need "
-          "next, then: sisi done --goal \"<their goal>\" --check \"<a check that can fail>\" [--check ...] "
-          "--next \"<what comes next and what you do about it>\"\n")
-NOPICK = ("sisi: this delegation goes to a worker the wheel did not give you. sisi pick routine|ordinary|hard gives you one for this task "
-          "(--review-of WORKER for a review, --not WORKER if one is out); one pick, one delegation.\n")
-UNKNOWN = "sisi: the worker you named is not in the models table, so the table is out of date. Rebuild it now with a research worker (`sisi models research` prints the brief; `sisi models research --record FILE` records the answer), then run `sisi pick`.\n"
-NOSHELL = "sisi: do not shell out to a worker; start it with the host's delegation tool.\n"
-FAILED = "sisi: check %s failed. A failed check is a gap: record it with `sisi retro --gap \"<where it fell short>\" --cause \"<the root cause>\" --improve \"<the rule that prevents it>\" --term <term>`."
-OPEN = "sisi: these checks have no verdict yet: %s. Give each one: sisi done --pass N \"<evidence>\" or --fail N \"<why>\". If the work is only pausing: sisi retro --later \"<what it waits for>\"."
-LATE = "%s was started %s and has not reported. Check it now: if it is dead or no longer wanted, cancel it with the host's tool and record `sisi judge WORKER bad \"<why>\"`; if it reported, judge it."
+METER = ("sisi: %d direct tool calls this turn (the limit is %d). Delegate the rest: `sisi models` lists your workers and `sisi pick routine|ordinary|hard` "
+         "chooses one; if doing this yourself costs less than briefing it, say why with `sisi direct \"<reason>\"` (%d more).")
+GATE = ("sisi: this piece of work changed things and has no retro yet. Run `sisi retro` to see what happened, then record `sisi retro --gap \"<gap>\" --cause \"<cause>\" --improve \"<rule>\" --term <term>` "
+        "or `sisi retro --no-gap \"<evidence>\" --term <term> --better \"<what would score better>\"` (or pause: `sisi retro --later \"<what it waits for>\"`).")
+NODONE = "sisi: no done is recorded yet. Define what the person wants and what comes next now: `sisi done --goal \"<their goal>\" --check \"<a check that can fail>\" [--check ...] --next \"<what comes next and what you do about it>\"`."
+NOPICK = ("sisi: this delegation went to a worker the wheel did not give you (recorded so `sisi judge` still works). Use `sisi pick routine|ordinary|hard` next time "
+          "(--review-of WORKER for a review, --not WORKER if one is out); one pick, one delegation.")
+UNKNOWN = "sisi: the worker you named is not in the models table (recorded so `sisi judge` still works), so the table is out of date. Rebuild it now with a research worker (`sisi models research` prints the brief; `sisi models research --record FILE` records the answer), and use `sisi pick` next time."
+NOSHELL = "sisi: do not shell out to a worker; start it with the host's delegation tool next time."
+FAILED = "sisi: check %s failed. A failed check is a gap: record `sisi retro --gap \"<where it fell short>\" --cause \"<the root cause>\" --improve \"<the rule that prevents it>\" --term <term>` (or pause: `sisi retro --later \"<what it waits for>\"`)."
+OPEN = "sisi: these checks have no verdict yet: %s. Give each one: `sisi done --pass N \"<evidence>\"` or `sisi done --fail N \"<why>\"` (or pause: `sisi retro --later \"<what it waits for>\"`)."
+LATE = "%s was started %s and has not reported. Check it: if still running, let it finish (this reminder is shown once); if dead or unwanted, cancel it and run `sisi judge WORKER bad \"<why>\"`; if it reported, run `sisi judge WORKER good|bad \"<why>\"`."
 
 # The names each host gives a hook's fields; the first one present (and of the right type) wins.
 FIELDS = (("session_id", str, ("session_id", "sessionId", "conversation_id", "conversationId")),
@@ -76,20 +73,19 @@ def tool_class(tool):
 
 
 def own(command):
-    """A shell command that runs sisi and nothing else: free on the meter."""
-    import shlex
-    try:
-        lex = shlex.shlex(command, posix=False, punctuation_chars=True)
-        lex.whitespace_split = True
-        words = list(lex)
-    except ValueError:
-        return False
-    return (bool(words) and os.path.basename(words[0]) == "sisi" and "`" not in command and "$(" not in command
-            and "\n" not in command.strip() and not any(set(w) <= set("();<>|&") for w in words))
+    """A shell command that runs only sisi (optionally chained with ; / && or piped to grep/tail/head): free."""
+    tok_re = re.compile(r"[ \t]*(?:(?!\|\||\|&)(&&|[;|])|((?:'[^']*'|\"(?:\\.|(?!\$[({])[^\"\\`])*\"|\\[^\n]|(?!\$[({])[^\s'\";<>|&()`\\])+))")
+    s, pos, op, ok = command.strip(), 0, ";", False
+    while pos < len(s) and (m := tok_re.match(s, pos)):
+        pos, tok, w = m.end(), m.group(1), (m.group(2) or "").strip("\"'")
+        if (tok and not ok) or (not tok and op and not (os.path.basename(w) == "sisi" if op != "|" else w in ("grep", "tail", "head"))):
+            return False
+        op, ok = (tok, False) if tok else ("", True)
+    return ok and pos == len(s)
 
 
 def say(text):
-    """A denial's text, naming sisi by its full path when `sisi` is not on PATH."""
+    """A hook message, naming sisi by its full path when `sisi` is not on PATH."""
     import shutil
     return text if shutil.which("sisi") else re.sub(r"(?<![\w/-])sisi(?= [a-z-])", os.path.join(store.LIB, "current", "bin", "sisi"), text)
 
@@ -146,48 +142,46 @@ def prompt(p):
 
 
 def watch(p):
-    """Before a tool call by the lead: count it, and refuse it when the lead should be delegating."""
+    """Before a tool call by the lead: count it, record delegations, and remind when off-course (never blocking)."""
     sid, tool, ti = p["session_id"], p["tool_name"].lower(), p["tool_input"]
     if p["hook_event_name"] not in ("", "PreToolUse") or not sid or p["subagent"]:
         return 0
-    kind, command, cfg = tool_class(tool), str(ti.get("command") or ""), store.config()
+    kind, cfg = tool_class(tool), store.config()
+    command = next((v for k in ("command", "cmd", "CommandLine") if isinstance(v := ti.get(k), str) and v), "")
+    notes = []
     with store.session(sid) as s:
         _begin(s, p["cwd"] or os.getcwd())
-        if s.get("worker"):
-            return 0
-        if kind == "shell" and own(command):
+        if s.get("worker") or (kind == "shell" and own(command)):
             return 0
         shell = kind == "shell" and models.is_call(command)
-        if shell and not cfg["shell_workers"]:
-            sys.stderr.write(say(NOSHELL))
-            return 2
-        if (kind in ("delegate", "edit") or shell) and not s.get("done"):
-            sys.stderr.write(say(NODONE))
-            return 2
+        shell and not cfg["shell_workers"] and notes.append(NOSHELL)
+        (kind in ("delegate", "edit") or shell) and not s.get("done") and notes.append(NODONE)
         if kind == "delegate" or shell:
             target = ti.get("target") if isinstance(ti.get("target"), dict) else {}
             names = (ti.get("model"),) if tool == "agent" else (ti.get("model"), target.get("model"), ti.get("agent"))
-            text = command if shell else next((n for n in names if n and isinstance(n, str)), "")  # tool_input.model may be a short name: a segment
+            text = command if shell else next((n for n in names if n and isinstance(n, str)), "")
             table_text = store.read(models.table())
-            if tool != "workflow" and models.usable(table_text) and not models.claim(s, text, not shell and bool(names[0])):
-                unknown = not shell and text.strip() and not models.known(table_text, text)
-                unknown and models.stale(text)
-                sys.stderr.write(say(UNKNOWN if unknown else NOPICK))
-                return 2
+            if tool != "workflow" and not models.claim(s, text, not shell and bool(names[0])):
+                probe = {"picked": [models.short(r[0]) for r in models.rows(table_text)]}
+                known = models.claim(probe, text, True)
+                if models.usable(table_text):
+                    not shell and text.strip() and not known and models.stale(text)
+                    notes.append(UNKNOWN if not shell and text.strip() and not known else NOPICK)
+                w = (probe.get("workers_since") or [models.short(text) if not shell else ""])[0]
+                if re.fullmatch(r"[a-z0-9._/:+-]{1,80}", w):
+                    d = {"picked": [w], "starts": s.get("starts"), "workers_since": s.get("workers_since") if isinstance(s.get("workers_since"), list) else []}
+                    models.claim(d, w) and s.update(starts=d["starts"], workers_since=d["workers_since"])
             s["delegations_since"] = s.get("delegations_since", 0) + 1
             s.pop("paused", None)
-            return 0
-        if kind not in DIRECT:
-            return 0
-        limit = cfg["direct_calls"] + s.get("extra", 0)
-        if cfg["meter"] and s.get("direct", 0) >= limit:
-            sys.stderr.write(say(METER % (s["direct"], limit, cfg["direct_extension"])))
-            return 2  # the tool call is refused and the agent reads the reason
-        if kind == "edit":
-            s["changed"] = True
-            s.pop("paused", None)
-        s["direct"] = s.get("direct", 0) + 1
-        s["direct_since"] = s.get("direct_since", 0) + 1
+        elif kind in DIRECT:
+            limit = cfg["direct_calls"] + s.get("extra", 0)
+            cfg["meter"] and s.get("direct", 0) >= limit and notes.append(METER % (s.get("direct", 0), limit, cfg["direct_extension"]))
+            if kind == "edit":
+                s["changed"] = True
+                s.pop("paused", None)
+            s["direct"], s["direct_since"] = s.get("direct", 0) + 1, s.get("direct_since", 0) + 1
+    if notes:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": say("\n".join(notes))}}))
     return 0
 
 
@@ -213,8 +207,11 @@ def gate(p, for_subagent=False):
         _begin(s, cwd)
         if s.get("worker"):
             return 0
-        open_f = _faults(cwd, True)
-        reason, demand = " ".join("sisi: " + LATE % (w, time.strftime("%H:%M", time.localtime(t))) for w, t in models.overdue(s)), False
+        open_f, starts = _faults(cwd, True), s["starts"] if isinstance(s.get("starts"), dict) else {}
+        seen = [x for x in (s["reminded"] if isinstance(s.get("reminded"), list) else [])
+                if isinstance(x, list) and len(x) == 2 and x[1] in (starts.get(x[0]) if isinstance(starts.get(x[0]), list) else ())]
+        late = models.overdue({"starts": {w: [t for t in v if [w, t] not in seen] for w, v in starts.items() if isinstance(v, list)}})
+        reason, demand = " ".join("sisi: " + LATE % (w, time.strftime("%H:%M", time.localtime(t))) for w, t in late), False
         if not reason and not s.get("paused"):
             checks = (s.get("done") or {}).get("checks") or []
             unsaid = ["%d. %s" % (i, c["text"]) for i, c in enumerate(checks, 1) if not c["verdict"]]
@@ -228,6 +225,9 @@ def gate(p, for_subagent=False):
                 reason = "" if unsaid and models.waiting(s) else OPEN % "; ".join(unsaid) if unsaid else GATE if worked else FAILED % ", ".join(failed) if failed else ""
                 demand = bool(reason and not unsaid)
         reason = " ".join(x for x in (open_f, reason) if x)
+        if reason and s.get("blocks", 0) < 2:
+            seen += [[w, t] for w, t in late]
+        s.pop("reminded", None) if not seen else s.update(reminded=seen)
         if not reason or s.get("blocks", 0) >= 2:
             return 0
         s["blocks"] = s.get("blocks", 0) + 1
