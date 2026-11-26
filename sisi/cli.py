@@ -27,9 +27,10 @@ Delegation
   sisi models                      the workers you have: what each is good at and what it costs
   sisi models research [--record FILE]
                                    the brief for a research worker to rebuild that table; record its answer
-  sisi pick routine|ordinary|hard [--review-of WORKER] [--not WORKER ...]
+  sisi pick routine|ordinary|hard [--review-of WORKER] [--not WORKER ...] [--limit MINUTES] [--branch NAME]
                                    the wheel gives you one worker of that class; one pick, one delegation
-  sisi judge WORKER good|bad WHY   how a delegation went
+  sisi judge WORKER good|bad WHY | extend MINUTES WHY [--newest]
+                                   how a delegation went, or give a running job more time
   sisi direct REASON               allow yourself more direct tool calls this turn, with the reason
 
 Setting up

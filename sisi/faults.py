@@ -44,6 +44,8 @@ def add(cwd, text, kind="", flag="", fid=0):
             hit = next((f for f in doc["items"] if f["id"] == fid), None)
             if not hit:
                 return None
+            if hit.get("kind", "").startswith("late:"):
+                raise OSError('sisi fault: #%d is a late worker fault; run `sisi judge WORKER good|bad "<why>"` or `sisi judge WORKER extend MINUTES "<reason>"`.' % fid)
             doc["items"] = [f for f in doc["items"] if f["id"] != fid] if flag == "--fixed" else doc["items"]
             hit.update(state=flag[2:], note=text)
         elif kind and any(f.get("kind") == kind for f in doc["items"]):
@@ -57,6 +59,13 @@ def add(cwd, text, kind="", flag="", fid=0):
             raise OSError("%s would exceed 64,000 bytes" % p)
         store.write(p, out)
     return hit
+
+def clear(cwd, prefix, keep=()):
+    if os.path.lexists(p := _path(cwd)):
+        with store.lock(p):
+            doc, err = _load(p)
+            if not err and len(items := [f for f in doc["items"] if not (f.get("kind", "").startswith(prefix) and f.get("kind") not in keep)]) != len(doc["items"]):
+                store.write(p, json.dumps({"next": doc["next"], "items": items}))
 
 def _checkouts(cwd):
     try:

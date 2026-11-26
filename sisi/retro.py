@@ -111,7 +111,7 @@ def record(s, cwd, opt, sid=None):
         print("sisi: retro saved, but store git commit failed.")
     s["snapshot"], s["changed"], s["retro_at"] = store.snapshot(cwd), False, now
     for key in ("prompts_since", "direct_since", "delegations_since", "reasons_since", "workers_since", "done", "paused",
-                "fails_since", "picked", "starts", "retro_demanded", "began"):
+                "fails_since", "picked", "starts", "pending", "meta", "reminded", "retro_demanded", "began"):
         s.pop(key, None)
 
 
