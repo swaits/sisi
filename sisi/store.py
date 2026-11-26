@@ -87,8 +87,10 @@ def append(path, line, once=False):
 
 
 def git(args, cwd, timeout=15):
+    # A repository named by the caller's environment (a git hook sets GIT_DIR) must not decide which project this folder is.
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")}
     try:
-        r = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
         return r.returncode, r.stdout
     except (OSError, subprocess.SubprocessError):
         return 1, ""
