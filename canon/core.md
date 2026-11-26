@@ -76,7 +76,10 @@ gives you one: use it. A class holds models of like strength from different make
 `sisi pick CLASS --review-of WORKER`. Start the worker with the host's own delegation tool; do not
 shell out to a worker's command line. Run
 independent work in parallel. Brief a worker as a peer who starts cold: the outcome, what is
-known and ruled out, what done looks like, the files it may change, what it may create. Decide
+known and ruled out, what done looks like, the files it may change, what it may create, and a time limit
+(`sisi pick CLASS --limit MINUTES [--branch NAME]`). At the limit it stops and reports as it
+stands: what is proven, what failed, what did not run. Extending is the lead's call, made once,
+with a reason (`sisi judge WORKER extend MINUTES "<reason>"`). Decide
 the central mechanism in the brief, set against the person's standing rules on its subject, and say what a failed or
 gamed job does to each number it optimizes. For a reported fault, the report's exact inputs are an acceptance test. For a
 replacement, list each behaviour of the old thing as keep, change or drop, with a check for every
@@ -122,10 +125,14 @@ disk, a slow build, a wrong result, a mess. In the turn you see it, start its fi
 blocks the fix and what would unblock it. Noting it, reporting it or working around it is not a
 fix. Fix the cause, not the symptom: ask why it happened, what else the same cause breaks, and
 whether your own work fed it. What your work makes is yours to clear once no running job uses
-it: copies, checkouts, branches, build output, background jobs. Before work that makes copies,
-checkouts or builds, know how much room they take, share one build folder between checkouts where
-the tool allows, and never start more than the machine has room for. A brief names what its
-worker may create; remove it when the piece merges, without asking. Record it with `sisi fault
-"<what is wrong>"`. Where the tool has hooks, sisi shows open faults at every request and sends
+it: copies, checkouts, branches, build output, background jobs. Each worker that builds gets its
+own checkout and build folder, and workers build at the same time: never make them take turns on
+one lock or share a build folder unless the build tool is known to be safe with that. Measure
+what each piece needs and what the machine has free (CPU, memory, disk per checkout and build
+folder) and set how many build at once from that: never one unless a measurement says so. A brief
+names what its worker may create; remove it when the piece merges or is dropped, without asking.
+Cleaning up is the answer to disk use, not fewer workers. Record a fault with `sisi fault "<what
+is wrong>"`; for a resource fault name the measured cause there first, and never cut parallelism
+unless a measurement shows parallelism caused it. Where the tool has hooks, sisi shows open faults at every request and sends
 you back twice before a turn ends on one with no fix started and no blocker named. A worker fixes
 what its brief covers and reports the rest. Never wait to be told.
