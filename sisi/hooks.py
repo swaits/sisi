@@ -124,9 +124,17 @@ def tick(p):
     return 0
 
 
+def _late_lines(late1, cwd):
+    now, cfg_m = time.time(), store.config()["worker_minutes"]
+    def prog(branch, ext):
+        rc, out = store.git(["log", "-1", "--format=%ct", branch], cwd, timeout=2) if branch else (1, "")
+        return "commit %dm ago on %s" % (max(0, int((now - int(out.strip())) / 60)), branch) if rc == 0 and out.strip().isdigit() else "extended %dm ago" % max(0, int((now - ext) / 60)) if ext is not None else "no report since it started"
+    return ["sisi: worker %s has run %dm (limit %gm); last progress: %s" % (w, int((now - t) / 60), lim if lim is not None else cfg_m, prog(b, e)) for w, t, lim, b, e in late1]
+
+
 def prompt(p):
     """Each request: a new turn begins. The first request tells a delegated worker from a lead."""
-    sid, cwd, worker, free = p["session_id"], p["cwd"] or os.getcwd(), p["subagent"], None
+    sid, cwd, worker, free, late1 = p["session_id"], p["cwd"] or os.getcwd(), p["subagent"], None, []
     if sid:
         with store.session(sid) as s:
             _begin(s, cwd)
@@ -137,7 +145,8 @@ def prompt(p):
             s.get("prompts_since") or s.update(began=time.time())  # the first request of a piece of work
             s["prompts_since"] = s.get("prompts_since", 0) + 1
             s["direct"], s["extra"], s["blocks"] = 0, 0, 0
-    not worker and (text := _faults(cwd, False, free)) and print(text)
+            not worker and (models.sync_late(s, cwd, sid), late1 := models.late(s, 1))
+    not worker and (text := "\n".join(x for x in [_faults(cwd, False, free)] + _late_lines(late1, cwd) if x)) and print(text)
     return 0
 
 
@@ -207,10 +216,11 @@ def gate(p, for_subagent=False):
         _begin(s, cwd)
         if s.get("worker"):
             return 0
+        models.sync_late(s, cwd, sid)
         open_f, starts = _faults(cwd, True), s["starts"] if isinstance(s.get("starts"), dict) else {}
         seen = [x for x in (s["reminded"] if isinstance(s.get("reminded"), list) else [])
                 if isinstance(x, list) and len(x) == 2 and x[1] in (starts.get(x[0]) if isinstance(starts.get(x[0]), list) else ())]
-        late = models.overdue({"starts": {w: [t for t in v if [w, t] not in seen] for w, v in starts.items() if isinstance(v, list)}})
+        late = models.overdue({"starts": {w: [t for t in v if [w, t] not in seen] for w, v in starts.items() if isinstance(v, list)}, "meta": s.get("meta")})
         reason, demand = " ".join("sisi: " + LATE % (w, time.strftime("%H:%M", time.localtime(t))) for w, t in late), False
         if not reason and not s.get("paused"):
             checks = (s.get("done") or {}).get("checks") or []

@@ -24,7 +24,7 @@ LIB = os.environ.get("SISI_LIB") or os.path.join(HOME, ".local", "lib", "sisi")
 # Every setting there is. The person overrides one under "core" in config.json in their store.
 DEFAULTS = {"gate": True, "meter": True, "direct_calls": 8, "direct_extension": 8,
             "rules_lines": 30, "rules_chars": 4000, "organize_after": 8, "research_days": 7, "shell_workers": False,
-            "worker_minutes": 15, "retro_minutes": 5, "disk_free_percent": 20, "disk_drop_percent": 5, "checkouts": 8}
+            "worker_minutes": 90, "retro_minutes": 5, "disk_free_percent": 20, "disk_drop_percent": 5, "checkouts": 8}
 
 def config():
     cfg = dict(DEFAULTS)

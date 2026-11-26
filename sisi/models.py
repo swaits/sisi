@@ -162,19 +162,36 @@ def claim(s, text, segment=False):
         if any(re.search(r"(?<![a-z0-9.-])%s(?![a-z0-9.-])" % re.escape(n), text.lower()) for n in (name, name.rsplit("/", 1)[-1])) or (
                 segment and re.search("[a-z]", text.lower()) and text.lower() in name.rsplit("/", 1)[-1].split("-")):
             s["picked"].remove(name)
-            starts = s["starts"] if isinstance(s.get("starts"), dict) else {}
-            starts[name] = (starts[name] if isinstance(starts.get(name), list) else []) + [time.time()]
+            t, starts = time.time(), (s["starts"] if isinstance(s.get("starts"), dict) else {})
+            starts[name] = (starts[name] if isinstance(starts.get(name), list) else []) + [t]
             s["starts"] = starts  # `sisi judge` times the job from here
+            if isinstance(s.get("pending"), dict) and isinstance(meta := s["pending"].pop(name, None), dict):
+                s["meta"] = {**(s["meta"] if isinstance(s.get("meta"), dict) else {}), "%s %r" % (name, t): meta}
             s.setdefault("workers_since", []).append(name)
             return True
     return False
 
 
+def late(s, factor=1):
+    """Open jobs whose age >= factor * threshold: [(worker, start, limit, branch, extended)]."""
+    now, default_m, starts, meta, out = time.time(), store.config()["worker_minutes"], s.get("starts"), s.get("meta"), []
+    num = lambda x: type(x) in (int, float) and math.isfinite(x)
+    for w, v in (starts.items() if isinstance(starts, dict) else ()):
+        for t in (v if isinstance(v, list) else ()):
+            m = meta.get("%s %r" % (w, t)) if num(t) and t <= now and isinstance(meta, dict) else {}
+            m = m if isinstance(m, dict) else {}
+            lim = m.get("limit") if num(m.get("limit")) and m["limit"] > 0 else None
+            th = lim if lim is not None else default_m
+            if num(t) and t <= now and num(th) and now - t >= 60 * factor * th:
+                out.append((w, t, lim, m.get("branch") if isinstance(m.get("branch"), str) and m["branch"] else None, m.get("extended") if num(m.get("extended")) else None))
+    return out
+
+
 def overdue(s):
-    """Open delegations older than `worker_minutes`: [(worker, its oldest such start)]. A bad or future start is none."""
-    mins, starts = store.config()["worker_minutes"], s.get("starts")
-    old = lambda v: [t for t in v if type(t) in (int, float) and math.isfinite(t) and t <= time.time() - 60 * mins] if isinstance(v, list) else []
-    return [(w, min(old(v))) for w, v in (starts.items() if isinstance(starts, dict) and type(mins) in (int, float) else []) if old(v)]
+    """Open delegations older than their threshold: [(worker, its oldest such start)]."""
+    by_w, l = {}, late(s, 1)
+    [by_w.setdefault(w, min(t for w2, t, *_ in l if w2 == w)) for w, *_ in l]
+    return list(by_w.items())
 
 
 def waiting(s):
@@ -226,18 +243,17 @@ def choose(text, cls, skip=(), review=None, rand=None, today=None, speed=None):
 
 
 def pick(args, cwd=None, rand=None):
-    """`sisi pick routine|ordinary|hard [--review-of WORKER] [--not WORKER ...]`: the wheel gives one worker."""
-    cls, skip, review, i = (args[0] if args and args[0] in ("routine", "ordinary", "hard") else None), set(), None, 1
+    """`sisi pick routine|ordinary|hard [--review-of WORKER] [--not WORKER ...] [--limit MINUTES] [--branch NAME]`: the wheel gives one worker."""
+    cls, skip, review, limit, branch, i = (args[0] if args and args[0] in ("routine", "ordinary", "hard") else None), set(), None, None, None, 1
     while cls and i < len(args):
-        if args[i] == "--not" and i + 1 < len(args):
-            skip.add(short(args[i + 1]))
-        elif args[i] == "--review-of" and i + 1 < len(args):
-            review = args[i + 1]
-        else:
-            cls = None
+        if args[i] == "--not" and i + 1 < len(args): skip.add(short(args[i + 1]))
+        elif args[i] == "--review-of" and i + 1 < len(args): review = args[i + 1]
+        elif args[i] == "--limit" and i + 1 < len(args) and re.fullmatch(r"[1-9]\d{0,3}|10000", args[i + 1]): limit = int(args[i + 1])
+        elif args[i] == "--branch" and i + 1 < len(args) and re.fullmatch(r"[A-Za-z0-9._/-]{1,100}", args[i + 1]) and not args[i + 1].startswith("-"): branch = args[i + 1]
+        else: cls = None
         i += 2
     if not cls:
-        print("usage: sisi pick routine|ordinary|hard [--review-of WORKER] [--not WORKER ...]")
+        print("usage: sisi pick routine|ordinary|hard [--review-of WORKER] [--not WORKER ...] [--limit MINUTES] [--branch NAME]")
         return 1
     text = store.read(table())
     mine = [r for r in rows(text) if r[2].strip().lower() == cls]
@@ -259,7 +275,8 @@ def pick(args, cwd=None, rand=None):
     sid = store.current_session(cwd)
     if sid:
         with store.session(sid) as s:
-            s.setdefault("picked", []).append(short(r[0]))
+            s.setdefault("picked", []).append(w := short(r[0]))
+            if limit is not None or branch is not None: s["pending"] = {**(s["pending"] if isinstance(s.get("pending"), dict) else {}), w: {"limit": limit, "branch": branch}}
     print("worker: %s (model id: %s)\nstart it with the host's delegation tool; one pick buys one delegation" % (r[0], short(r[0])))
     if store.config()["shell_workers"] or not command(r):
         print("how to call it: " + r[1])
@@ -315,31 +332,51 @@ def research_record(answer_file):
     return None
 
 
+def sync_late(s, cwd, sid, add=True):
+    if not (late2 := late(s, 2)) and not os.path.lexists(os.path.join(store.STATE, "core-faults", store.project_key(cwd) + ".json")): return
+    from . import faults
+    prefix, now, cfg_m = "late:%s:" % sid[:8], time.time(), store.config()["worker_minutes"]
+    want = {"%s%s@%d" % (prefix, w, int(t)): 'worker %s has run %dm (past 2x %gm limit). Judge it (`sisi judge %s good|bad "<why>"`) or extend (`sisi judge %s extend MINUTES "<reason>"`).' % (
+        w, int((now - t) / 60), lim if lim is not None else cfg_m, w, w) for w, t, lim, *_ in late2}
+    try:
+        faults.clear(cwd, prefix, set(want)); add and [faults.add(cwd, text, kind=k) for k, text in want.items()]
+    except OSError: pass
+
+
 def judge(args, cwd=None):
-    """`sisi judge WORKER good|bad "<why>" [--minutes N] [--newest]`: how a delegation went, and how long the job took:
-    from the oldest start of this worker's open jobs (the newest with --newest) unless --minutes says."""
+    """`sisi judge WORKER good|bad "<why>" [--minutes N] [--newest] | extend MINUTES "<why>" [--newest]`."""
     from . import retro  # not at the top: hooks import this module and must stay quick
     args, newest, minutes, note = [a for a in args if a != "--newest"], "--newest" in args, None, ""
     if "--minutes" in args:
         i = args.index("--minutes")
         v, args = (args[i + 1:i + 2] or [""])[0], args[:i] + args[i + 2:]
         minutes = int(v) if re.fullmatch(r"[1-9]\d{0,3}|10000", v) else 0
-    if len(args) != 3 or not args[0].strip() or args[1] not in ("good", "bad") or len(args[2].split()) < 3 or minutes == 0:
-        print('usage: sisi judge WORKER good|bad "<what it did well or badly, in a sentence>" [--minutes N] [--newest]')
+    ext = len(args) == 4 and args[1] == "extend" and minutes is None and re.fullmatch(r"[1-9]\d{0,3}|10000", args[2])
+    if not args or not args[0].strip() or not (ext or (len(args) == 3 and args[1] in ("good", "bad") and minutes != 0)) or len(args[-1].split()) < 3:
+        print('usage: sisi judge WORKER good|bad "<what it did well or badly, in a sentence>" [--minutes N] [--newest] | extend MINUTES "<reason, 3+ words>" [--newest]')
         return 1
     trows = rows(store.read(table()))
     hits = [r for r in trows if short(r[0]) == short(args[0])] or [r for r in trows if claim({"picked": [short(r[0])]}, args[0], True)]
     model = (hits[0][0].split() or [""])[0] if len(hits) == 1 else args[0]
-    sid, now, began = store.current_session(cwd), time.time(), None
+    wkey, sid, now, began = short(model), store.current_session(cwd), time.time(), None
     if sid:
         with store.session(sid) as s:
-            starts = s["starts"].get(short(model)) if isinstance(s.get("starts"), dict) else None
-            if isinstance(starts, list) and starts:
-                cand = starts.pop(-1 if newest else 0)  # one start per open job, oldest first
-                if type(cand) in (int, float) and math.isfinite(cand) and cand <= now:  # else dropped, times nothing
-                    began = cand
-                    minutes = minutes or max(1, int((now - began) / 60))
-                    note = " (job started %s, %d more open for this worker)" % (time.strftime("%H:%M", time.localtime(began)), len(starts))
+            starts = s["starts"].get(wkey) if isinstance(s.get("starts"), dict) else None
+            cand = (starts.pop(-1 if newest else 0) if not ext else starts[-1 if newest else 0]) if isinstance(starts, list) and starts else None
+            ok_t = type(cand) in (int, float) and math.isfinite(cand) and cand <= now
+            if ext:
+                if not ok_t: return print("sisi judge: no open job for %s." % args[0]) or 1
+                lim, m, k = max(0, int((now - cand) / 60)) + int(args[2]), (s["meta"] if isinstance(s.get("meta"), dict) else {}), "%s %r" % (wkey, cand)
+                m[k], s["meta"] = {**(m[k] if isinstance(m.get(k), dict) else {}), "limit": lim, "extended": now, "reason": retro.clean(args[3])}, m
+                isinstance(s.get("reminded"), list) and s.__setitem__("reminded", [x for x in s["reminded"] if x != [wkey, cand]])
+                return sync_late(s, cwd, sid, False) or print("extended %s limit to %d min." % (wkey, lim)) or 0
+            isinstance(s.get("meta"), dict) and s["meta"].pop("%s %r" % (wkey, cand), None)
+            if ok_t:
+                began = cand
+                minutes = minutes or max(1, int((now - began) / 60))
+                note = " (job started %s, %d more open for this worker)" % (time.strftime("%H:%M", time.localtime(began)), len(starts))
+            sync_late(s, cwd, sid, False)
+    elif ext: return print("sisi judge: no open job for %s." % args[0]) or 1
     iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t))
     rec = {"ts": iso(now), "ended": iso(now), "worker": args[0], "model": model, "verdict": args[1],
            "why": retro.clean(args[2]), "project": os.path.basename(store.project_root(cwd)),
