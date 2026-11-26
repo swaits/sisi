@@ -10,8 +10,10 @@ USER, PROJECT = "user", "project"
 OWNER = re.compile(r"\[owner\b[^\]]*\]")
 _owner, _retro = lambda l: bool(OWNER.search(l)), lambda ls: [l for l in ls if not _owner(l)]
 _snap = lambda u, p: hashlib.sha1(("\n".join(u) + "\0" + "\n".join(p)).encode()).hexdigest()[:16]
-HEAD_USER = "## Learned here\n\nAdded by retros and by the person. These add to the rules above and never relax them.\n"
-HEAD_PROJECT = "sisi: learned in this project (these add to the rules and never relax them):"
+_TAGS = " [owner] lines are the person's words; [agent ...] lines are an agent's reading, which a later owner statement or a measurement overrides."
+HEAD_USER = "## Learned here\n\nAdded by retros and by the person. These add to the rules above and never relax them." + _TAGS + "\n"
+HEAD_PROJECT = "sisi: learned in this project (these add to the rules and never relax them)." + _TAGS
+SMELL = re.compile(r"(?i)\bone (?:build|test|run|worker|job)\b.{0,60}\bat a time|\bflock\b|\b(?:shared?|one)\b.{0,30}\bbuild (?:folder|dir)")
 
 ORGANIZE = """You are a worker. Do this task yourself; do not delegate it further.
 
@@ -28,7 +30,11 @@ Rewrite both lists so they serve that objective best:
 - A rule seen in more than one project, or about how the person wants to be worked with, belongs in the
   first list. A rule about this project's own code belongs in the second.
 - Lines marked [owner ...] are the person's own words: copy every one of them verbatim, unchanged by even
-  one character (you may reorder them). Only [retro ...] lines may be merged, reworded or dropped.
+  one character (you may reorder them). Only the other lines ([retro ...], [agent ...]) may be merged, reworded or dropped.
+- Flag, but do not change, any [owner ...] line whose text does not read as the person's own words (a paraphrase, an
+  agent's conclusion, third person), and any rule that limits builds, tests or workers to one at a time or tells
+  checkouts to share one build folder. List each under a final `## flags` section with its proposed corrected or
+  retagged form, for the person to accept.
 - Keep the [source date] mark at the end of every line.
 - A `better` that recurs across retros has earned a rule: add it, worded as an instruction, marked [retro <date>].
 - Non-owner ([retro ...]) lines in each list: at most %(lines)d lines and %(chars)d characters. Fewer is better.
@@ -38,12 +44,17 @@ Answer with exactly this shape and nothing else:
 - ...
 ## project
 - ...
+## flags
+- ... (only if there are any)
 
 === The first list now (all projects) ===
 %(user)s
 
 === The second list now (project "%(name)s") ===
 %(project)s
+
+=== Flagged for the person (likely wrong; propose a fix) ===
+%(flagged)s
 
 === What recent retros found, newest last (context only) ===
 %(retros)s
@@ -286,6 +297,7 @@ def organize_brief(cwd):
     return ORGANIZE % {
         "name": os.path.basename(store.project_root(cwd)), "objective": objective(),
         "lines": cfg["rules_lines"], "chars": cfg["rules_chars"],
+        "flagged": "\n".join(l for l in u + p if SMELL.search(l)) or "(none)",
         "user": "\n".join(u) or "(none)", "project": "\n".join(p) or "(none)",
         "retros": "\n".join(store.read(store.data("retro.jsonl")).splitlines()[-40:]) or "(none)"}
 
@@ -293,7 +305,9 @@ def organize_brief(cwd):
 def organize_record(answer_file, cwd):
     """Replace both lists with the worker's answer. Returns why not, or None when it is done."""
     cfg = store.config()
-    parts = re.split(r"(?m)^## (user|project)[ \t]*$", store.read(answer_file))
+    body, *flags = re.split(r"(?m)^## flags[ \t]*$", store.read(answer_file), 1)  # the flags are for the person, not rules
+    flags = "".join(flags)
+    parts = re.split(r"(?m)^## (user|project)[ \t]*$", body)
     got = {parts[i]: [l.rstrip() for l in parts[i + 1].splitlines() if l.startswith("- ")]
            for i in range(1, len(parts) - 1, 2)}
     if set(got) != {USER, PROJECT}:
@@ -350,6 +364,7 @@ def organize_record(answer_file, cwd):
     build_rulebook()
     for scope in (USER, PROJECT):
         print("%s rules: %d lines (were %d)" % (scope, len(got[scope]), len(had[scope])))
+    flags.strip() and print("Flagged for you (not changed):" + flags.rstrip())
     return None
 
 
@@ -425,18 +440,37 @@ def run(args, cwd=None):
     return 1 if why else 0
 
 
+_norm = lambda t: " ".join(re.sub(r"[\W_]+", " ", t.lower()).split())
+
+
+def _said(words, cwd):
+    """True when the words are a quotation of one of the person's recent messages in this session."""
+    try:
+        sid = store.current_session(cwd)
+        said = json.loads(store.read(store._session_path(sid)) or "{}").get("said") if sid else None
+    except (OSError, ValueError, AttributeError):
+        return False
+    return isinstance(said, list) and any(" %s " % _norm(words) in " %s " % _norm(m) for m in said if isinstance(m, str))
+
+
 def learn(args, cwd=None):
-    """`sisi learn [--project] TEXT`: the person's own words become a rule at once."""
+    """`sisi learn [--project] "<the person's exact words>" [--means "<how I will apply it>"]`: a rule at once; the
+    owner tag only when the words are found in the person's recent messages, else the agent's own tag."""
+    i = args.index("--means") if "--means" in args else len(args)
+    args, means = list(args[:i]), " ".join(args[i + 1:])
     scope = PROJECT if "--project" in args else USER
     text = " ".join(a for a in args if a != "--project").strip()
-    if len(text.split()) < 3:
-        print('usage: sisi learn [--project] "<what the person said, in their words>"')
+    if len(text.split()) < 3 or (means and len(means.split()) < 3):
+        print('usage: sisi learn [--project] "<what the person said, in their words>" [--means "<how I will apply it>"]')
         return 1
+    heard = _said(text, cwd)
     log = os.path.join(store.DATA, "rules", "owner.log")  # their exact words are kept, whatever organizing later does to the rule
     try:
-        line, warn = add(text, scope, "owner", cwd, (log, "%s %s %s" % (time.strftime("%Y-%m-%d"), scope, " ".join(text.split()))))
+        line, warn = add(text, scope, "owner" if heard else "agent, attributed to owner", cwd, (log, "%s %s %s" % (time.strftime("%Y-%m-%d"), scope, " ".join(text.split()))))
+        means and add(means, scope, "agent reading", cwd)
     except OSError as e:
         print("sisi learn: could not write %s (%s). Nothing was changed, and your words were not kept." % (path(scope, cwd) or cwd or os.getcwd(), e))
         return 1
+    heard or print("sisi learn: these words were not found in the person's recent messages, so the rule carries the weaker tag [agent, attributed to owner]; a later owner statement or a measurement overrides it.")
     print(warn or "in force from the next session: %s" % line)
     return 0

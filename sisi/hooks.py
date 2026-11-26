@@ -133,6 +133,7 @@ def prompt(p):
             if not s.get("prompts") and WORKER.search(p["prompt"][:2000]):
                 s["worker"] = True
             worker, free = worker or bool(s.get("worker")), s.get("free_bytes")
+            worker or not p["prompt"].strip() or s.update(said=(s.get("said", []) + [" ".join(p["prompt"].split())[:8000]])[-20:])  # the person's own words
             s["prompts"] = s.get("prompts", 0) + 1
             s.get("prompts_since") or s.update(began=time.time())  # the first request of a piece of work
             s["prompts_since"] = s.get("prompts_since", 0) + 1
