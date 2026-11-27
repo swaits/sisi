@@ -247,6 +247,8 @@ def run(args, cwd=None):
             print("problem %d '%s' has come back: %d misses" % (prob["num"], prob["name"], misses))
             for a in prior:
                 print("  - [%s] %s" % (a["date"], a["improve"] or a["cause"] or "(no improvement recorded)"))
+            for d in rules.drops_for(prob["num"]):
+                print("  - dropped [%s] %s (%s)" % (str(d.get("ts") or "")[:10] or "?", d.get("rule", ""), d.get("reason", "")))
         else:
             print("opened problem %d '%s'." % (prob["num"], prob["name"]))
         try:

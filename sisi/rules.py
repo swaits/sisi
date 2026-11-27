@@ -14,6 +14,7 @@ _TAGS = " [owner] lines are the person's words; [agent ...] lines are an agent's
 HEAD_USER = "## Learned here\n\nAdded by retros and by the person. These add to the rules above and never relax them." + _TAGS + "\n"
 HEAD_PROJECT = "sisi: learned in this project (these add to the rules and never relax them)." + _TAGS
 SMELL = re.compile(r"(?i)\bone (?:build|test|run|worker|job)\b.{0,60}\bat a time|\bflock\b|\b(?:shared?|one)\b.{0,30}\bbuild (?:folder|dir)")
+DROPS = "rules/drops.jsonl"
 
 ORGANIZE = """You are a worker. Do this task yourself; do not delegate it further.
 
@@ -38,6 +39,7 @@ Rewrite both lists so they serve that objective best:
 - Keep the [source date] mark at the end of every line.
 - A `better` that recurs across retros has earned a rule: add it, worded as an instruction, marked [retro <date>].
 - Non-owner ([retro ...]) lines in each list: at most %(lines)d lines and %(chars)d characters. Fewer is better.
+- For every non-owner rule you drop or merge away, end with a `## drops` section listing `- <exact rule> | #<N or -> | <reason>` (#- if no problem matches).
 
 Answer with exactly this shape and nothing else:
 ## user
@@ -57,7 +59,7 @@ Answer with exactly this shape and nothing else:
 %(flagged)s
 
 === What recent retros found, newest last (context only) ===
-%(retros)s
+%(retros)s%(evidence)s
 """
 
 
@@ -288,7 +290,36 @@ def due(cwd, claim=False):
             % "; ".join(m for _, m in need))
 
 
+def drops_for(num=None):
+    return [d for d in store.records(DROPS) if num is None or d.get("problem") == num]
+
+
+def _evidence(probs, drops, cap_p=15, cap_c=5000, cap_f=180):
+    if not probs:
+        return ""
+    cut = lambda s: s if len(s) <= cap_f else s[:cap_f - 3] + "..."
+    head = ("\n\n=== Known problems and prior rule attempts (most recent first) ===\n"
+            "How to use this evidence:\n"
+            "- Problem has 0 misses: its rule is holding, keep it. Has misses: the sentence did not hold, keep the latest attempt and say so (do not just reword).\n"
+            "- When merging, keep the cause; never drop a rule as redundant while its problem keeps coming back. [owner ...] rules stay verbatim.\n")
+    out, used = [head], len(head)
+    for p in sorted(probs, key=lambda x: (-x["last_idx"], -x["num"]))[:cap_p]:
+        n = len(p["attempts"])
+        ls = (["#%d: %s (opened %s, %d attempt%s, %d miss%s, last %s)" % (p["num"], cut(p["name"]), p["opened"], n, "" if n == 1 else "s", n - 1, "" if n == 2 else "es", p["last"])]
+              + ["  attempt [%s] cause: %s | rule: %s" % (a["date"], cut(a["cause"]), cut(a["improve"])) for a in p["attempts"]]
+              + ["  dropped [%s] %s | reason: %s" % (str(d.get("ts") or "")[:10] or "?", cut(d.get("rule", "")), cut(d.get("reason", ""))) for d in drops if d.get("problem") == p["num"]])
+        blk = "\n".join(ls) + "\n"
+        if used + len(blk) > cap_c:
+            for l in (ls if len(out) == 1 else ()):
+                if used + len(l) + 1 <= cap_c:
+                    out.append(l + "\n"); used += len(l) + 1
+            break
+        out.append(blk); used += len(blk)
+    return "".join(out).rstrip("\n")
+
+
 def organize_brief(cwd):
+    from . import retro
     cfg, u, p = store.config(), lines(path(USER)), scope_lines(PROJECT, cwd)
     with contextlib.suppress(OSError), store.lock("organize"):
         cl = _organized(("locks", "organize.json"))
@@ -299,14 +330,20 @@ def organize_brief(cwd):
         "lines": cfg["rules_lines"], "chars": cfg["rules_chars"],
         "flagged": "\n".join(l for l in u + p if SMELL.search(l)) or "(none)",
         "user": "\n".join(u) or "(none)", "project": "\n".join(p) or "(none)",
-        "retros": "\n".join(store.read(store.data("retro.jsonl")).splitlines()[-40:]) or "(none)"}
+        "retros": "\n".join(store.read(store.data("retro.jsonl")).splitlines()[-40:]) or "(none)",
+        "evidence": _evidence(retro._problems(), drops_for())}
 
 
 def organize_record(answer_file, cwd):
     """Replace both lists with the worker's answer. Returns why not, or None when it is done."""
     cfg = store.config()
-    body, *flags = re.split(r"(?im)^##\s*flags\s*$", store.read(answer_file), 1)  # the flags are for the person, not rules
-    flags = "".join(flags)
+    secs = re.split(r"(?im)^##[ \t]*(flags|drops)[ \t]*$", store.read(answer_file))
+    body, flags, drops = secs[0], "".join(secs[i + 1] for i in range(1, len(secs) - 1, 2) if secs[i].lower() == "flags"), {}
+    for l in (l.rstrip() for i in range(1, len(secs) - 1, 2) if secs[i].lower() == "drops" for l in secs[i + 1].splitlines() if l.strip()):
+        ps = l[2:].rsplit("|", 2) if l.startswith("- ") else []
+        if len(ps) != 3 or not (m := re.fullmatch(r"#(\d+|-)", ps[1].strip())) or not (why := ps[2].strip()) or not (rk := ps[0].strip()):
+            return "each drop needs `- <exact rule> | #<N or -> | <reason>`"
+        drops[rk if rk.startswith("- ") else "- " + rk] = (None if m.group(1) == "-" else int(m.group(1)), why)
     parts = re.split(r"(?m)^## (user|project)[ \t]*$", body)
     got = {parts[i]: [l.rstrip() for l in parts[i + 1].splitlines() if l.startswith("- ")]
            for i in range(1, len(parts) - 1, 2)}
@@ -330,6 +367,10 @@ def organize_record(answer_file, cwd):
         for scope in (USER, PROJECT):
             if miss := [l for l in had[scope] if _owner(l) and got[scope].count(l) < had[scope].count(l)]:
                 return "owner rule missing or changed (%s): %s" % (scope, miss[0])
+        kept = list(got[USER]) + list(got[PROJECT])
+        dropped = [r for r in had[USER] + had[PROJECT] if not _owner(r) and not (r in kept and kept.remove(r) is None)]
+        if want and (miss := [r for r in dropped if r not in drops]):
+            return "dropped or merged rule missing a reason in `## drops`: %s" % miss[0]
         if not any(got.values()) and any(had.values()):
             return "the answer holds no rules at all"
         try:
@@ -350,7 +391,10 @@ def organize_record(answer_file, cwd):
             seen.pop("rules/projects/%s.md" % store.project_key(cwd), None)
             marks = store.data("rules", "organized.json")
             store.write(marks, json.dumps(seen))
-            _commit("rules organized", marks, up, snap=(pp, before, after))
+            dp, ts = store.data(DROPS), time.strftime("%Y-%m-%dT%H:%M:%S")
+            for r, (pnum, why) in drops.items():
+                store.append(dp, json.dumps({"ts": ts, "rule": r, "problem": pnum, "reason": why}, sort_keys=True))
+            _commit("rules organized", marks, up, *([dp] if drops else []), snap=(pp, before, after))
         except OSError as e:
             wrote_u and build_rulebook()
             if not wrote and not wrote_u:
@@ -370,7 +414,7 @@ def organize_record(answer_file, cwd):
 
 def revert():
     """Undo the last rule change (learn, retro or organize): a project's list only while it holds what that change left."""
-    files = ("rules/user.md", "rules/last-project.json", "rules/owner.log", "rules/organized.json")
+    files = ("rules/user.md", "rules/last-project.json", "rules/owner.log", "rules/organized.json", DROPS)
     advice = " (edit by hand or restore with git)"
     if os.path.isdir(os.path.join(store.DATA, ".git")) and store.git(["status", "--porcelain", "--", *files], store.DATA)[1].strip():
         return "the store has uncommitted rule changes, so the previous change cannot be undone" + advice
