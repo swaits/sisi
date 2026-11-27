@@ -255,8 +255,10 @@ def run(args, cwd=None):
             print("problem %d '%s' has come back: %d miss%s" % (prob["num"], prob["name"], misses, "" if misses == 1 else "es"))
             for a in prior:
                 print("  - [%s] %s" % (a["date"], a["improve"] or a["cause"] or "(no improvement recorded)"))
-            for d in rules.drops_for(prob["num"]):
-                print("  - dropped [%s] %s (%s)" % (str(d.get("ts") or "")[:10] or "?", d.get("rule", ""), d.get("reason", "")))
+            ds, cut = rules.drops_for(prob["num"]), lambda s: s if len(s) <= 180 else s[:177] + "..."
+            for d in reversed(ds[-5:]):
+                print("  - dropped [%s] %s (%s)" % (str(d.get("ts") or "")[:10] or "?", cut(str(d.get("rule") or "")), cut(str(d.get("reason") or ""))))
+            len(ds) > 5 and print("  and %d more" % (len(ds) - 5))
         else:
             print("opened problem %d '%s'." % (prob["num"], prob["name"]))
         try:
