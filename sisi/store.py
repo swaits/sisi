@@ -50,10 +50,20 @@ def read(path, default=""):
         return default
 
 
-def records(name):
+def records(name, limit=2000000):
     """The JSON objects in a data file, one per line; a damaged or non-object line is skipped."""
-    out = []
-    for line in read(data(name)).splitlines():
+    p, out = data(name), []
+    try:
+        with open(p, "rb", opener=lambda q, f: os.open(q, f | os.O_NOFOLLOW)) as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                return out
+            raw = f.read(limit + 1)
+            if len(raw) > limit:
+                f.seek(-limit, 2)
+                raw = f.read(limit).split(b"\n", 1)[-1]
+    except OSError:
+        return out
+    for line in raw.decode("utf-8", "replace").splitlines():
         try:
             o = json.loads(line)
         except (ValueError, RecursionError):

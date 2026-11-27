@@ -20,8 +20,8 @@ by its full model id (`claude-sonnet-5-5`); anywhere else the name must match wh
 person will need next: delegating or editing is refused until then. Every check needs a verdict
 (`sisi done --pass N` or `--fail N`) before the turn ends; a turn that changed things, or failed a check,
 is sent to the retro, and any other closes itself, as does work that took under `retro_minutes`, passed every check and delegated nothing. While a delegated job is open and not late, a stop is not held up for checks without a verdict. Each record in `retro.jsonl` carries `session_id`, `retro_seconds` (when demanded),
-the numbers (minutes, messages, tool calls, delegations, checks) and the `term` it fell short on (`value`, `evidence`, `time`, `cost`,
-`attention` or `learning`: the terms of the objective), and `sisi retro` lays the facts out under those terms and shows their trend.
+the numbers (minutes, messages, tool calls, delegations, checks), the `term` it fell short on (`value`, `evidence`, `time`, `cost`,
+`attention` or `learning`: the terms of the objective), and (for gap retros) the `problem` name. `sisi retro` lays the facts out under those terms, lists known problems (most recently cited first), and shows their trend. Citing the same problem a third time (2nd miss) and after opens a fault requiring a hook or automatic check rather than another rule.
 
 **Faults.** Record any fault you see with `sisi fault "<what is wrong>"` (kept per project across sessions).
 Where the tool has hooks, session start and every request show the faults still not fixed, and with the gate
@@ -84,8 +84,8 @@ its limits are.
 | `sisi done --pass N "…"` / `--fail N "…"` | Give a check its verdict and evidence; `sisi done` alone shows it |
 | `sisi fault "<what is wrong>"` / `--started\|--blocked\|--fixed N "…"` | Record an open fault in this project, start a fix, name a blocker, or close it; `sisi fault` alone lists them |
 | `sisi pick routine\|ordinary\|hard [--review-of WORKER] [--not WORKER] [--limit MINUTES] [--branch REF]` | The wheel gives one worker; a review goes to a different maker. `--limit` sets this delegation's lateness limit (default `worker_minutes`) and `--branch` names the branch whose last commit shows its progress; picks of one worker are matched to its delegations in order. A job past twice its limit becomes a late-worker fault in the session that started it (only that session is stopped by it; `sisi fault --fixed N "…"` from any other session clears it) |
-| `sisi retro` | Print what happened in this piece of work, to set against the objective |
-| `sisi retro --gap … --cause … --improve … --term T [--scope user]` | Record the gap and the term of the objective it fell short on; the improvement is a rule at once |
+| `sisi retro` | Print what happened in this piece of work and known problems, to set against the objective |
+| `sisi retro --gap … --cause … --improve … --term T --problem N\|"…" [--scope user]` | Record the gap, the term of the objective it fell short on, and the problem (`N` to cite an existing one or words to open a new one); the improvement is a rule at once, and a 2nd miss (3rd citation) opens a fault |
 | `sisi retro --no-gap … --term T --better …` | Nothing fell short, but work can always be done better: name the term and the one concrete thing that would have scored better (recorded with the retro; it becomes a rule only if it recurs, when the rules are organized) |
 | `sisi retro --later …` | The work is not finished yet |
 | `sisi learn [--project] "…" [--means "…"]` | The person's own words become a rule at once, tagged `[owner]` only when they appear in the person's recent messages in this session. `--means` adds, in the same undoable step, one line saying how the agent will apply it |
@@ -103,7 +103,7 @@ Rules live at three levels:
   using sisi, the same for all users. `SPEC.md` is what it aims at.
 - **Your store** (`$SISI_DATA`, else `$XDG_DATA_HOME/sisi`, else `~/.local/share/sisi`; a git repository): `rules/user.md`
   (how you like to work, across all your projects), `models.md` (your workers), `retro.jsonl` (each piece of work: session,
-  `retro_seconds`, counts, goal, term) and `outcomes.jsonl` (each judged delegation: session, `project_key`, `model`,
+  `retro_seconds`, counts, goal, term, problem) and `outcomes.jsonl` (each judged delegation: session, `project_key`, `model`,
   `started`/`ended`, minutes, verdict, why). All plain text you can read and edit.
 - **Each project** (`.sisi/rules.md` in the project's folder: in a git repository, the root of its main checkout, shared by
   all its worktrees; outside git, the folder sisi is run in): rules specific to one project. In a bare repository with

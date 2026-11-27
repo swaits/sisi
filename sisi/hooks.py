@@ -12,14 +12,14 @@ DIRECT = ("shell", "read", "edit", "search", "web")  # the classes of tool call 
 
 METER = ("sisi: %d direct tool calls this turn (the limit is %d). Delegate the rest: `sisi models` lists your workers and `sisi pick routine|ordinary|hard` "
          "chooses one; if doing this yourself costs less than briefing it, say why with `sisi direct \"<reason>\"` (%d more).")
-GATE = ("sisi: this piece of work changed things and has no retro yet. Run `sisi retro` to see what happened, then record `sisi retro --gap \"<gap>\" --cause \"<cause>\" --improve \"<rule>\" --term <term>` "
+GATE = ("sisi: this piece of work changed things and has no retro yet. Run `sisi retro` to see what happened, then record `sisi retro --gap \"<gap>\" --cause \"<cause>\" --improve \"<rule>\" --term <term> --problem N|\"<name>\"` "
         "or `sisi retro --no-gap \"<evidence>\" --term <term> --better \"<what would score better>\"` (or pause: `sisi retro --later \"<what it waits for>\"`).")
 NODONE = "sisi: no done is recorded yet. Define what the person wants and what comes next now: `sisi done --goal \"<their goal>\" --check \"<a check that can fail>\" [--check ...] --next \"<what comes next and what you do about it>\"`."
 NOPICK = ("sisi: this delegation went to a worker the wheel did not give you (recorded so `sisi judge` still works). Use `sisi pick routine|ordinary|hard` next time "
           "(--review-of WORKER for a review, --not WORKER if one is out); one pick, one delegation.")
 UNKNOWN = "sisi: the worker you named is not in the models table (recorded so `sisi judge` still works), so the table is out of date. Rebuild it now with a research worker (`sisi models research` prints the brief; `sisi models research --record FILE` records the answer), and use `sisi pick` next time."
 NOSHELL = "sisi: do not shell out to a worker; start it with the host's delegation tool next time."
-FAILED = "sisi: check %s failed. A failed check is a gap: record `sisi retro --gap \"<where it fell short>\" --cause \"<the root cause>\" --improve \"<the rule that prevents it>\" --term <term>` (or pause: `sisi retro --later \"<what it waits for>\"`)."
+FAILED = "sisi: check %s failed. A failed check is a gap: record `sisi retro --gap \"<where it fell short>\" --cause \"<the root cause>\" --improve \"<the rule that prevents it>\" --term <term> --problem N|\"<name>\"` (or pause: `sisi retro --later \"<what it waits for>\"`)."
 OPEN = "sisi: these checks have no verdict yet: %s. Give each one: `sisi done --pass N \"<evidence>\"` or `sisi done --fail N \"<why>\"` (or pause: `sisi retro --later \"<what it waits for>\"`)."
 LATE = "%s was started %s and has not reported. Check it: if still running, let it finish (this reminder is shown once); if dead or unwanted, cancel it and run `sisi judge WORKER bad \"<why>\"`; if it reported, run `sisi judge WORKER good|bad \"<why>\"`."
 

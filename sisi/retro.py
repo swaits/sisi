@@ -6,7 +6,7 @@ from . import rules, store
 DONE_USAGE = """usage: sisi done --goal "<the goal in their words, 5+ words>" --check "<a check that can fail, 4+ words>" [--check ...] \\
                   --next "<what they will need next and what you do about it: now, room, follow-up or drop; 4+ words>"
        sisi done --pass N "<evidence>" | --fail N "<why>"      sisi done: show it"""
-FLAGS = ("--gap", "--cause", "--improve", "--no-gap", "--later", "--scope", "--term", "--better")
+FLAGS = ("--gap", "--cause", "--improve", "--no-gap", "--later", "--scope", "--term", "--better", "--problem")
 TERMS = {"value": "what the person wanted", "evidence": "verified by checks that fit the risk", "time": "elapsed time",
          "cost": "compute and tool cost", "attention": "the person's attention", "learning": "getting better at the next piece of work"}
 TERM_HELP = "--term is one of: %s." % ", ".join(TERMS)
@@ -14,8 +14,8 @@ clean = store.clean
 USAGE = """Record one of these:
   sisi retro --gap "<where the work fell short of the objective, with the evidence>" \\
              --cause "<the root cause>" \\
-             --improve "<the instruction that would have prevented it, worded as a rule>" --term TERM [--scope user]
-      The improvement becomes a rule at once: in this project, or with --scope user in all your work.
+             --improve "<the instruction that would have prevented it, worded as a rule>" --term TERM --problem N|"..." [--scope user]
+      Cite an existing problem number N from the list above, or give new words to open one. The improvement becomes a rule at once: in this project, or with --scope user in all your work.
   sisi retro --no-gap "<what shows the work met the objective>" --term TERM \\
              --better "<one concrete thing that would have scored better on that term, 5+ words>"
       TERM is where the work fell short, or could most have scored better: %s.
@@ -78,6 +78,34 @@ def trend():
     return ["measured (pieces of work with numbers):"] + out if len(units) >= 2 else []
 
 
+def _problems(recs=None):
+    """Known problems derived from retro.jsonl in order of first appearance (1-based number)."""
+    by_key, out = {}, []
+    for idx, r in enumerate(store.records("retro.jsonl") if recs is None else recs):
+        if not (isinstance(r.get("problem"), str) and (name := clean(r["problem"]))):
+            continue
+        date, key = str(r.get("ts") or "")[:10] or "?", name.lower()
+        p = by_key.get(key) or by_key.setdefault(key, {"num": len(out) + 1, "name": name, "opened": date, "attempts": []})
+        p not in out and out.append(p)
+        p["attempts"].append({"date": date, "cause": str(r.get("cause") or ""), "improve": str(r.get("improve") or "")})
+        p["last"], p["last_idx"] = date, idx
+    return out
+
+
+def _problem_lines(probs):
+    recent = sorted(probs, key=lambda p: (-p["last_idx"], -p["num"]))[:15]
+    return ["  #%d: %s (%d attempt%s, last %s)" % (p["num"], p["name"], n := len(p["attempts"]), "" if n == 1 else "s", p["last"]) for p in recent]
+
+
+def _resolve_problem(problem, probs):
+    if not problem or len(problem) > 400:
+        return None, "sisi retro: every --gap retro names a problem (--problem N to cite, or --problem \"<name>\" to open one)."
+    if re.fullmatch(r"[+-]?\d+", problem):
+        n = int(problem)
+        return (probs[n - 1], "") if 1 <= n <= len(probs) else (None, "sisi retro: problem #%s does not exist." % problem)
+    return next((p for p in probs if p["name"].lower() == problem.lower()), {"num": len(probs) + 1, "name": problem, "attempts": []}), ""
+
+
 def report(sid, cwd):
     state = {}
     if sid:
@@ -86,6 +114,8 @@ def report(sid, cwd):
     print("sisi retro: what happened in this piece of work, by term of the objective.")
     print("\n".join(facts(state, cwd)))
     print("\nThe objective: %s" % rules.objective())
+    if (plines := _problem_lines(_problems())):
+        print("\nknown problems (most recent first):\n" + "\n".join(plines))
     print("\nSet what happened against the objective, term by term. Where did the work fall short, why, and what "
           "instruction would have prevented it? Name the root cause; general advice is not an improvement.\n")
     print(USAGE)
@@ -169,13 +199,14 @@ def run(args, cwd=None):
     if not args:
         return report(sid, cwd) or 0
     opt = _options(args)
-    scope, term, better = [(opt or {}).pop(k, None) for k in ("scope", "term", "better")]
+    scope, term, better, problem = [(opt or {}).pop(k, None) for k in ("scope", "term", "better", "problem")]
     scope = scope or rules.PROJECT
     kind = (None if not opt or scope not in (rules.USER, rules.PROJECT)
             else "later" if set(opt) == {"later"} and _words(opt, "later", 3)
             else "no-gap" if set(opt) == {"no-gap"} and _words(opt, "no-gap", 5)
             else "gap" if set(opt) == {"gap", "cause", "improve"} and all(_words(opt, k, 4) for k in opt) else None)
-    if kind is None or len(opt.get("improve", "")) > 400 or len(better or "") > 400 or (kind == "later" and (term or better)) or (kind != "no-gap" and better):
+    if (kind is None or len(opt.get("improve", "")) > 400 or len(better or "") > 400 or (kind == "later" and (term or better))
+            or (kind != "no-gap" and better) or (kind != "gap" and problem is not None)):
         print("sisi retro: that is not a retro yet (each part needs a real sentence; an improvement is at most "
               "400 characters).\n" + USAGE)
         return 1
@@ -186,7 +217,17 @@ def run(args, cwd=None):
         print("sisi retro: a piece of work can always be done better. Add --better \"<one concrete thing that would have "
               "scored better on %s, 5+ words>\"; it is recorded, and becomes a rule only if it recurs." % term)
         return 1
-    opt.update({"term": term} if kind == "gap" else {"term": term, "better": clean(better)} if kind == "no-gap" else {})
+    prob, prior = None, []
+    if kind == "gap":
+        probs = _problems()
+        prob, why = _resolve_problem(problem, probs)
+        if not prob:
+            plines = _problem_lines(probs)
+            print(why + "\n" + ("known problems (most recent first):\n" + "\n".join(plines) if plines else "known problems: none yet.") +
+                  "\nRe-run with --problem N (one of the numbers above) or --problem \"<new problem name>\".")
+            return 1
+        prior = list(prob["attempts"])
+    opt.update({"term": term, "problem": prob["name"]} if kind == "gap" else {"term": term, "better": clean(better)} if kind == "no-gap" else {})
     if sid:
         with store.session(sid) as s:
             if kind == "no-gap" and any(c["verdict"] == "fail" for c in (s.get("done") or {}).get("checks", [])):
@@ -201,12 +242,27 @@ def run(args, cwd=None):
     elif kind != "later":
         record({}, cwd, dict(opt, scope=scope) if kind == "gap" else opt)
     if kind == "gap":
+        misses = len(prior)
+        if misses:
+            print("problem %d '%s' has come back: %d misses" % (prob["num"], prob["name"], misses))
+            for a in prior:
+                print("  - [%s] %s" % (a["date"], a["improve"] or a["cause"] or "(no improvement recorded)"))
+        else:
+            print("opened problem %d '%s'." % (prob["num"], prob["name"]))
         try:
             added, warn = rules.add(opt["improve"], scope, "retro", cwd)
             print(warn or "recorded. In force from the next session%s: %s" % (
                 " in every project" if scope == rules.USER else " in this project", added))
         except OSError as e:
             print("recorded, but could not write %s (%s)." % (rules.path(scope, cwd) or cwd, e))
+        if misses >= 2:
+            from . import faults
+            msg = "Problem '%s' came back: written rules failed %d times. Fix it with a hook or an automatic check, not another sentence." % (prob["name"][:170], misses)
+            try:
+                if (hit := faults.add(cwd, msg, kind="problem:%d" % prob["num"])):
+                    print("sisi: opened fault #%d: %s" % (hit["id"], hit["text"]))
+            except OSError as e:
+                print("sisi: could not open fault for problem %d (%s)." % (prob["num"], e))
         if rules.due(cwd):
             print(rules.due(cwd))
     else:
