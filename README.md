@@ -89,7 +89,7 @@ its limits are.
 | `sisi retro --no-gap … --term T --better …` | Nothing fell short, but work can always be done better: name the term and the one concrete thing that would have scored better (recorded with the retro; it becomes a rule only if it recurs, when the rules are organized) |
 | `sisi retro --later …` | The work is not finished yet |
 | `sisi learn [--project] "…" [--means "…"]` | The person's own words become a rule at once, tagged `[owner]` only when they appear in the person's recent messages in this session. `--means` adds, in the same undoable step, one line saying how the agent will apply it |
-| `sisi rules` / `sisi rules organize [--record FILE]` / `sisi rules revert` | See the learned rules; have a worker organize them; undo the last rule change made with `learn`, a retro or `organize`, in the user list or a project's `.sisi/rules.md` (not the one-time move of old rules; a second `revert` re-applies what the first undid; it declines, changing nothing, when the project file changed since or its folder moved or is gone) |
+| `sisi rules` / `sisi rules organize [--record FILE]` / `sisi rules revert` | See the learned rules; have a worker organize them (using known problems, prior attempts, and past drop reasons, and requiring a `## drops` reason and matching problem number for every dropped or merged rule); undo the last rule change made with `learn`, a retro or `organize` (including any drop reasons recorded by that `organize`), in the user list or a project's `.sisi/rules.md` (not the one-time move of old rules; a second `revert` re-applies what the first undid; it declines, changing nothing, when the project file changed since or its folder moved or is gone) |
 | `sisi models` / `sisi models research [--record FILE]` | The workers table (the shared baseline table ships with sisi in `canon/models.md`); have a worker rebuild it |
 | `sisi judge WORKER good\|bad "…" [--minutes N] [--newest]` | How a delegation went; the minutes are measured from the pick's delegation (or `--minutes N`) and make the wheel favour faster workers. With several of one worker's jobs open, the oldest is judged first, `--newest` the newest |
 | `sisi judge WORKER extend MINUTES "<reason>" [--newest]` | Give a late job more time instead of judging it: the job that is past its limit (past twice it first, else past once, else the oldest) gets MINUTES more from now, and its late fault clears |
@@ -102,7 +102,8 @@ Rules live at three levels:
 - **The product** (this repository): the code in `sisi/`, and the rulebook in `canon/core.md` — rules useful to everyone
   using sisi, the same for all users. `SPEC.md` is what it aims at.
 - **Your store** (`$SISI_DATA`, else `$XDG_DATA_HOME/sisi`, else `~/.local/share/sisi`; a git repository): `rules/user.md`
-  (how you like to work, across all your projects), `models.md` (your workers), `retro.jsonl` (each piece of work: session,
+  (how you like to work, across all your projects), `rules/drops.jsonl` (rules dropped or merged away during `organize`,
+  with date, matching problem number, and reason), `models.md` (your workers), `retro.jsonl` (each piece of work: session,
   `retro_seconds`, counts, goal, term, problem; problem tracking reads the last 64,000,000 bytes) and `outcomes.jsonl` (each judged delegation: session, `project_key`, `model`,
   `started`/`ended`, minutes, verdict, why). All plain text you can read and edit.
 - **Each project** (`.sisi/rules.md` in the project's folder: in a git repository, the root of its main checkout, shared by
