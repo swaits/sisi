@@ -1,6 +1,8 @@
 """Tests for retro problem tracking and repeat-miss fault escalation."""
+import contextlib
 import glob
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -8,8 +10,11 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO)
+from sisi import retro, store
 GAP = ("--gap", "the export dropped rows with empty names until the person noticed",
        "--cause", "no check compared the row counts before and after", "--term", "evidence")
 
@@ -113,7 +118,8 @@ class Problems(unittest.TestCase):
                                  "--problem", "1")
         self.assertEqual((rc, err), (0, ""), out)
         self.assertEqual(self.records()[-1]["problem"], "export drops empty names")
-        self.assertIn("problem 1 'export drops empty names' has come back: 1 misses", out)
+        self.assertIn("problem 1 'export drops empty names' has come back: 1 miss", out)
+        self.assertNotIn("1 misses", out)
         self.assertIn("Compare row counts before and after every export", out)
 
         # Add more non-problem records and cite #2; numbers stay stable
@@ -124,7 +130,8 @@ class Problems(unittest.TestCase):
                                "--improve", "Hash inputs before reusing build artifacts",
                                "--term", "value", "--problem", "2")
         self.assertEqual(rc, 0, out)
-        self.assertIn("problem 2 'stale build artifacts' has come back: 1 misses", out)
+        self.assertIn("problem 2 'stale build artifacts' has come back: 1 miss", out)
+        self.assertNotIn("1 misses", out)
         self.assertIn("Always clean output directory before packaging release", out)
 
     def test_misses_and_fault_escalation_lifecycle(self):
@@ -138,7 +145,8 @@ class Problems(unittest.TestCase):
         rc, out, _ = self.sisi("retro", *GAP, "--improve", "Second rule attempt for empty names",
                                "--problem", "1")
         self.assertEqual(rc, 0, out)
-        self.assertIn("problem 1 'empty name export bug' has come back: 1 misses", out)
+        self.assertIn("problem 1 'empty name export bug' has come back: 1 miss", out)
+        self.assertNotIn("1 misses", out)
         self.assertIn("First rule attempt for empty names", out)
         self.assertEqual(self.sisi("fault")[1].strip(), "no open faults.")
 
@@ -199,6 +207,152 @@ class Problems(unittest.TestCase):
         self.assertIn("1 attempt", lines[1])
         self.assertNotIn("problem item 02", rep)
         self.assertNotIn("problem item 03", rep)
+
+    def test_race_derives_number_and_misses_after_append(self):
+        real_append = store.append
+        log_path = os.path.join(self.data, "retro.jsonl")
+
+        def racing_append(extra_records):
+            injected = False
+
+            def wrapper(path, line, once=False):
+                nonlocal injected
+                if not injected and path == log_path:
+                    injected = True
+                    for rec in extra_records:
+                        real_append(path, json.dumps(rec))
+                return real_append(path, line, once=once)
+
+            return wrapper
+
+        base_args = list(GAP) + ["--improve", "Always verify export row count in CI checks", "--problem"]
+        with mock.patch.object(store, "DATA", self.data), \
+                mock.patch.object(store, "STATE", os.path.join(self.tmp, "state")), \
+                mock.patch.object(store, "LIB", os.path.join(self.tmp, "lib")):
+            # Between pre-check (empty log) and append, another session opens a different problem and the same problem
+            extra = [
+                {"ts": "2026-11-26T10:00:00", "gap": "other gap", "cause": "other cause",
+                 "improve": "Other rule first", "term": "time", "problem": "other race problem"},
+                {"ts": "2026-11-26T10:00:01", "gap": "same gap", "cause": "same cause",
+                 "improve": "Earlier racing rule for shared problem", "term": "evidence", "problem": "shared race problem"},
+            ]
+            out1 = io.StringIO()
+            with mock.patch.object(store, "append", side_effect=racing_append(extra)), contextlib.redirect_stdout(out1):
+                rc1 = retro.run(base_args + ["shared race problem"], cwd=self.proj)
+            self.assertEqual(rc1, 0, out1.getvalue())
+            self.assertIn("problem 2 'shared race problem' has come back: 1 miss", out1.getvalue())
+            self.assertNotIn("opened problem 1", out1.getvalue())
+            rep1 = self.sisi("retro")[1]
+            self.assertIn("#1: other race problem (1 attempt", rep1)
+            self.assertIn("#2: shared race problem (2 attempts", rep1)
+
+            # Second race: pre-check sees #2 with 2 attempts (1 miss); racing session adds 3rd attempt before append
+            extra2 = [
+                {"ts": "2026-11-26T10:05:00", "gap": "third gap", "cause": "third cause",
+                 "improve": "Third racing rule for shared problem", "term": "evidence", "problem": "shared race problem"},
+            ]
+            out2 = io.StringIO()
+            with mock.patch.object(store, "append", side_effect=racing_append(extra2)), contextlib.redirect_stdout(out2):
+                rc2 = retro.run(base_args + ["2"], cwd=self.proj)
+            self.assertEqual(rc2, 0, out2.getvalue())
+            self.assertIn("problem 2 'shared race problem' has come back: 3 misses", out2.getvalue())
+            self.assertIn("opened fault #1", out2.getvalue())
+            rep2 = self.sisi("retro")[1]
+            self.assertIn("#2: shared race problem (4 attempts", rep2)
+
+    def test_large_log_past_2mb_keeps_problem_numbers_and_attempts(self):
+        os.makedirs(self.data, exist_ok=True)
+        log = os.path.join(self.data, "retro.jsonl")
+        first = json.dumps({"ts": "2026-01-01T10:00:00", "gap": "early gap", "cause": "early cause",
+                            "improve": "Early rule for problem one", "term": "evidence", "problem": "early problem"}) + "\n"
+        pad_line = json.dumps({"ts": "2026-06-01T10:00:00", "no-gap": "all checks passed cleanly today " + ("x" * 120),
+                               "better": "start the build earlier next time around", "term": "time"}) + "\n"
+        last = json.dumps({"ts": "2026-11-26T10:00:00", "gap": "late gap", "cause": "late cause",
+                           "improve": "Late rule for problem two", "term": "value", "problem": "late problem"}) + "\n"
+        repeat_count = (2_100_000 // len(pad_line)) + 1
+        with open(log, "w", encoding="utf-8") as f:
+            f.write(first + (pad_line * repeat_count) + last)
+        self.assertGreater(os.path.getsize(log), 2_000_000)
+
+        rep = self.sisi("retro")[1]
+        self.assertIn("#1: early problem (1 attempt", rep)
+        self.assertIn("#2: late problem (1 attempt", rep)
+
+        rc, out, _ = self.sisi("retro", *GAP, "--improve", "Second rule for early problem", "--problem", "1")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("problem 1 'early problem' has come back: 1 miss", out)
+        rep2 = self.sisi("retro")[1]
+        self.assertIn("#1: early problem (2 attempts", rep2)
+        self.assertIn("#2: late problem (1 attempt", rep2)
+
+    def test_wording_refusals_and_miss_singular(self):
+        # With no problems yet, refusals must not say "numbers above"
+        for p_args in ((), ("--problem", "1")):
+            rc, out, _ = self.sisi("retro", *GAP, "--improve", "Should not be written anywhere", *p_args)
+            self.assertNotEqual(rc, 0)
+            self.assertIn("none yet", out)
+            self.assertNotIn("numbers above", out)
+            self.assertEqual(self.records(), [])
+
+        # Problem name over 400 characters is refused with a message mentioning the 400-character limit
+        rc, out, _ = self.sisi("retro", *GAP, "--improve", "Should not be written anywhere", "--problem", "p" * 401)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("400", out)
+        self.assertEqual(self.records(), [])
+
+        # --no-gap with --problem says --problem goes only with --gap
+        rc, out, _ = self.sisi("retro", "--no-gap", "the export kept every row cleanly",
+                               "--term", "time", "--better", "start the first build sooner than before",
+                               "--problem", "1")
+        self.assertNotEqual(rc, 0)
+        self.assertIn("--problem", out)
+        self.assertIn("--gap", out)
+        self.assertNotIn("that is not a retro yet", out)
+        self.assertEqual(self.records(), [])
+
+    def test_redacted_problem_names_refused(self):
+        bad_names = (
+            "sk-abcdefghijklmnopqrstuvwx",
+            "0123456789abcdef0123456789abcdef01234567",
+            "1234567890" * 4,
+            "api_key=supersecret999 broken",
+        )
+        for bad in bad_names:
+            rc, out, _ = self.sisi("retro", *GAP, "--improve", "Should not record secret problem name", "--problem", bad)
+            self.assertNotEqual(rc, 0, bad)
+            self.assertIn("plain words", out)
+            self.assertNotIn(bad, out)
+            self.assertEqual(self.records(), [])
+            self.assertFalse(os.path.exists(os.path.join(self.proj, ".sisi", "rules.md")))
+
+    def test_two_problems_each_open_own_fault_and_case_spacing_joins(self):
+        self.assertEqual(self.sisi("retro", *GAP, "--improve", "Alpha rule one for export", "--problem", "alpha issue")[0], 0)
+        self.assertEqual(self.sisi("retro", *GAP, "--improve", "Bravo rule one for export", "--problem", "bravo issue")[0], 0)
+
+        # Citing by name with different case and spacing joins the same problem
+        rc, out, _ = self.sisi("retro", *GAP, "--improve", "Alpha rule two by name", "--problem", "  ALPHA   issue  ")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("problem 1 'alpha issue' has come back: 1 miss", out)
+        self.assertNotIn("1 misses", out)
+        self.assertEqual(self.sisi("fault")[1].strip(), "no open faults.")
+
+        # 2nd miss on problem 1 opens its fault
+        rc, out, _ = self.sisi("retro", *GAP, "--improve", "Alpha rule three opens fault", "--problem", "1")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("problem 1 'alpha issue' has come back: 2 misses", out)
+
+        # Same-length second problem joins via case/spacing then reaches 2 misses and opens its own fault
+        rc, out, _ = self.sisi("retro", *GAP, "--improve", "Bravo rule two by name", "--problem", "  bravo   ISSUE ")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("problem 2 'bravo issue' has come back: 1 miss", out)
+        rc, out, _ = self.sisi("retro", *GAP, "--improve", "Bravo rule three opens fault", "--problem", "2")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("problem 2 'bravo issue' has come back: 2 misses", out)
+
+        faults_lines = self.sisi("fault")[1].strip().splitlines()
+        self.assertEqual(len(faults_lines), 2, faults_lines)
+        self.assertTrue(any("alpha issue" in l for l in faults_lines), faults_lines)
+        self.assertTrue(any("bravo issue" in l for l in faults_lines), faults_lines)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,7 @@ person will need next: delegating or editing is refused until then. Every check 
 (`sisi done --pass N` or `--fail N`) before the turn ends; a turn that changed things, or failed a check,
 is sent to the retro, and any other closes itself, as does work that took under `retro_minutes`, passed every check and delegated nothing. While a delegated job is open and not late, a stop is not held up for checks without a verdict. Each record in `retro.jsonl` carries `session_id`, `retro_seconds` (when demanded),
 the numbers (minutes, messages, tool calls, delegations, checks), the `term` it fell short on (`value`, `evidence`, `time`, `cost`,
-`attention` or `learning`: the terms of the objective), and (for gap retros) the `problem` name. `sisi retro` lays the facts out under those terms, lists known problems (most recently cited first), and shows their trend. Citing the same problem a third time (2nd miss) and after opens a fault requiring a hook or automatic check rather than another rule.
+`attention` or `learning`: the terms of the objective), and (for gap retros) the `problem` name. `sisi retro` lays the facts out under those terms, lists known problems (most recently cited first), and shows their trend. Citing the same problem a third time (2nd miss) and after opens a fault requiring a hook or automatic check rather than another rule. Problems are shared across all projects in your store while the fault opens in the project where the problem was cited, and a reworded name opens a new problem (matching is by the same words, ignoring case and spacing), so cite by number.
 
 **Faults.** Record any fault you see with `sisi fault "<what is wrong>"` (kept per project across sessions).
 Where the tool has hooks, session start and every request show the faults still not fixed, and with the gate
@@ -103,7 +103,7 @@ Rules live at three levels:
   using sisi, the same for all users. `SPEC.md` is what it aims at.
 - **Your store** (`$SISI_DATA`, else `$XDG_DATA_HOME/sisi`, else `~/.local/share/sisi`; a git repository): `rules/user.md`
   (how you like to work, across all your projects), `models.md` (your workers), `retro.jsonl` (each piece of work: session,
-  `retro_seconds`, counts, goal, term, problem) and `outcomes.jsonl` (each judged delegation: session, `project_key`, `model`,
+  `retro_seconds`, counts, goal, term, problem; problem tracking reads the last 64,000,000 bytes) and `outcomes.jsonl` (each judged delegation: session, `project_key`, `model`,
   `started`/`ended`, minutes, verdict, why). All plain text you can read and edit.
 - **Each project** (`.sisi/rules.md` in the project's folder: in a git repository, the root of its main checkout, shared by
   all its worktrees; outside git, the folder sisi is run in): rules specific to one project. In a bare repository with

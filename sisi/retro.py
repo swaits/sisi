@@ -81,7 +81,7 @@ def trend():
 def _problems(recs=None):
     """Known problems derived from retro.jsonl in order of first appearance (1-based number)."""
     by_key, out = {}, []
-    for idx, r in enumerate(store.records("retro.jsonl") if recs is None else recs):
+    for idx, r in enumerate(store.records("retro.jsonl", 64000000) if recs is None else recs):
         if not (isinstance(r.get("problem"), str) and (name := clean(r["problem"]))):
             continue
         date, key = str(r.get("ts") or "")[:10] or "?", name.lower()
@@ -98,12 +98,16 @@ def _problem_lines(probs):
 
 
 def _resolve_problem(problem, probs):
-    if not problem or len(problem) > 400:
-        return None, "sisi retro: every --gap retro names a problem (--problem N to cite, or --problem \"<name>\" to open one)."
-    if re.fullmatch(r"[+-]?\d+", problem):
-        n = int(problem)
-        return (probs[n - 1], "") if 1 <= n <= len(probs) else (None, "sisi retro: problem #%s does not exist." % problem)
-    return next((p for p in probs if p["name"].lower() == problem.lower()), {"num": len(probs) + 1, "name": problem, "attempts": []}), ""
+    if not problem or not (norm := " ".join(problem.split())):
+        return None, 'sisi retro: every --gap retro names a problem (--problem N to cite, or --problem "<name>" to open one).'
+    if clean(problem) != norm:
+        return None, "sisi retro: name the problem in plain words (no secrets, tokens, or long hex/digit strings)."
+    if len(norm) > 400:
+        return None, "sisi retro: problem name is at most 400 characters."
+    if re.fullmatch(r"[+-]?\d+", norm):
+        n = int(norm)
+        return (probs[n - 1], "") if 1 <= n <= len(probs) else (None, "sisi retro: problem #%s does not exist." % norm)
+    return next((p for p in probs if p["name"].lower() == norm.lower()), {"num": len(probs) + 1, "name": norm, "attempts": []}), ""
 
 
 def report(sid, cwd):
@@ -182,7 +186,7 @@ def _options(args):
     opt, i = {}, 0
     while i < len(args):
         if args[i] in FLAGS and i + 1 < len(args) and args[i][2:] not in opt:
-            opt[args[i][2:]] = clean(args[i + 1])
+            opt[args[i][2:]] = args[i + 1] if args[i] == "--problem" else clean(args[i + 1])
             i += 2
         else:
             return None
@@ -206,9 +210,12 @@ def run(args, cwd=None):
             else "no-gap" if set(opt) == {"no-gap"} and _words(opt, "no-gap", 5)
             else "gap" if set(opt) == {"gap", "cause", "improve"} and all(_words(opt, k, 4) for k in opt) else None)
     if (kind is None or len(opt.get("improve", "")) > 400 or len(better or "") > 400 or (kind == "later" and (term or better))
-            or (kind != "no-gap" and better) or (kind != "gap" and problem is not None)):
+            or (kind != "no-gap" and better)):
         print("sisi retro: that is not a retro yet (each part needs a real sentence; an improvement is at most "
               "400 characters).\n" + USAGE)
+        return 1
+    if kind != "gap" and problem is not None:
+        print("sisi retro: --problem goes only with --gap.")
         return 1
     if kind != "later" and term not in TERMS:
         print("sisi retro: name the term of the objective where the work fell short, or could most have scored better. " + TERM_HELP)
@@ -217,16 +224,15 @@ def run(args, cwd=None):
         print("sisi retro: a piece of work can always be done better. Add --better \"<one concrete thing that would have "
               "scored better on %s, 5+ words>\"; it is recorded, and becomes a rule only if it recurs." % term)
         return 1
-    prob, prior = None, []
+    prob = None
     if kind == "gap":
         probs = _problems()
         prob, why = _resolve_problem(problem, probs)
         if not prob:
             plines = _problem_lines(probs)
-            print(why + "\n" + ("known problems (most recent first):\n" + "\n".join(plines) if plines else "known problems: none yet.") +
-                  "\nRe-run with --problem N (one of the numbers above) or --problem \"<new problem name>\".")
+            print(why + ("\nknown problems (most recent first):\n" + "\n".join(plines) + "\nRe-run with --problem N (one of the numbers above) or --problem \"<new problem name>\"."
+                         if plines else "\nknown problems: none yet.\nRe-run with --problem \"<new problem name>\"."))
             return 1
-        prior = list(prob["attempts"])
     opt.update({"term": term, "problem": prob["name"]} if kind == "gap" else {"term": term, "better": clean(better)} if kind == "no-gap" else {})
     if sid:
         with store.session(sid) as s:
@@ -242,9 +248,11 @@ def run(args, cwd=None):
     elif kind != "later":
         record({}, cwd, dict(opt, scope=scope) if kind == "gap" else opt)
     if kind == "gap":
-        misses = len(prior)
+        found = next((p for p in _problems() if p["name"].lower() == opt["problem"].lower()), None)
+        prior = found["attempts"][:-1] if found else prob["attempts"]
+        prob, misses = found or prob, len(prior)
         if misses:
-            print("problem %d '%s' has come back: %d misses" % (prob["num"], prob["name"], misses))
+            print("problem %d '%s' has come back: %d miss%s" % (prob["num"], prob["name"], misses, "" if misses == 1 else "es"))
             for a in prior:
                 print("  - [%s] %s" % (a["date"], a["improve"] or a["cause"] or "(no improvement recorded)"))
         else:

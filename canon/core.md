@@ -110,8 +110,8 @@ tests, evidence and completion.
 
 When work ends, the lead runs `sisi retro` to see what happened and known problems. Set it against
 the objective by term: where did work fall short, why, and what instruction prevents it? Record
-`sisi retro --gap … --cause … --improve … --term T --problem N|"<name>"` (cite listed problem `N` or name a new one; on a 2nd miss, a rule did not hold and a fault opens). The improvement becomes a rule at
-once: product (every user, in the product), user (all your projects, in your store), or project (`.sisi/rules.md` at root, in git main checkout's, which may be checked in). Name the root cause, not general
+`sisi retro --gap … --cause … --improve … --term T --problem N|"<name>"` (`--problem` is required with `--gap` or refused: cite `N` or name a new one; each citation after opening is a miss; at the 2nd miss a fault opens). The improvement becomes a rule at
+once: product (every user, in the product), user (how this person works across projects, in their store), or project (`.sisi/rules.md` at root, in git its main checkout's, which may be checked in). Name the root cause, not general
 advice. Prefer a rule that makes next work do more by itself over a caution; a caution says what stays allowed
 without asking. Work can always be done better: when nothing fell short, name the one thing that would have scored better (`--no-gap … --term T --better …`).
 When the person states a lasting preference, record their words at once with `sisi learn`. When session start says
