@@ -113,7 +113,7 @@ the objective by term: where did work fall short, why, and what instruction prev
 `sisi retro --gap … --cause … --improve … --term T --problem N|"<name>"` (cite listed problem `N` or name a new one; on a 2nd miss, a rule did not hold and a fault opens). The improvement becomes a rule at
 once: product (every user, in the product), user (all your projects, in your store), or project (`.sisi/rules.md` at root, in git main checkout's, which may be checked in). Name the root cause, not general
 advice. Prefer a rule that makes next work do more by itself over a caution; a caution says what stays allowed
-without asking. Work can always be done better: when nothing fell short, name `--no-gap … --term T --better …`.
+without asking. Work can always be done better: when nothing fell short, name the one thing that would have scored better (`--no-gap … --term T --better …`).
 When the person states a lasting preference, record their words at once with `sisi learn`. When session start says
 rules need organizing, have a cheap worker do it in the background.
 
