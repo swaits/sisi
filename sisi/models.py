@@ -205,28 +205,28 @@ clock = lambda t: time.strftime("%m-%d %H:%M", time.localtime(t))
 SINCE = "out since %s, back on the wheel at %s"
 
 
-def outs(text, log, written, today=None):
+def outs(text, log, written, today=None, now=None):
     """{worker: (since, why)}: each worker last said to be out, and when. An `out` verdict in the log says it, and any
     later verdict takes it back. A table from before `out` verdicts says it with a note, `out until DATE` (DATE today or
-    later), unless the log holds a verdict for that worker newer than the table (`written`); the note dates from the table."""
-    last, today = {}, today or time.strftime("%Y-%m-%d")
+    later), unless the log holds a verdict for that worker newer than the table (`written`); the note dates from the table. A time OUT or more ahead of `now` is a wrong clock and says nothing."""
+    last, today, now = {}, today or time.strftime("%Y-%m-%d"), now or time.time()
     for o in log:
         try:
-            last[short(o["model"] if isinstance(o.get("model"), str) and o["model"] else o["worker"])] = (
-                time.mktime(time.strptime(o["ts"], "%Y-%m-%dT%H:%M:%S")), o.get("verdict"), str(o.get("why") or ""))
+            t = time.mktime(time.strptime(o["ts"], "%Y-%m-%dT%H:%M:%S"))
+            t - now < OUT and last.__setitem__(short(o["model"] if isinstance(o.get("model"), str) and o["model"] else o["worker"]), (t, o.get("verdict"), str(o.get("why") or "")))
         except (KeyError, TypeError, ValueError):
             pass  # a damaged line is no verdict
     gone = {w: (t, why) for w, (t, verdict, why) in last.items() if verdict == "out"}
     for r in rows(text):
         w, until = short(r[0]), [d for d in re.findall(r"out until (\d{4}-\d{2}-\d{2})", " ".join(r).lower()) if d >= today]
-        if until and written is not None and not (w in last and last[w][0] >= int(written)):  # the log keeps whole seconds
+        if until and written is not None and written - now < OUT and not (w in last and last[w][0] >= int(written)):  # the log keeps whole seconds
             gone[w] = (written, "out until " + until[0])
     return gone
 
 
 def away():
     """`outs` for the table and the log as they are now."""
-    return outs(store.read(table()), store.records("outcomes.jsonl"), os.path.getmtime(table()) if os.path.exists(table()) else None)
+    return outs(store.read(table()), store.records("outcomes.jsonl"), os.path.getmtime(table()) if os.path.exists(table()) else None, now=time.time())
 
 
 def out(r, skip, bad, gone, now):
@@ -299,7 +299,7 @@ def pick(args, cwd=None, rand=None):
     if not r:
         bad = next((maker(x) for x in rows(text) if short(x[0]) == short(review)), None)
         again = {"routine": " Choose again from ordinary.", "ordinary": " Choose again from hard."}.get(cls, "")
-        first = min((t + OUT for x in mine if (t := gone.get(short(x[0]), (None,))[0]) is not None and now - t < OUT), default=None)
+        first = min((gone[short(x[0])][0] + OUT for x in mine if out(x, skip, bad, gone, now).startswith("out since")), default=None)
         print(("sisi pick: every worker of class %s is out or excluded: %s." % (cls, "; ".join(
             "%s (%s)" % (x[0], out(x, skip, bad, gone, now)) for x in mine)) if mine
                else "sisi pick: the models table has no worker of class %s." % cls)
@@ -353,7 +353,7 @@ def research_record(answer_file):
         if len(re.findall(r"routine|ordinary|hard", r[2].lower())) != 1:
             return "each row's \"use for\" must name exactly one of routine, ordinary or hard: | %s |" % " | ".join(r[:6])
         if re.search(r"\bout (?:until|till)\b", " ".join(r), re.I):  # what the wheel would read as a legacy note
-            return "the table does not say who is out: judge the worker instead (`sisi judge WORKER out \"<the provider's message>\"`) and take that out of the row: | %s |" % " | ".join(r[:6])
+            return "a row may not say who is out: delete the `out until` note from it (the agent that delegates judges a worker that hit a limit: `sisi judge WORKER out \"<the provider's message>\"`): | %s |" % " | ".join(r[:6])
     if len(lines) > 42 or len(text) > 12000:
         return "the answer is too long (at most 40 rows and 12,000 characters)"
     if shared and ("|" not in shared or not _shared_date(shared)[0]):
@@ -394,6 +394,8 @@ def judge(args, cwd=None):
         return 1
     trows = rows(store.read(table()))
     hits = [r for r in trows if short(r[0]) == short(args[0])] or [r for r in trows if claim({"picked": [short(r[0])]}, args[0], True)]
+    if args[1] == "out" and len(hits) != 1:  # a verdict that names no one worker would change nothing
+        return print("sisi judge: %r is not one worker of the models table; name it as the table does." % args[0]) or 1
     model = (hits[0][0].split() or [""])[0] if len(hits) == 1 else args[0]
     wkey, sid, now, began = short(model), store.current_session(cwd), time.time(), None
     if sid:

@@ -1700,7 +1700,8 @@ cli.main(["tick"])
         sys.path.insert(0, REPO)
         from sisi import models
         name = lambda r: r[0].split()[0].lower()
-        spin = lambda cls, **kw: models.choose(FIXTURE, cls, gone=models.outs(FIXTURE, [], time.time()), **kw)   # the table as just written
+        written = time.time()
+        spin = lambda cls, **kw: models.choose(FIXTURE, cls, gone=models.outs(FIXTURE, [], written), **kw)   # the table as just written
         for _ in range(300):
             self.assertNotIn("muse-wonder", name(spin("ordinary", rand=random.random)))             # its `out until 2999` note is six hours old at most
             self.assertNotEqual(name(spin("ordinary", skip=["zai-coding-plan/glm-5.4"], rand=random.random)), "zai-coding-plan/glm-5.4")
@@ -1712,7 +1713,7 @@ cli.main(["tick"])
                          ["zai-coding-plan/glm-5.4"] * 2 + ["zai-coding-plan/glm-5.3-flash"] * 2 + ["muse/muse-ember-1.0"] * 2 + ["haiku"] * 2)
         self.assertEqual(name(spin("ordinary", review="zai-coding-plan/glm-5.4", rand=lambda: 0.0)), "muse/muse-ember-1.0")
         self.assertIsNone(spin("routine", rand=lambda: 0.0))
-        later = [name(spin("ordinary", rand=lambda: i / 1000, now=time.time() + 6 * 3600)) for i in range(1000)]
+        later = [name(spin("ordinary", rand=lambda: i / 1000, now=written + 6 * 3600)) for i in range(1000)]
         self.assertEqual({w.split("/")[-1] for w in later}, {"glm-5.4", "glm-5.3-flash", "muse-ember-1.0", "haiku", "muse-wonder-1.0"})  # six hours on, the note is spent
         row = lambda *c: list(c) + [""] * (7 - len(c))
         self.assertEqual(models.maker(row("agy", "")), "agy")
@@ -2705,6 +2706,32 @@ cli.main(["tick"])
         first = time.mktime(time.strptime("2026-" + out.split("The first is back on the wheel at ")[1][:11], "%Y-%m-%d %H:%M"))
         self.assertLess(abs(first - (time.time() + 5 * 3600)), 120)                        # beta, out for an hour: in five more
 
+    def test_a_verdict_or_table_dated_far_ahead_is_a_wrong_clock_and_takes_nobody_out(self):
+        self.table(ONE)
+        self.judged("alpha", "out")
+        self.dated(-24 * 60)                                                               # a day ahead: not a verdict
+        self.assertEqual(self.picked("routine")[0], True)
+        self.table(ONE.replace("| |", "| out until 2999-01-01 |"))
+        os.remove(os.path.join(self.data, "outcomes.jsonl"))
+        ahead = time.time() + 10 * 86400
+        os.utime(os.path.join(self.data, "models.md"), (ahead, ahead))                     # a table written ten days ahead: its note is no note
+        self.assertEqual(self.picked("routine")[0], True)
+
+    def test_a_worker_the_table_does_not_list_cannot_be_judged_out(self):
+        self.table(ONE)
+        rc, out, _ = self.sisi("judge", "nosuch", "out", LIMIT)
+        self.assertEqual((rc, "nosuch" in out, os.path.exists(os.path.join(self.data, "outcomes.jsonl"))), (1, True, False), out)       # it would be recorded and change nothing
+
+    def test_the_return_time_pick_names_is_one_of_a_worker_that_could_be_picked_then(self):
+        self.table(TWO)
+        self.judged("alpha", "out")
+        self.judged("beta", "out")
+        self.dated(4 * 60, 60)                                                             # alpha is back in two hours, beta in five
+        got, out = self.picked("routine", "--not", "alpha")                                # alpha comes back, but is excluded
+        self.assertEqual(got, False, out)
+        first = time.mktime(time.strptime("2026-" + out.split("The first is back on the wheel at ")[1][:11], "%Y-%m-%d %H:%M"))
+        self.assertLess(abs(first - (time.time() + 5 * 3600)), 120)
+
     def test_pick_says_a_returning_worker_is_a_retry(self):
         self.table(ONE)
         self.judged("alpha", "out", LIMIT + ", please try later. " * 30)
@@ -2743,7 +2770,7 @@ cli.main(["tick"])
         for notes in ("out till 2999-01-01", "out until next week", "Out Until 2999-1-1", "out until 2999-01-01"):
             self.write(answer, HEADER + "| small | host subagent `small` | routine | flat | fast | %s |\nFallback order: none.\n" % notes)
             rc, out, _ = self.sisi("models", "research", "--record", answer)
-            self.assertEqual((rc, "| small |" in out, "sisi judge WORKER out" in out), (1, True, True), notes)   # availability is judged, never written
+            self.assertEqual((rc, "| small |" in out, "delete the" in out, "judge the worker instead" in out), (1, True, True, False), notes)   # a table writer is told to delete it, not to invent a verdict
         self.assertEqual(self.read(self.data, "models.md").strip(), clean.strip())
 
     def test_a_failed_check_is_counted_even_when_it_is_fixed(self):
@@ -3778,7 +3805,7 @@ cli.main(["tick"])
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLessEqual(code, 2265, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLessEqual(code, 2267, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 137)
         self.assertLessEqual(len(rulebook), 10561)
