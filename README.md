@@ -12,7 +12,9 @@ It routes by a models table: which workers you have, what each is good at, what 
 rebuilds that table when it gets old, and every judged delegation feeds the next research. The lead does not
 choose the worker: `sisi pick CLASS` spins a wheel over the workers of that class (a capability tier: each model is
 in exactly one class, so the wheel never mixes tiers; weighted by table order and by the square of the speed ratio),
-and a delegation to a worker the wheel did not give is refused. One pick, one delegation. A host that names its models
+and a delegation to a worker the wheel did not give is refused. One pick, one delegation. A worker that failed for a
+limit is judged `out` with the provider's message: it is off the wheel for 6 hours, then the wheel tries it again (at most
+4 times a day), and the pick that hands it out says it is a retry. A host that names its models
 shortly (Claude Code's `Agent` tool says `sonnet`) may give one whole segment of the picked model id, so name a worker
 by its full model id (`claude-sonnet-5-5`); anywhere else the name must match whole.
 
@@ -90,8 +92,8 @@ its limits are.
 | `sisi retro --later …` | The work is not finished yet |
 | `sisi learn [--project] "…" [--means "…"]` | The person's own words become a rule at once, tagged `[owner]` only when they appear in the person's recent messages in this session. `--means` adds, in the same undoable step, one line saying how the agent will apply it |
 | `sisi rules` / `sisi rules organize [--record FILE]` / `sisi rules revert` | See the learned rules; have a worker organize them (using known problems, prior attempts, and past drop reasons; an optional `## drops` section can record a reason and matching problem number for any dropped or merged rule, with `none given` recorded when omitted); undo the last rule change made with `learn`, a retro or `organize` (including any drop reasons recorded by that `organize`), in the user list or a project's `.sisi/rules.md` (not the one-time move of old rules; a second `revert` re-applies what the first undid; it declines, changing nothing, when the project file changed since or its folder moved or is gone) |
-| `sisi models` / `sisi models research [--record FILE]` | The workers table (the shared baseline table ships with sisi in `canon/models.md`); have a worker rebuild it |
-| `sisi judge WORKER good\|bad "…" [--minutes N] [--newest]` | How a delegation went; the minutes are measured from the pick's delegation (or `--minutes N`) and make the wheel favour faster workers. With several of one worker's jobs open, the oldest is judged first, `--newest` the newest |
+| `sisi models` / `sisi models research [--record FILE]` | The workers table (the shared baseline table ships with sisi in `canon/models.md`), and each worker that is out with when it is back on the wheel; have a worker rebuild it |
+| `sisi judge WORKER good\|bad\|out "…" [--minutes N] [--newest]` | How a delegation went (`out` with the provider's own message when it hit a limit: off the wheel for 6 hours, then tried again); the minutes are measured from the pick's delegation (or `--minutes N`) and make the wheel favour faster workers. With several of one worker's jobs open, the oldest is judged first, `--newest` the newest |
 | `sisi judge WORKER extend MINUTES "<reason>" [--newest]` | Give a late job more time instead of judging it: the job that is past its limit (past twice it first, else past once, else the oldest) gets MINUTES more from now, and its late fault clears |
 | `sisi direct "…"` | Allow more direct tool calls this turn, with the reason |
 

@@ -84,9 +84,9 @@ failed or gamed job does to each number it optimizes. For a reported fault, the 
 are an acceptance test. For a replacement, list each behaviour of the old thing as keep, change or drop,
 with a check for every keep. Always use the newest version of a model within its maker and class. Its
 report is evidence for you to judge, not a fact to pass on; record how it went with `sisi judge`. When a
-worker fails for a limit, a login or a connection, give the same brief to the next one at once: do not
-ask the person and do not report it. When session start says the models table is old, start a research
-worker in the background to rebuild it.
+worker fails for a limit, a login or a connection, judge it `out` with the provider's message (sisi
+retries it by itself) and give the same brief to the next one at once: do not ask the person and do
+not report it. Rebuild the models table in the background when session start says it is old.
 
 ## 6. Report plainly
 

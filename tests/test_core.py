@@ -28,6 +28,9 @@ FIXTURE = HEADER + (
     "| haiku (Haiku 5.5) | host subagent model `haiku` | ordinary | per use | quick | |\n"
     "| sonnet (Sonnet 5.5) | host subagent model `sonnet` | hard | per use | everything | |\n"
     "| opus (Opus 5.5) | host subagent model `opus` | hard | per use | hardest | |\n")
+ONE = HEADER + "| alpha | host subagent model `alpha` | routine | free | quick | |\n"                 # one worker in its class: a pick is sure
+TWO = ONE + "| beta | host subagent model `beta` | routine | free | quick | |\n"
+LIMIT = "You have hit your usage limit for this model"
 
 
 def tree():
@@ -1697,17 +1700,20 @@ cli.main(["tick"])
         sys.path.insert(0, REPO)
         from sisi import models
         name = lambda r: r[0].split()[0].lower()
+        spin = lambda cls, **kw: models.choose(FIXTURE, cls, gone=models.outs(FIXTURE, [], time.time()), **kw)   # the table as just written
         for _ in range(300):
-            self.assertNotIn("muse-wonder", name(models.choose(FIXTURE, "ordinary", rand=random.random)))   # out until 2999
-            self.assertNotEqual(name(models.choose(FIXTURE, "ordinary", skip=["zai-coding-plan/glm-5.4"], rand=random.random)), "zai-coding-plan/glm-5.4")
-            self.assertNotIn("glm", name(models.choose(FIXTURE, "ordinary", review="zai-coding-plan/glm-5.4", rand=random.random)))
-            self.assertIsNone(models.choose(FIXTURE, "hard", review="sonnet", rand=random.random))     # both are claude
-        picked = lambda x: name(models.choose(FIXTURE, "ordinary", rand=lambda: x))
+            self.assertNotIn("muse-wonder", name(spin("ordinary", rand=random.random)))             # its `out until 2999` note is six hours old at most
+            self.assertNotEqual(name(spin("ordinary", skip=["zai-coding-plan/glm-5.4"], rand=random.random)), "zai-coding-plan/glm-5.4")
+            self.assertNotIn("glm", name(spin("ordinary", review="zai-coding-plan/glm-5.4", rand=random.random)))
+            self.assertIsNone(spin("hard", review="sonnet", rand=random.random))                     # both are claude
+        picked = lambda x: name(spin("ordinary", rand=lambda: x))
         # four candidates (the expired "out until" is back in), weights 4, 3, 2, 1 of 10
         self.assertEqual([picked(x) for x in (0.0, 0.39, 0.4, 0.69, 0.7, 0.89, 0.9, 0.999)],
                          ["zai-coding-plan/glm-5.4"] * 2 + ["zai-coding-plan/glm-5.3-flash"] * 2 + ["muse/muse-ember-1.0"] * 2 + ["haiku"] * 2)
-        self.assertEqual(name(models.choose(FIXTURE, "ordinary", review="zai-coding-plan/glm-5.4", rand=lambda: 0.0)), "muse/muse-ember-1.0")
-        self.assertIsNone(models.choose(FIXTURE, "routine", rand=lambda: 0.0))
+        self.assertEqual(name(spin("ordinary", review="zai-coding-plan/glm-5.4", rand=lambda: 0.0)), "muse/muse-ember-1.0")
+        self.assertIsNone(spin("routine", rand=lambda: 0.0))
+        later = [name(spin("ordinary", rand=lambda: i / 1000, now=time.time() + 6 * 3600)) for i in range(1000)]
+        self.assertEqual({w.split("/")[-1] for w in later}, {"glm-5.4", "glm-5.3-flash", "muse-ember-1.0", "haiku", "muse-wonder-1.0"})  # six hours on, the note is spent
         row = lambda *c: list(c) + [""] * (7 - len(c))
         self.assertEqual(models.maker(row("agy", "")), "agy")
         self.assertEqual(models.maker(row("opencode-go/gpt-6-luna", "`opencode run`")), "gpt")
@@ -2619,15 +2625,126 @@ cli.main(["tick"])
         self.assertEqual(bash("python3 -c 'print(1)'"), (0, "", ""))                             # a launcher is not a worker
         self.assertEqual(bash("echo opencode"), (0, "", ""))
 
-    def test_an_out_date_must_be_exact(self):
-        self.assertIn("out until YYYY-MM-DD", self.sisi("models", "research")[1])
+    # a worker judged `out`: off the wheel for six hours, then tried again
+
+    def judged(self, worker, kind, why=LIMIT):
+        rc, out, _ = self.sisi("judge", worker, kind, why)
+        self.assertEqual(rc, 0, out)
+        return out
+
+    def dated(self, *minutes_ago):
+        """The clock: every verdict so far was given this many minutes ago, oldest first."""
+        recs = self.outcomes()
+        self.assertEqual(len(recs), len(minutes_ago))
+        for rec, m in zip(recs, minutes_ago):
+            at = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - m * 60))
+            rec.update(ts=at, ended=at)
+        self.write(os.path.join(self.data, "outcomes.jsonl"), "".join(json.dumps(r, sort_keys=True) + "\n" for r in recs))
+
+    def picked(self, *args):
+        """(was a worker handed out, the output)."""
+        rc, out, _ = self.sisi("pick", *args)
+        return rc == 0 and "worker:" in out, out
+
+    def test_a_worker_judged_out_is_off_the_wheel_for_six_hours_and_is_then_tried_again(self):
+        self.table(ONE)
+        self.assertIn("recorded", self.judged("alpha", "out"))
+        self.assertEqual((self.outcomes()[-1]["verdict"], self.outcomes()[-1]["why"]), ("out", LIMIT))
+        self.dated(5 * 60 + 59)
+        got, out = self.picked("routine")                                                  # 5 h 59 m: still off
+        self.assertEqual((got, "out since" in out, "back on the wheel at" in out), (False, True, True), out)
+        self.dated(6 * 60)
+        got, out = self.picked("routine")                                                  # 6 h 00 m: back
+        self.assertEqual((got, "worker: alpha" in out), (True, True), out)
+        self.table(TWO)
+        self.dated(0)
+        for _ in range(20):                                                                # beside a worker that is in: never handed out
+            self.assertNotEqual(self.picked("routine")[1].split("worker: ")[1].split()[0], "alpha")
+
+    def test_a_second_out_verdict_moves_the_time_the_worker_is_back(self):
+        self.table(ONE)
+        self.judged("alpha", "out")                                                        # out at 09:00
+        self.judged("alpha", "out")                                                        # tried at 15:10 and out again
+        self.dated(12 * 60 + 9, 5 * 60 + 59)                                               # it is 21:09: not back at 15:00
+        self.assertEqual(self.picked("routine")[0], False)
+        self.dated(12 * 60 + 10, 6 * 60)                                                   # 21:10
+        got, out = self.picked("routine")
+        self.assertEqual((got, "retry: this worker hit a limit at" in out), (True, True), out)
+
+    def test_a_good_or_bad_verdict_puts_an_out_worker_back_at_once(self):
+        self.table(ONE)
+        self.judged("alpha", "out")
+        self.assertEqual(self.picked("routine")[0], False)
+        for kind, why in (("good", "did the job in one pass"), ("bad", "gave up after one quick wrong try")):
+            self.judged("alpha", kind, why)
+            got, out = self.picked("routine")
+            self.assertEqual((got, "retry:" in out), (True, False), out)                    # available, and no retry note
+            self.judged("alpha", "out")
+            self.assertEqual(self.picked("routine")[0], False)
+
+    def test_an_old_out_until_note_counts_from_today_and_the_log_and_six_hours_override_it(self):
+        self.table(ONE.replace("| |", "| out until %s |" % time.strftime("%Y-%m-%d")))     # dated today: out (it used to count only from tomorrow)
+        self.assertEqual(self.picked("routine")[0], False)
+        self.judged("alpha", "good", "did the job in one pass")                            # a newer verdict in the log decides
+        got, out = self.picked("routine")
+        self.assertEqual((got, "retry:" in out), (True, False), out)
+        os.remove(os.path.join(self.data, "outcomes.jsonl"))                               # no verdict: the note dates from the table
+        old = time.time() - 6 * 60 * 60 - 1
+        os.utime(os.path.join(self.data, "models.md"), (old, old))                         # six hours after it was written: back
+        got, out = self.picked("routine")
+        self.assertEqual((got, "retry: this worker hit a limit at" in out, "out until" in out), (True, True, True), out)
+
+    def test_pick_names_when_the_first_out_worker_of_a_class_is_back(self):
+        self.table(TWO)
+        self.judged("alpha", "out")
+        self.judged("beta", "out")
+        self.dated(30, 60)                                                                # beta has been out longer: it is back first
+        got, out = self.picked("routine")
+        self.assertEqual(got, False, out)
+        self.assertIn("every worker of class routine is out or excluded: alpha (out since", out)
+        first = time.mktime(time.strptime("2026-" + out.split("The first is back on the wheel at ")[1][:11], "%Y-%m-%d %H:%M"))
+        self.assertLess(abs(first - (time.time() + 5 * 3600)), 120)                        # beta, out for an hour: in five more
+
+    def test_pick_says_a_returning_worker_is_a_retry(self):
+        self.table(ONE)
+        self.judged("alpha", "out", LIMIT + ", please try later. " * 30)
+        self.dated(6 * 60 + 1)
+        got, out = self.picked("routine")
+        self.assertEqual(got, True, out)
+        line = out.split("retry: ")[1].splitlines()[0]
+        self.assertTrue(line.startswith("this worker hit a limit at "), line)
+        self.assertIn(LIMIT, line)
+        self.assertTrue(line.endswith("; if it fails for the limit again, judge it out again and pick another"), line)
+        self.assertLess(len(line), 300)                                                    # the message is shortened
+
+    def test_an_out_verdict_closes_the_job_and_models_says_when_the_worker_is_back(self):
+        self.table(WORKERS)
+        self.hook("tick")
+        self.hook("prompt", prompt="go")
+        self.done()
+        self.assertEqual(self.sisi("pick", "hard", sid="s1")[0], 0)
+        self.assertEqual(self.tool("Agent", tool_input={"model": "sonnet"})[0], 0)
+        self.assertEqual(len(self.state()["starts"]["sonnet"]), 1)
+        rc, out, _ = self.sisi("judge", "sonnet", "out", LIMIT, sid="s1")
+        self.assertEqual((rc, self.state()["starts"]["sonnet"], self.outcomes()[-1]["verdict"]), (0, [], "out"))
+        self.assertTrue(out.startswith("recorded: 1 min (job started"), out)
+        out = self.sisi("models")[1]
+        self.assertRegex(out, r"\nsonnet: out since \d\d-\d\d \d\d:\d\d, back on the wheel at \d\d-\d\d \d\d:\d\d")
+        self.assertNotIn("agy: out since", out)
+
+    def test_the_table_no_longer_says_who_is_out(self):
+        brief = self.sisi("models", "research")[1]
+        self.assertNotIn("out until", brief)
+        self.assertIn("sisi judge WORKER out", brief)
         answer = os.path.join(self.tmp, "table.md")
-        for notes in ("out till 2999-01-01", "out until next week", "Out Until 2999-1-1"):
+        clean = HEADER + "| small | host subagent `small` | routine | flat | fast | |\nFallback order: none.\n"
+        self.write(answer, clean)
+        self.assertEqual(self.sisi("models", "research", "--record", answer)[0], 0)
+        for notes in ("out till 2999-01-01", "out until next week", "Out Until 2999-1-1", "out until 2999-01-01"):
             self.write(answer, HEADER + "| small | host subagent `small` | routine | flat | fast | %s |\nFallback order: none.\n" % notes)
             rc, out, _ = self.sisi("models", "research", "--record", answer)
-            self.assertEqual((rc, "| small |" in out), (1, True), notes)
-        self.write(answer, HEADER + "| small | host subagent `small` | routine | flat | fast | out until 2999-01-01 |\nFallback order: none.\n")
-        self.assertEqual(self.sisi("models", "research", "--record", answer)[0], 0)
+            self.assertEqual((rc, "| small |" in out, "sisi judge WORKER out" in out), (1, True, True), notes)   # availability is judged, never written
+        self.assertEqual(self.read(self.data, "models.md").strip(), clean.strip())
 
     def test_a_failed_check_is_counted_even_when_it_is_fixed(self):
         self.hook("tick")
@@ -3661,10 +3778,10 @@ cli.main(["tick"])
 
     def test_the_product_stays_small(self):
         code = sum(len(self.read(p).splitlines()) for p in glob.glob(os.path.join(REPO, "sisi", "*.py")))
-        self.assertLessEqual(code, 2226, "sisi is two loops. If it needs more than this, find the simpler shape.")
+        self.assertLessEqual(code, 2265, "sisi is two loops. If it needs more than this, find the simpler shape.")
         rulebook = self.read(REPO, "canon", "core.md")
         self.assertLess(len(rulebook.splitlines()), 137)
-        self.assertLessEqual(len(rulebook), 10530)
+        self.assertLessEqual(len(rulebook), 10561)
 
 
 if __name__ == "__main__":

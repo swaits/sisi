@@ -13,7 +13,7 @@ ASK_STALE = ("which AI models this machine can delegate work to, what each is go
              "Only the newest version of each model belongs in the table. A smaller or faster variant is a different model.")
 EXTRA_SHARED = ("\nThen a second, separately marked section starting on its own line with `=== Shared models ===`, followed by `researched YYYY-MM-DD` on its first line and a baseline ranking table "
                 "(`| model | maker | class | score | released | list price | benchmarks | good at, bad at |`) with one row per model (keyed by model id, never provider route), sorted by class then score descending, "
-                "holding only shared public facts (no plans, allowances, `out until` dates, judged records, or personal notes).\n")
+                "holding only shared public facts (no plans, allowances, availability, judged records, or personal notes).\n")
 
 RESEARCH = """You are a worker. Do this task yourself; do not delegate it further.
 
@@ -38,8 +38,9 @@ other makers (benchmarks and the maker's own positioning), so that every class h
 several makers. A model that seems to fit two classes goes in the lower one only if it truly performs at that
 level, never in both. "how to call it" is exact: the host delegation tool's provider and model id (T3 Code's
 delegate_task); the host's subagent model name where it has subagents; the full command line with <brief> where
-the brief goes only for a worker the host's tool cannot reach. A worker that is unavailable carries exactly
-`out until YYYY-MM-DD` in its notes.
+the brief goes only for a worker the host's tool cannot reach. Do not say in the notes whether a worker is
+available: `sisi judge WORKER out "<message>"` takes a worker that hit a limit off the wheel for a while, and
+sisi tries it again by itself.
 Then one line starting "Fallback order:" that says who takes over when a worker is out, level by level.
 %(extra)s
 === Shipped baseline table ===
@@ -199,11 +200,40 @@ def waiting(s):
     return isinstance(s.get("starts"), dict) and any(isinstance(v, list) and v for v in s["starts"].values())
 
 
-def out(r, skip, bad, today):
-    """Why this worker is off the wheel, "" when it is on."""
-    until = [d for d in re.findall(r"out until (\d{4}-\d{2}-\d{2})", " ".join(r).lower()) if d > today]
+OUT = 6 * 3600  # a worker judged `out` sits out this long, then the wheel tries it again: 24 h / 6 h = at most 4 tries a day
+clock = lambda t: time.strftime("%m-%d %H:%M", time.localtime(t))
+SINCE = "out since %s, back on the wheel at %s"
+
+
+def outs(text, log, written, today=None):
+    """{worker: (since, why)}: each worker last said to be out, and when. An `out` verdict in the log says it, and any
+    later verdict takes it back. A table from before `out` verdicts says it with a note, `out until DATE` (DATE today or
+    later), unless the log holds a verdict for that worker newer than the table (`written`); the note dates from the table."""
+    last, today = {}, today or time.strftime("%Y-%m-%d")
+    for o in log:
+        try:
+            last[short(o["model"] if isinstance(o.get("model"), str) and o["model"] else o["worker"])] = (
+                time.mktime(time.strptime(o["ts"], "%Y-%m-%dT%H:%M:%S")), o.get("verdict"), str(o.get("why") or ""))
+        except (KeyError, TypeError, ValueError):
+            pass  # a damaged line is no verdict
+    gone = {w: (t, why) for w, (t, verdict, why) in last.items() if verdict == "out"}
+    for r in rows(text):
+        w, until = short(r[0]), [d for d in re.findall(r"out until (\d{4}-\d{2}-\d{2})", " ".join(r).lower()) if d >= today]
+        if until and written is not None and not (w in last and last[w][0] >= int(written)):  # the log keeps whole seconds
+            gone[w] = (written, "out until " + until[0])
+    return gone
+
+
+def away():
+    """`outs` for the table and the log as they are now."""
+    return outs(store.read(table()), store.records("outcomes.jsonl"), os.path.getmtime(table()) if os.path.exists(table()) else None)
+
+
+def out(r, skip, bad, gone, now):
+    """Why this worker is off the wheel, "" when it is on: excluded, the maker of the work under review, or out."""
+    since = gone.get(short(r[0]))
     return ("excluded" if short(r[0]) in skip else "same maker as the work under review" if maker(r) == bad
-            else "out until " + until[0] if until else "")
+            else SINCE % (clock(since[0]), clock(since[0] + OUT)) if since and now - since[0] < OUT else "")
 
 
 def median(v):
@@ -220,12 +250,13 @@ def speeds():
     return {w: v[-10:] for w, v in out.items()}
 
 
-def choose(text, cls, skip=(), review=None, rand=None, today=None, speed=None):
+def choose(text, cls, skip=(), review=None, rand=None, speed=None, gone=None, now=None):
     """One worker of this class, by a wheel weighted by table order (the first of n has weight n, the last 1)
-    times its speed: the fastest candidate's median minutes over its own, cubed, at least 0.02 (1 with no timed jobs)."""
-    table_rows, today = rows(text), today or time.strftime("%Y-%m-%d")
+    times its speed: the fastest candidate's median minutes over its own, cubed, at least 0.02 (1 with no timed jobs).
+    A worker last said out less than OUT seconds ago (`gone`, from `outs`) is not on the wheel."""
+    table_rows, gone, now = rows(text), gone or {}, now or time.time()
     bad = next((maker(r) for r in table_rows if short(r[0]) == short(review)), None) if review else None
-    left = [r for r in table_rows if r[2].strip().lower() == cls and not out(r, skip, bad, today)]
+    left = [r for r in table_rows if r[2].strip().lower() == cls and not out(r, skip, bad, gone, now)]
     if not left:
         return None
     if rand is None:
@@ -263,14 +294,16 @@ def pick(args, cwd=None, rand=None):
     if review is not None and not any(short(r[0]) == short(review) for r in rows(text)):
         print("sisi pick: %r is not a worker in the models table; --review-of names the worker whose work is reviewed." % review)
         return 1
-    speed = speeds()
-    r = choose(text, cls, skip, review, rand, speed=speed)
+    speed, gone, now = speeds(), away(), time.time()
+    r = choose(text, cls, skip, review, rand, speed=speed, gone=gone, now=now)
     if not r:
         bad = next((maker(x) for x in rows(text) if short(x[0]) == short(review)), None)
         again = {"routine": " Choose again from ordinary.", "ordinary": " Choose again from hard."}.get(cls, "")
+        first = min((t + OUT for x in mine if (t := gone.get(short(x[0]), (None,))[0]) is not None and now - t < OUT), default=None)
         print(("sisi pick: every worker of class %s is out or excluded: %s." % (cls, "; ".join(
-            "%s (%s)" % (x[0], out(x, skip, bad, time.strftime("%Y-%m-%d"))) for x in mine)) if mine
-              else "sisi pick: the models table has no worker of class %s." % cls) + again)
+            "%s (%s)" % (x[0], out(x, skip, bad, gone, now)) for x in mine)) if mine
+               else "sisi pick: the models table has no worker of class %s." % cls)
+              + (" The first is back on the wheel at %s." % clock(first) if first is not None else "") + again)
         return 1
     sid = store.current_session(cwd)
     if sid:
@@ -284,6 +317,9 @@ def pick(args, cwd=None, rand=None):
     print("good at, bad at: %s\nnotes: %s" % (r[4], r[5]))
     t = speed.get(short(r[0]))
     print("speed: median %g min over %d timed jobs" % (median(t), len(t)) if t else "speed: no timed jobs yet")
+    if g := gone.get(short(r[0])):  # its last verdict was `out`: a retry, so a quick failure is expected and cheap
+        print("retry: this worker hit a limit at %s: %s; if it fails for the limit again, judge it out again and pick another" % (
+            clock(g[0]), g[1][:160] + ("…" if len(g[1]) > 160 else "")))
     return 0
 
 
@@ -316,8 +352,8 @@ def research_record(answer_file):
     for r in rows(text):
         if len(re.findall(r"routine|ordinary|hard", r[2].lower())) != 1:
             return "each row's \"use for\" must name exactly one of routine, ordinary or hard: | %s |" % " | ".join(r[:6])
-        if re.search(r"out (?!until \d{4}-\d{2}-\d{2}(?!\d))(until|till)\b", r[5].lower()):
-            return "a worker that is out needs exactly `out until YYYY-MM-DD` in its notes: | %s |" % " | ".join(r[:6])
+        if re.search(r"\bout (?:until|till)\b", " ".join(r), re.I):  # what the wheel would read as a legacy note
+            return "the table does not say who is out: judge the worker instead (`sisi judge WORKER out \"<the provider's message>\"`) and take that out of the row: | %s |" % " | ".join(r[:6])
     if len(lines) > 42 or len(text) > 12000:
         return "the answer is too long (at most 40 rows and 12,000 characters)"
     if shared and ("|" not in shared or not _shared_date(shared)[0]):
@@ -337,7 +373,7 @@ def sync_late(s, cwd, sid, add=True):
     if not (late2 := late(s, 2)) and not os.path.lexists(os.path.join(store.STATE, "core-faults", store.project_key(cwd) + ".json")): return
     from . import faults
     prefix, now, cfg_m = "late:%s:" % sid[:8], time.time(), store.config()["worker_minutes"]
-    want = {"%s%s@%d" % (prefix, w, int(t)): 'worker %s has run %dm (past 2x %gm limit). Judge it (`sisi judge %s good|bad "<why>"`) or extend (`sisi judge %s extend MINUTES "<reason>"`).' % (
+    want = {"%s%s@%d" % (prefix, w, int(t)): 'worker %s has run %dm (past 2x %gm limit). Judge it (`sisi judge %s good|bad|out "<why>"`) or extend (`sisi judge %s extend MINUTES "<reason>"`).' % (
         w, int((now - t) / 60), lim if lim is not None else cfg_m, w, w) for w, t, lim, *_ in late2}
     try:
         faults.clear(cwd, prefix, set(want)); add and [faults.add(cwd, text, kind=k) for k, text in want.items()]
@@ -345,7 +381,7 @@ def sync_late(s, cwd, sid, add=True):
 
 
 def judge(args, cwd=None):
-    """`sisi judge WORKER good|bad "<why>" [--minutes N] [--newest] | extend MINUTES "<why>" [--newest]`."""
+    """`sisi judge WORKER good|bad|out "<why>" [--minutes N] [--newest] | extend MINUTES "<why>" [--newest]`."""
     from . import retro  # not at the top: hooks import this module and must stay quick
     args, newest, minutes, note = [a for a in args if a != "--newest"], "--newest" in args, None, ""
     if "--minutes" in args:
@@ -353,8 +389,8 @@ def judge(args, cwd=None):
         v, args = (args[i + 1:i + 2] or [""])[0], args[:i] + args[i + 2:]
         minutes = int(v) if re.fullmatch(r"[1-9]\d{0,3}|10000", v) else 0
     ext = len(args) == 4 and args[1] == "extend" and minutes is None and re.fullmatch(r"[1-9]\d{0,3}|10000", args[2])
-    if not args or not args[0].strip() or not (ext or (len(args) == 3 and args[1] in ("good", "bad") and minutes != 0)) or len(args[-1].split()) < 3:
-        print('usage: sisi judge WORKER good|bad "<what it did well or badly, in a sentence>" [--minutes N] [--newest] | extend MINUTES "<reason, 3+ words>" [--newest]')
+    if not args or not args[0].strip() or not (ext or (len(args) == 3 and args[1] in ("good", "bad", "out") and minutes != 0)) or len(args[-1].split()) < 3:
+        print('usage: sisi judge WORKER good|bad|out "<what it did well or badly, or the provider\'s message when it hit a limit, in a sentence>" [--minutes N] [--newest] | extend MINUTES "<reason, 3+ words>" [--newest]')
         return 1
     trows = rows(store.read(table()))
     hits = [r for r in trows if short(r[0]) == short(args[0])] or [r for r in trows if claim({"picked": [short(r[0])]}, args[0], True)]
@@ -403,6 +439,9 @@ def run(args, cwd=None):
         print(text or stale())
         if text:
             print("\n(researched %d days ago)" % age_days())
+            gone, now, listed = away(), time.time(), {short(r[0]) for r in rows(text)}
+            if sitting := sorted((t, w) for w, (t, _) in gone.items() if w in listed and now - t < OUT):
+                print("\nOff the wheel now:\n" + "\n".join("%s: %s" % (w, SINCE % (clock(t), clock(t + OUT))) for t, w in sitting))
             recent = outcomes(15)
             if recent:
                 print("\nHow recent delegations went:\n" + "\n".join(recent))

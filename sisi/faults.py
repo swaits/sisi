@@ -46,7 +46,7 @@ def add(cwd, text, kind="", flag="", fid=0):
             if not hit:
                 return None
             if hit.get("kind", "").startswith("late:") and (flag != "--fixed" or hit["kind"].startswith("late:%s:" % (store.current_session(cwd) or "")[:8])):
-                raise OSError('#%d is a late worker fault; run `sisi judge WORKER good|bad "<why>"` or `sisi judge WORKER extend MINUTES "<reason>"`.' % fid)
+                raise OSError('#%d is a late worker fault; run `sisi judge WORKER good|bad|out "<why>"` or `sisi judge WORKER extend MINUTES "<reason>"`.' % fid)
             doc["items"] = [f for f in doc["items"] if f["id"] != fid] if flag == "--fixed" else doc["items"]
             hit.update(state=flag[2:], note=text)
         elif kind and any(f.get("kind") == kind for f in doc["items"]):

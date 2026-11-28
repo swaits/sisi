@@ -29,8 +29,9 @@ Delegation
                                    the brief for a research worker to rebuild that table; record its answer
   sisi pick routine|ordinary|hard [--review-of WORKER] [--not WORKER ...] [--limit MINUTES] [--branch NAME]
                                    the wheel gives you one worker of that class; one pick, one delegation
-  sisi judge WORKER good|bad WHY | extend MINUTES WHY [--newest]
-                                   how a delegation went, or give a running job more time
+  sisi judge WORKER good|bad|out WHY | extend MINUTES WHY [--newest]
+                                   how a delegation went (`out` with the provider's own message when it hit a
+                                   limit: sisi tries it again by itself), or give a running job more time
   sisi direct REASON               allow yourself more direct tool calls this turn, with the reason
 
 Setting up
